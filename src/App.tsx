@@ -10,6 +10,7 @@ import { Reports } from './pages/Reports';
 import { Settings } from './pages/Settings';
 import { Login } from './pages/Login';
 import { Scanner } from './pages/Scanner';
+import { QRGenerator } from './pages/QRGenerator';
 import { useAuthStore } from './store/authStore';
 import { SyncInitializer } from './components/common/SyncInitializer';
 
@@ -69,6 +70,7 @@ function App() {
           <Route path="clientes" element={<Customers />} />
           <Route path="ventas" element={<Sales />} />
           <Route path="escaner" element={<Scanner />} />
+          <Route path="codigos" element={<QRGenerator />} />
           <Route path="reportes" element={<Reports />} />
           <Route path="configuracion" element={<Settings />} />
         </Route>

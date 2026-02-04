@@ -27,6 +27,7 @@ import {
   FiSettings,
   FiLogOut,
   FiCamera,
+  FiGrid,
 } from 'react-icons/fi';
 import { es } from '../../i18n/es';
 import { useAuthStore } from '../../store/authStore';
@@ -44,6 +45,7 @@ const navItems: NavItem[] = [
   { icon: FiUsers, label: es.nav.customers, path: '/clientes' },
   { icon: FiShoppingCart, label: es.nav.sales, path: '/ventas' },
   { icon: FiCamera, label: es.nav.scanner, path: '/escaner' },
+  { icon: FiGrid, label: es.nav.qrGenerator, path: '/codigos' },
   { icon: FiBarChart2, label: es.nav.reports, path: '/reportes' },
   { icon: FiSettings, label: es.nav.settings, path: '/configuracion' },
 ];

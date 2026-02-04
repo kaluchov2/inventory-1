@@ -7,6 +7,7 @@ export const es = {
     customers: 'Clientes',
     sales: 'Ventas',
     scanner: 'Escáner',
+    qrGenerator: 'Códigos QR',
     reports: 'Reportes',
     settings: 'Configuración',
   },

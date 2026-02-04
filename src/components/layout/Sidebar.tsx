@@ -17,6 +17,7 @@ import {
   FiBarChart2,
   FiSettings,
   FiLogOut,
+  FiCamera,
 } from 'react-icons/fi';
 import { es } from '../../i18n/es';
 import { useAuthStore } from '../../store/authStore';
@@ -33,6 +34,7 @@ const navItems: NavItem[] = [
   { icon: FiPackage, label: es.nav.products, path: '/productos' },
   { icon: FiUsers, label: es.nav.customers, path: '/clientes' },
   { icon: FiShoppingCart, label: es.nav.sales, path: '/ventas' },
+  { icon: FiCamera, label: es.nav.scanner, path: '/escaner' },
   { icon: FiBarChart2, label: es.nav.reports, path: '/reportes' },
   { icon: FiSettings, label: es.nav.settings, path: '/configuracion' },
 ];

@@ -47,14 +47,36 @@ import {
 import { SearchInput, EmptyState, ConfirmDialog, AutocompleteSelect } from "../components/common";
 import { ProductForm, SellProductModal, SoldProductDetails } from "../components/products";
 import type { SaleData } from "../components/products/SellProductModal";
-import { useProductStore } from "../store/productStore";
-import { useTransactionStore, createSaleTransaction } from "../store/transactionStore";
-import { useCustomerStore } from "../store/customerStore";
-import { Product, CategoryCode, ProductStatus } from "../types";
+import { Product, CategoryCode, ProductStatus, Transaction } from "../types";
 import { CATEGORY_OPTIONS, getCategoryLabel } from "../constants/categories";
 import { UPS_BATCH_OPTIONS } from "../constants/colors";
 import { formatCurrency, formatDate } from "../utils/formatters";
 import { es } from "../i18n/es";
+import { useProductStore } from "../store/productStore";
+import { useTransactionStore, createSaleTransaction } from "../store/transactionStore";
+import { useCustomerStore } from "../store/customerStore";
+
+// Helper function to get payment status for a product
+function getPaymentStatusForProduct(productId: string, transactions: Transaction[]): { status: 'paid' | 'pending' | 'unknown'; amount: number } {
+  const relatedTransaction = transactions.find(
+    (t) =>
+      t.type === 'sale' &&
+      t.items.some((item) => item.productId === productId)
+  );
+
+  if (!relatedTransaction) return { status: 'unknown', amount: 0 };
+
+  const totalPaid =
+    relatedTransaction.cashAmount +
+    relatedTransaction.transferAmount +
+    relatedTransaction.cardAmount;
+
+  if (totalPaid >= relatedTransaction.total) {
+    return { status: 'paid', amount: 0 };
+  }
+
+  return { status: 'pending', amount: relatedTransaction.total - totalPaid };
+}
 
 // Mobile Product Card Component
 function ProductCard({
@@ -63,12 +85,14 @@ function ProductCard({
   onDelete,
   onSell,
   viewMode,
+  paymentStatus,
 }: {
   product: Product;
   onEdit: () => void;
   onDelete: () => void;
   onSell: () => void;
   viewMode: 'available' | 'sold';
+  paymentStatus?: { status: 'paid' | 'pending' | 'unknown'; amount: number };
 }) {
   const { customers } = useCustomerStore();
   const customer = product.soldTo ? customers.find(c => c.id === product.soldTo) : null;
@@ -135,14 +159,28 @@ function ProductCard({
 
       {viewMode === 'sold' && (
         <Box mb={2} p={2} bg="blue.50" borderRadius="md">
-          <Text fontSize="xs" color="blue.700">
-            Vendido a: {customer?.name || es.customers.walkIn}
-          </Text>
-          {product.soldAt && (
-            <Text fontSize="xs" color="gray.500">
-              Fecha: {formatDate(product.soldAt)}
-            </Text>
-          )}
+          <Flex justify="space-between" align="start">
+            <Box>
+              <Text fontSize="xs" color="blue.700">
+                Vendido a: {customer?.name || es.customers.walkIn}
+              </Text>
+              {product.soldAt && (
+                <Text fontSize="xs" color="gray.500">
+                  Fecha: {formatDate(product.soldAt)}
+                </Text>
+              )}
+            </Box>
+            {paymentStatus && (
+              <Badge
+                colorScheme={paymentStatus.status === 'paid' ? 'green' : 'orange'}
+                fontSize="xs"
+              >
+                {paymentStatus.status === 'paid'
+                  ? es.products.paid
+                  : `${es.products.owes} ${formatCurrency(paymentStatus.amount)}`}
+              </Badge>
+            )}
+          </Flex>
         </Box>
       )}
 
@@ -227,7 +265,7 @@ export function Products() {
     getFilteredProducts,
   } = useProductStore();
 
-  const { addTransaction } = useTransactionStore();
+  const { addTransaction, transactions } = useTransactionStore();
   const { addPurchase } = useCustomerStore();
   const { customers } = useCustomerStore();
 
@@ -656,6 +694,7 @@ export function Products() {
                 onDelete={() => handleDeleteClick(product)}
                 onSell={() => handleSellClick(product)}
                 viewMode={viewMode}
+                paymentStatus={viewMode === 'sold' ? getPaymentStatusForProduct(product.id, transactions) : undefined}
               />
             ))}
           </VStack>
@@ -673,6 +712,7 @@ export function Products() {
                   <Th isNumeric>{es.products.quantity}</Th>
                   <Th isNumeric>{es.products.unitPrice}</Th>
                   {viewMode === 'sold' && <Th>Cliente</Th>}
+                  {viewMode === 'sold' && <Th>Pago</Th>}
                   <Th>{es.products.status}</Th>
                   <Th w="120px">Acciones</Th>
                 </Tr>
@@ -740,6 +780,25 @@ export function Products() {
                           <Text fontSize="sm">{getCustomerName(product)}</Text>
                         </Td>
                       )}
+                      {viewMode === 'sold' && (
+                        <Td>
+                          {(() => {
+                            const paymentStatus = getPaymentStatusForProduct(product.id, transactions);
+                            return (
+                              <Badge
+                                colorScheme={paymentStatus.status === 'paid' ? 'green' : paymentStatus.status === 'pending' ? 'orange' : 'gray'}
+                                fontSize="xs"
+                              >
+                                {paymentStatus.status === 'paid'
+                                  ? es.products.paid
+                                  : paymentStatus.status === 'pending'
+                                  ? `${es.products.owes} ${formatCurrency(paymentStatus.amount)}`
+                                  : '-'}
+                              </Badge>
+                            );
+                          })()}
+                        </Td>
+                      )}
                       <Td>{getStatusBadge(product.status)}</Td>
                       <Td onClick={(e) => e.stopPropagation()}>
                         <HStack spacing={1}>
@@ -792,7 +851,7 @@ export function Products() {
                     {/* Expanded Row Details */}
                     {expandedRows.has(product.id) && (
                       <Tr key={`${product.id}-details`} bg="gray.50">
-                        <Td colSpan={viewMode === 'sold' ? 10 : 9} py={4}>
+                        <Td colSpan={viewMode === 'sold' ? 11 : 9} py={4}>
                           {viewMode === 'sold' ? (
                             <Box px={4}>
                               <SoldProductDetails product={product} />

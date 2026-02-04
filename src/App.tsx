@@ -9,6 +9,7 @@ import { Sales } from './pages/Sales';
 import { Reports } from './pages/Reports';
 import { Settings } from './pages/Settings';
 import { Login } from './pages/Login';
+import { Scanner } from './pages/Scanner';
 import { useAuthStore } from './store/authStore';
 import { SyncInitializer } from './components/common/SyncInitializer';
 
@@ -67,6 +68,7 @@ function App() {
           <Route path="productos" element={<Products />} />
           <Route path="clientes" element={<Customers />} />
           <Route path="ventas" element={<Sales />} />
+          <Route path="escaner" element={<Scanner />} />
           <Route path="reportes" element={<Reports />} />
           <Route path="configuracion" element={<Settings />} />
         </Route>

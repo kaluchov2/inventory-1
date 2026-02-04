@@ -40,6 +40,7 @@ interface TransactionStore {
   getTodaySales: () => { cash: number; transfer: number; card: number; total: number };
   getSalesByDateRange: (from: string, to: string) => Transaction[];
   getTotalSalesByCategory: () => Record<string, number>;
+  getUnpaidTransactionsByCustomer: (customerId: string) => Transaction[];
 }
 
 const defaultFilters: TransactionFilters = {
@@ -242,6 +243,14 @@ export const useTransactionStore = create<TransactionStore>()(
         });
 
         return categoryTotals;
+      },
+
+      getUnpaidTransactionsByCustomer: (customerId: string) => {
+        return get().transactions.filter(t =>
+          t.customerId === customerId &&
+          t.type === 'sale' &&
+          (t.cashAmount + t.transferAmount + t.cardAmount) < t.total
+        ).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
       },
     }),
     {

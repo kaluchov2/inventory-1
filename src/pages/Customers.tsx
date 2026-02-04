@@ -30,7 +30,7 @@ import {
   FiDollarSign,
 } from 'react-icons/fi';
 import { SearchInput, EmptyState, ConfirmDialog } from '../components/common';
-import { CustomerForm } from '../components/customers';
+import { CustomerForm, ReceiveInstallmentModal } from '../components/customers';
 import { useCustomerStore } from '../store/customerStore';
 import { useTransactionStore } from '../store/transactionStore';
 import { Customer } from '../types';
@@ -64,8 +64,15 @@ export function Customers() {
     onClose: onDeleteClose,
   } = useDisclosure();
 
+  const {
+    isOpen: isInstallmentOpen,
+    onOpen: onInstallmentOpen,
+    onClose: onInstallmentClose,
+  } = useDisclosure();
+
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
+  const [customerForInstallment, setCustomerForInstallment] = useState<Customer | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const filteredCustomers = useMemo(() => getFilteredCustomers(), [customers, searchQuery]);
@@ -83,6 +90,11 @@ export function Customers() {
   const handleDeleteClick = (customer: Customer) => {
     setCustomerToDelete(customer);
     onDeleteOpen();
+  };
+
+  const handleInstallmentClick = (customer: Customer) => {
+    setCustomerForInstallment(customer);
+    onInstallmentOpen();
   };
 
   const handleFormSubmit = async (data: any) => {
@@ -224,6 +236,7 @@ export function Customers() {
                           <MenuItem
                             icon={<Icon as={FiDollarSign} />}
                             color="green.500"
+                            onClick={() => handleInstallmentClick(customer)}
                           >
                             {es.sales.receiveInstallment}
                           </MenuItem>
@@ -262,6 +275,14 @@ export function Customers() {
         title={es.actions.delete}
         message={es.customers.deleteConfirm}
         confirmText={es.actions.delete}
+      />
+
+      {/* Receive Installment Modal */}
+      <ReceiveInstallmentModal
+        isOpen={isInstallmentOpen}
+        onClose={onInstallmentClose}
+        customer={customerForInstallment}
+        onPaymentReceived={() => setCustomerForInstallment(null)}
       />
     </VStack>
   );

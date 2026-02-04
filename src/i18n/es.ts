@@ -6,6 +6,7 @@ export const es = {
     products: 'Productos',
     customers: 'Clientes',
     sales: 'Ventas',
+    scanner: 'Escáner',
     reports: 'Reportes',
     settings: 'Configuración',
   },

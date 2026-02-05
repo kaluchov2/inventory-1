@@ -13,6 +13,7 @@ import { Scanner } from './pages/Scanner';
 import { QRGenerator } from './pages/QRGenerator';
 import { useAuthStore } from './store/authStore';
 import { SyncInitializer } from './components/common/SyncInitializer';
+import { InstallPrompt } from './components/common/InstallPrompt';
 
 // Protected route wrapper
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -51,6 +52,7 @@ function App() {
     <BrowserRouter>
       {/* Sync initializer - loads data and subscribes to real-time updates */}
       <SyncInitializer />
+      <InstallPrompt />
 
       <Routes>
         {/* Public route - Login */}

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, Fragment, startTransition } from "react";
 import {
   Box,
   Heading,
@@ -32,6 +32,11 @@ import {
   TabPanel,
   Skeleton,
   SkeletonText,
+  Switch,
+  FormControl,
+  FormLabel,
+  Spinner,
+  Center,
 } from "@chakra-ui/react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -337,6 +342,8 @@ export function Products() {
   const [viewMode, setViewMode] = useState<'available' | 'sold' | 'review' | 'other'>('available');
   const [productToResolve, setProductToResolve] = useState<Product | null>(null);
   const [isTabLoading, setIsTabLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [isShowAllLoading, setIsShowAllLoading] = useState(false);
   const tabLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
   const ITEMS_PER_PAGE = 50;
 
@@ -358,20 +365,13 @@ export function Products() {
     else if (tab === 'other') setViewMode('other');
   });
 
-  // Set default filter to latest UPS drop on mount
-  useEffect(() => {
-    if (products.length > 0 && !filters.upsBatch) {
-      const latestDrop = Math.max(...products.map(p => p.upsBatch || 0));
-      if (latestDrop > 0) {
-        setFilters({ upsBatch: latestDrop });
-      }
-    }
-  }, []); // Run only on mount
+  // Whether products should be displayed (either UPS selected or showAll toggled)
+  const hasSelection = !!filters.upsBatch || showAll;
 
-  // Get all filtered products
+  // Get all filtered products — only compute when there's a selection
   const allFilteredProducts = useMemo(
-    () => getFilteredProducts(),
-    [products, filters],
+    () => hasSelection ? getFilteredProducts() : [],
+    [products, filters, hasSelection],
   );
 
   // Filter by view mode (available, sold, review, or other)
@@ -394,6 +394,14 @@ export function Products() {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
     return filteredProducts.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredProducts, currentPage]);
+
+  // Memoize tab counts to avoid repeated .filter() calls per render
+  const tabCounts = useMemo(() => ({
+    available: allFilteredProducts.filter(p => p.status === 'available').length,
+    sold: allFilteredProducts.filter(p => p.status === 'sold').length,
+    review: allFilteredProducts.filter(p => p.status === 'review').length,
+    other: allFilteredProducts.filter(p => ['donated', 'expired', 'lost'].includes(p.status)).length,
+  }), [allFilteredProducts]);
 
   // Reset page when filters or viewMode change
   useEffect(() => {
@@ -419,8 +427,32 @@ export function Products() {
   // Wrapped setFilters with loading transition
   const handleSetFilters = useCallback((newFilters: Parameters<typeof setFilters>[0]) => {
     triggerTabLoading();
+    // If user picks a UPS filter, turn off showAll
+    if ('upsBatch' in newFilters && newFilters.upsBatch) {
+      setShowAll(false);
+    }
     setFilters(newFilters);
   }, [triggerTabLoading, setFilters]);
+
+  // Toggle "show all" with loading feedback
+  const handleShowAllToggle = useCallback(() => {
+    if (showAll) {
+      // Turning off — go back to no-selection state
+      setShowAll(false);
+      setFilters({ upsBatch: '' });
+      return;
+    }
+    // Turning on — show spinner, defer heavy render
+    setIsShowAllLoading(true);
+    setFilters({ upsBatch: '' });
+    // Use setTimeout to let the spinner paint before heavy work
+    setTimeout(() => {
+      startTransition(() => {
+        setShowAll(true);
+        setIsShowAllLoading(false);
+      });
+    }, 50);
+  }, [showAll, setFilters]);
 
   const handleAddProduct = () => {
     setSelectedProduct(null);
@@ -792,36 +824,28 @@ export function Products() {
             <HStack spacing={2}>
               <Icon as={FiPackage} />
               <Text>Disponibles</Text>
-              <Badge colorScheme="green" ml={1}>
-                {allFilteredProducts.filter(p => p.status === 'available').length}
-              </Badge>
+              {hasSelection && <Badge colorScheme="green" ml={1}>{tabCounts.available}</Badge>}
             </HStack>
           </Tab>
           <Tab>
             <HStack spacing={2}>
               <Icon as={FiShoppingBag} />
               <Text>Vendidos</Text>
-              <Badge colorScheme="gray" ml={1}>
-                {allFilteredProducts.filter(p => p.status === 'sold').length}
-              </Badge>
+              {hasSelection && <Badge colorScheme="gray" ml={1}>{tabCounts.sold}</Badge>}
             </HStack>
           </Tab>
           <Tab>
             <HStack spacing={2}>
               <Icon as={FiAlertCircle} />
               <Text>Revisar</Text>
-              <Badge colorScheme="yellow" ml={1}>
-                {allFilteredProducts.filter(p => p.status === 'review').length}
-              </Badge>
+              {hasSelection && <Badge colorScheme="yellow" ml={1}>{tabCounts.review}</Badge>}
             </HStack>
           </Tab>
           <Tab>
             <HStack spacing={2}>
               <Icon as={FiPackage} />
               <Text>Otros</Text>
-              <Badge colorScheme="teal" ml={1}>
-                {allFilteredProducts.filter(p => ['donated', 'expired', 'lost'].includes(p.status)).length}
-              </Badge>
+              {hasSelection && <Badge colorScheme="teal" ml={1}>{tabCounts.other}</Badge>}
             </HStack>
           </Tab>
         </TabList>
@@ -910,7 +934,7 @@ export function Products() {
                 options={UPS_BATCH_OPTIONS}
                 value={filters.upsBatch || ""}
                 onChange={(val) => handleSetFilters({ upsBatch: val ? Number(val) : "" })}
-                placeholder="UPS"
+                placeholder="Seleccionar UPS"
                 size="md"
               />
 
@@ -946,7 +970,7 @@ export function Products() {
                 filters.status) && (
                 <Button
                   variant="outline"
-                  onClick={clearFilters}
+                  onClick={() => { clearFilters(); setShowAll(false); }}
                   leftIcon={<Icon as={FiFilter} />}
                   size={{ base: "sm", md: "md" }}
                 >
@@ -955,14 +979,52 @@ export function Products() {
               )}
             </SimpleGrid>
 
-            <Text fontSize="sm" color="gray.500">
-              {filteredProducts.length} productos encontrados
-            </Text>
+            {/* Show All toggle */}
+            <Flex justify="space-between" align="center">
+              <Text fontSize="sm" color="gray.500">
+                {hasSelection ? `${filteredProducts.length} productos encontrados` : `${products.length} productos en total`}
+              </Text>
+              <FormControl display="flex" alignItems="center" w="auto">
+                <FormLabel htmlFor="show-all" mb={0} fontSize="sm" color="gray.600" mr={2}>
+                  Mostrar todos
+                </FormLabel>
+                <Switch
+                  id="show-all"
+                  size="md"
+                  colorScheme="brand"
+                  isChecked={showAll}
+                  onChange={handleShowAllToggle}
+                />
+              </FormControl>
+            </Flex>
           </VStack>
         </Box>
 
         {/* Products - Cards on Mobile, Table on Desktop */}
-        {isTabLoading ? (
+        {isShowAllLoading ? (
+          /* Loading spinner while "show all" loads */
+          <Center py={16}>
+            <VStack spacing={4}>
+              <Spinner size="xl" color="brand.500" thickness="4px" />
+              <Text color="gray.500">Cargando todos los productos...</Text>
+            </VStack>
+          </Center>
+        ) : !hasSelection ? (
+          /* Prompt to select UPS */
+          <Box bg="white" borderRadius="xl" boxShadow="sm" py={16}>
+            <Center>
+              <VStack spacing={3}>
+                <Icon as={FiPackage} boxSize={10} color="gray.300" />
+                <Text fontSize="lg" fontWeight="medium" color="gray.500">
+                  Selecciona un UPS para ver productos
+                </Text>
+                <Text fontSize="sm" color="gray.400">
+                  O activa "Mostrar todos" para cargar el inventario completo
+                </Text>
+              </VStack>
+            </Center>
+          </Box>
+        ) : isTabLoading ? (
           /* Loading skeleton during tab/filter transitions */
           <VStack spacing={3} align="stretch">
             {Array.from({ length: 6 }).map((_, i) => (

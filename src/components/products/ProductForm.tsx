@@ -39,7 +39,6 @@ interface ProductFormData {
   color: string;
   size: string;
   description: string;
-  lowStockThreshold: number;
 }
 
 interface ProductFormProps {
@@ -80,7 +79,6 @@ export function ProductForm({
       color: '',
       size: '',
       description: '',
-      lowStockThreshold: 5,
     },
   });
 
@@ -96,7 +94,6 @@ export function ProductForm({
         color: product.color || '',
         size: product.size || '',
         description: product.description || '',
-        lowStockThreshold: product.lowStockThreshold,
       });
     } else {
       reset({
@@ -109,7 +106,6 @@ export function ProductForm({
         color: '',
         size: '',
         description: '',
-        lowStockThreshold: 5,
       });
     }
   }, [product, reset, initialUpsBatch]);
@@ -134,7 +130,6 @@ export function ProductForm({
         color: '',
         size: '',
         description: '',
-        lowStockThreshold: 5,
       });
     }
   };
@@ -178,7 +173,7 @@ export function ProductForm({
               <SimpleGrid columns={2} spacing={4} w="full">
                 <FormControl isInvalid={!!errors.upsBatch} isRequired>
                   <FormLabel>{es.products.upsBatch}</FormLabel>
-                  <Select {...register('upsBatch', { valueAsNumber: true })}>
+                  <Select {...register('upsBatch', { valueAsNumber: true })} size="lg">
                     {UPS_BATCH_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label}
@@ -189,7 +184,7 @@ export function ProductForm({
 
                 <FormControl isInvalid={!!errors.category} isRequired>
                   <FormLabel>{es.products.category}</FormLabel>
-                  <Select {...register('category')}>
+                  <Select {...register('category')} size="lg">
                     {CATEGORY_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label}
@@ -266,7 +261,7 @@ export function ProductForm({
 
                 <FormControl>
                   <FormLabel>{es.products.color}</FormLabel>
-                  <Select {...register('color')} placeholder="Seleccionar color">
+                  <Select {...register('color')} placeholder="Seleccionar color" size="lg">
                     {PRODUCT_COLORS.map((color) => (
                       <option key={color} value={color}>
                         {color}
@@ -276,37 +271,14 @@ export function ProductForm({
                 </FormControl>
               </SimpleGrid>
 
-              {/* Size and Low Stock Threshold */}
-              <SimpleGrid columns={2} spacing={4} w="full">
-                <FormControl>
-                  <FormLabel>{es.products.size}</FormLabel>
-                  <Input
-                    {...register('size')}
-                    placeholder="Ej: M, 32, Grande"
-                  />
-                </FormControl>
-
-                <FormControl>
-                  <FormLabel>{es.products.lowStockThreshold}</FormLabel>
-                  <Controller
-                    name="lowStockThreshold"
-                    control={control}
-                    render={({ field }) => (
-                      <NumberInput
-                        min={0}
-                        value={field.value}
-                        onChange={(_, val) => field.onChange(val || 0)}
-                      >
-                        <NumberInputField />
-                        <NumberInputStepper>
-                          <NumberIncrementStepper />
-                          <NumberDecrementStepper />
-                        </NumberInputStepper>
-                      </NumberInput>
-                    )}
-                  />
-                </FormControl>
-              </SimpleGrid>
+              {/* Size */}
+              <FormControl>
+                <FormLabel>{es.products.size}</FormLabel>
+                <Input
+                  {...register('size')}
+                  placeholder="Ej: M, 32, Grande"
+                />
+              </FormControl>
 
               {/* Description */}
               <FormControl>

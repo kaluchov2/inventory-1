@@ -209,21 +209,9 @@ function ProductCard({
             Cantidad
           </Text>
           <HStack>
-            <Text
-              fontWeight="bold"
-              color={
-                product.quantity <= product.lowStockThreshold && product.status === 'available'
-                  ? "orange.500"
-                  : "inherit"
-              }
-            >
+            <Text fontWeight="bold">
               {product.quantity}
             </Text>
-            {product.quantity <= product.lowStockThreshold && product.status === 'available' && (
-              <Badge colorScheme="orange" fontSize="xs">
-                {es.products.lowStock}
-              </Badge>
-            )}
           </HStack>
         </VStack>
         <VStack align="end" spacing={0}>
@@ -629,7 +617,6 @@ export function Products() {
           barcode: productToResolve.barcode ? `${productToResolve.barcode}-S` : undefined,
           status: 'review' as ProductStatus,
           notes: productToResolve.notes,
-          lowStockThreshold: productToResolve.lowStockThreshold,
         });
         resolvedProductId = splitProduct.id;
       }
@@ -1077,21 +1064,9 @@ export function Products() {
                       </Td>
                       <Td>{product.brand || "-"}</Td>
                       <Td isNumeric>
-                        <Text
-                          fontWeight="bold"
-                          color={
-                            product.quantity <= product.lowStockThreshold && product.status === 'available'
-                              ? "orange.500"
-                              : "inherit"
-                          }
-                        >
+                        <Text fontWeight="bold">
                           {product.quantity}
                         </Text>
-                        {product.quantity <= product.lowStockThreshold && product.status === 'available' && (
-                          <Badge colorScheme="orange" size="sm">
-                            {es.products.lowStock}
-                          </Badge>
-                        )}
                       </Td>
                       <Td isNumeric fontWeight="bold">
                         {formatCurrency(product.unitPrice)}

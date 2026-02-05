@@ -255,7 +255,6 @@ function processInventarioSheet(
         description: observaciones || undefined,
         notes: otrosValue || undefined,
         status: detectStatus(observaciones),
-        lowStockThreshold: 5,
         createdAt: now,
         updatedAt: now,
       };
@@ -353,7 +352,6 @@ function processElectronicsSheet(
         description: observaciones || undefined,
         notes: otrosValue || undefined,
         status: detectStatus(observaciones),
-        lowStockThreshold: 1,
         createdAt: now,
         updatedAt: now,
       };

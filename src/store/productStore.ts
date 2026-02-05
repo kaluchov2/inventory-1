@@ -75,7 +75,6 @@ interface ProductStore {
   getFilteredProducts: () => Product[];
   getProductById: (id: string) => Product | undefined;
   getProductByBarcode: (barcode: string) => Product | undefined;
-  getLowStockProducts: () => Product[];
   getTotalInventoryValue: () => number;
   getTotalProductCount: () => number;
   getProductsByCategory: () => Record<CategoryCode, number>;
@@ -290,7 +289,6 @@ export const useProductStore = create<ProductStore>()(
                   sold_by: p.soldBy || null,
                   sold_to: p.soldTo || null,
                   sold_at: p.soldAt || null,
-                  low_stock_threshold: p.lowStockThreshold,
                   barcode: p.barcode || null,
                   created_at: p.createdAt,
                   updated_at: p.updatedAt,
@@ -626,29 +624,17 @@ export const useProductStore = create<ProductStore>()(
       loadFromSupabase: async (forceReplace = false) => {
         if (!supabase) return;
 
-        // Concurrency guard: skip if already loading to prevent race conditions
-        if (get().isLoading) {
-          console.log('[loadFromSupabase] Already loading, skipping concurrent call');
-          return;
-        }
-
         set({ isLoading: true });
         try {
           const products = await productService.getAll();
-          const localProducts = get().products;
-          console.log(`[loadFromSupabase] Fetched ${products.length} from Supabase (local: ${localProducts.length}), forceReplace=${forceReplace}`);
-
-          // Safety check: if remote has drastically fewer products than local, don't force-replace
-          if (forceReplace && products.length < localProducts.length * 0.1 && localProducts.length > 10) {
-            console.warn(`[loadFromSupabase] Safety: remote has ${products.length} vs local ${localProducts.length}. Using merge instead of force-replace.`);
-            forceReplace = false;
-          }
+          console.log(`[loadFromSupabase] Fetched ${products.length} from Supabase, forceReplace=${forceReplace}`);
 
           if (forceReplace) {
             // Skip merge - use Supabase data directly (after import/sync)
             set({ products, lastSync: new Date(), isLoading: false });
           } else {
             // Normal merge with local products using last-write-wins
+            const localProducts = get().products;
             const merged = mergeProducts(localProducts, products);
             set({ products: merged, lastSync: new Date(), isLoading: false });
           }
@@ -734,12 +720,6 @@ export const useProductStore = create<ProductStore>()(
 
       getProductByBarcode: (barcode) => {
         return get().products.find((p) => p.barcode === barcode);
-      },
-
-      getLowStockProducts: () => {
-        return get().products.filter(
-          (p) => p.status === "available" && p.quantity <= p.lowStockThreshold,
-        );
       },
 
       getTotalInventoryValue: () => {
@@ -859,7 +839,6 @@ function convertDbProduct(dbProduct: any): Product {
     soldBy: dbProduct.sold_by || undefined,
     soldTo: dbProduct.sold_to || undefined,
     soldAt: dbProduct.sold_at || undefined,
-    lowStockThreshold: dbProduct.low_stock_threshold,
     createdAt: dbProduct.created_at,
     updatedAt: dbProduct.updated_at,
   };

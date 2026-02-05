@@ -101,7 +101,6 @@ export interface Product {
   soldAt?: string;             // When the item was sold
   notes?: string;              // Extra notes from Observaciones (after status keywords removed)
 
-  lowStockThreshold: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -190,7 +189,6 @@ export interface InstallmentPayment {
 // ============================================
 
 export interface Settings {
-  defaultLowStockThreshold: number;
   cardFeePercentage: number;
   customBrands: string[];
   customColors: string[];

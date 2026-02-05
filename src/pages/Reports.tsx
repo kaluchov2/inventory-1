@@ -28,7 +28,7 @@ import { es } from '../i18n/es';
 export function Reports() {
   const [dateRange, setDateRange] = useState('today');
 
-  const { getTotalInventoryValue, getLowStockProducts } = useProductStore();
+  const { getTotalInventoryValue } = useProductStore();
   const { getTotalOutstandingBalance, getCustomersWithBalance } = useCustomerStore();
   const { transactions, getTotalSalesByCategory } = useTransactionStore();
 
@@ -73,7 +73,6 @@ export function Reports() {
   const cardSales = filteredTransactions.reduce((sum, t) => sum + t.cardAmount, 0);
 
   const inventoryValue = getTotalInventoryValue();
-  const lowStockProducts = getLowStockProducts();
   const outstandingBalance = getTotalOutstandingBalance();
   const customersWithBalance = getCustomersWithBalance();
   const salesByCategory = getTotalSalesByCategory();
@@ -119,7 +118,7 @@ export function Reports() {
       </HStack>
 
       {/* Summary Stats */}
-      <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={6}>
+      <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={6}>
         <StatCard
           title="Ventas del Período"
           value={formatCurrency(totalSales)}
@@ -129,11 +128,6 @@ export function Reports() {
           title={es.reports.totalInventoryValue}
           value={formatCurrency(inventoryValue)}
           colorScheme="brand"
-        />
-        <StatCard
-          title={es.reports.lowStockItems}
-          value={lowStockProducts.length.toString()}
-          colorScheme={lowStockProducts.length > 0 ? 'warning' : 'brand'}
         />
         <StatCard
           title={es.reports.outstandingBalances}

@@ -328,7 +328,6 @@ function convertFromDbFormat(data: any): Product {
     soldBy: data.sold_by || undefined,
     soldTo: data.sold_to || undefined,
     soldAt: data.sold_at || undefined,
-    lowStockThreshold: data.low_stock_threshold,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   };
@@ -360,7 +359,6 @@ function convertToDbFormat(product: Product): any {
     sold_by: product.soldBy || null,
     sold_to: product.soldTo || null,
     sold_at: product.soldAt || null,
-    low_stock_threshold: product.lowStockThreshold,
     barcode: product.barcode || null,
     created_at: product.createdAt,
     updated_at: product.updatedAt,

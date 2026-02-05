@@ -392,7 +392,6 @@ class SyncManager {
         sold_by: data.soldBy || null,
         sold_to: data.soldTo || null,
         sold_at: data.soldAt || null,
-        low_stock_threshold: data.lowStockThreshold,
         barcode: data.barcode && data.barcode.trim() !== '' ? data.barcode : null,
         created_at: data.createdAt,
         updated_at: data.updatedAt,

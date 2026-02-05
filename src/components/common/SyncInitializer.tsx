@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useProductStore } from '../../store/productStore';
 import { useCustomerStore } from '../../store/customerStore';
@@ -33,25 +33,39 @@ export function SyncInitializer() {
     }
   }, [isAuthenticated, isOfflineMode, loadProducts, loadCustomers, loadTransactions]);
 
-  // Subscribe to real-time updates
+  // Debounce timers for realtime callbacks to prevent concurrent reloads
+  const productReloadTimer = useRef<ReturnType<typeof setTimeout>>();
+  const customerReloadTimer = useRef<ReturnType<typeof setTimeout>>();
+  const transactionReloadTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  // Subscribe to real-time updates (debounced to prevent race conditions)
   useRealtimeProducts(() => {
-    console.log('[Realtime] Products changed, reloading...');
     if (isAuthenticated && !isOfflineMode) {
-      loadProducts();
+      clearTimeout(productReloadTimer.current);
+      productReloadTimer.current = setTimeout(() => {
+        console.log('[Realtime] Products changed, reloading (debounced)...');
+        loadProducts();
+      }, 2000);
     }
   });
 
   useRealtimeCustomers(() => {
-    console.log('[Realtime] Customers changed, reloading...');
     if (isAuthenticated && !isOfflineMode) {
-      loadCustomers();
+      clearTimeout(customerReloadTimer.current);
+      customerReloadTimer.current = setTimeout(() => {
+        console.log('[Realtime] Customers changed, reloading (debounced)...');
+        loadCustomers();
+      }, 2000);
     }
   });
 
   useRealtimeTransactions(() => {
-    console.log('[Realtime] Transactions changed, reloading...');
     if (isAuthenticated && !isOfflineMode) {
-      loadTransactions();
+      clearTimeout(transactionReloadTimer.current);
+      transactionReloadTimer.current = setTimeout(() => {
+        console.log('[Realtime] Transactions changed, reloading (debounced)...');
+        loadTransactions();
+      }, 2000);
     }
   });
 

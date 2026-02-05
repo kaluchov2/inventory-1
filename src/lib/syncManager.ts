@@ -387,6 +387,7 @@ class SyncManager {
         color: data.color || null,
         size: data.size || null,
         description: data.description || null,
+        notes: data.notes || null,
         status: data.status,
         sold_by: data.soldBy || null,
         sold_to: data.soldTo || null,

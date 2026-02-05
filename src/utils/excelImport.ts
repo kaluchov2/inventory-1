@@ -18,8 +18,12 @@ const detectStatus = (obs: string | undefined): ProductStatus => {
   if (/donad[ao]s?/i.test(lower)) return 'donated';
   if (/reservad[ao]s?/i.test(lower)) return 'reserved';
   if (/promoci[oó]n/i.test(lower)) return 'promotional';
+  if (/revisar/i.test(lower)) return 'review';
+  if (/caducad[ao]s?|vencid[ao]s?|expirad[ao]s?/i.test(lower)) return 'expired';
+  if (/perdid[ao]s?|extraviado/i.test(lower)) return 'lost';
   return 'available';
 };
+
 
 // Parse soldBy from Observaciones (look for "Vendedor:", "Vendido por:", etc.)
 const parseSoldBy = (obs: string | undefined): string | undefined => {
@@ -42,26 +46,6 @@ const parseSoldBy = (obs: string | undefined): string | undefined => {
   return undefined;
 };
 
-// Parse soldTo from Observaciones (look for "Cliente:", "Vendido a:", etc.)
-const parseSoldTo = (obs: string | undefined): string | undefined => {
-  if (!obs) return undefined;
-
-  // Match patterns like "Cliente: Pedro", "Vendido a: Ana"
-  const patterns = [
-    /cliente[:\s]+([^,\n]+)/i,
-    /vendido\s+a[:\s]+([^,\n]+)/i,
-    /a[:\s]+([^,\n]+?)(?:\s+por\s+|$)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = obs.match(pattern);
-    if (match) {
-      return match[1].trim();
-    }
-  }
-
-  return undefined;
-};
 
 // Parse date from Excel
 const parseExcelDate = (value: any): string => {
@@ -152,14 +136,14 @@ export async function importExcelFile(file: File): Promise<ImportResult> {
         const inventarioSheet = workbook.Sheets['Inventario'];
         if (inventarioSheet) {
           const inventarioData = XLSX.utils.sheet_to_json(inventarioSheet);
-          result.products = processInventarioSheet(inventarioData, result.errors, dropsMap, staffMap);
+          result.products = processInventarioSheet(inventarioData, result.errors, dropsMap);
         }
 
         // Process Inventario Comp Y Cel sheet (electronics)
         const electronicsSheet = workbook.Sheets['Inventario Comp Y Cel'];
         if (electronicsSheet) {
           const electronicsData = XLSX.utils.sheet_to_json(electronicsSheet);
-          const electronicsProducts = processElectronicsSheet(electronicsData, result.errors, dropsMap, staffMap);
+          const electronicsProducts = processElectronicsSheet(electronicsData, result.errors, dropsMap);
           result.products = [...result.products, ...electronicsProducts];
         }
 
@@ -195,15 +179,18 @@ function processInventarioSheet(
   data: any[],
   errors: string[],
   dropsMap: Map<string, Drop>,
-  staffMap: Map<string, Staff>
 ): Product[] {
   const products: Product[] = [];
   const now = getCurrentISODate();
 
+  // Track seen match keys to handle duplicates
+  const seenMatchKeys = new Map<string, number>();
+
   data.forEach((row, index) => {
     try {
-      // DEBUG: Log first 5 raw Excel rows
+      // DEBUG: Log first 5 raw Excel rows (including all keys to identify unnamed columns like Column J)
       if (index < 5) {
+        console.log(`[Excel Import] Row ${index + 2} ALL KEYS:`, Object.keys(row));
         console.log(`[Excel Import] Row ${index + 2} raw data:`, {
           UPS: row['UPS'] || row['UPS No.'],
           Articulo: row['Artículo'] || row['Articulo'],
@@ -213,6 +200,7 @@ function processInventarioSheet(
           Color: row['Color'],
           Talla: row['Talla'],
           Observaciones: row['Observaciones'],
+          Otros: row['Otros'],
         });
       }
 
@@ -229,20 +217,25 @@ function processInventarioSheet(
       // Generate V2 barcode
       const barcode = generateBarcodeFromParsed(parsed, dropSequence);
 
-      // Parse sold info from Observaciones
+      // Observaciones column — used for status detection only
       const observaciones = String(row['Observaciones'] || '').trim();
-      const soldByName = parseSoldBy(observaciones);
-      const soldToName = parseSoldTo(observaciones);
 
-      // Track staff if found
-      let soldById: string | undefined;
-      if (soldByName) {
-        soldById = ensureStaffExists(staffMap, soldByName, now);
+      // "Otros" column (Column J) — user-named column for notes
+      // Also fall back to __EMPTY* keys in case header isn't named yet
+      let otrosValue = String(row['Otros'] || '').trim();
+      if (!otrosValue) {
+        const emptyKeys = Object.keys(row).filter(k => k.startsWith('__EMPTY'));
+        otrosValue = emptyKeys
+          .map(k => String(row[k] || '').trim())
+          .filter(v => v.length > 0)
+          .pop() || '';
       }
+
+      let productName = String(row['Artículo'] || row['Articulo'] || '').trim();
 
       const product: Product = {
         id: generateId(),
-        name: String(row['Artículo'] || row['Articulo'] || '').trim(),
+        name: productName,
         sku: '',
         // V2 fields
         upsRaw: parsed.raw,
@@ -260,13 +253,22 @@ function processInventarioSheet(
         color: String(row['Color'] || '').trim() || undefined,
         size: String(row['Talla'] || '').trim() || undefined,
         description: observaciones || undefined,
+        notes: otrosValue || undefined,
         status: detectStatus(observaciones),
-        soldBy: soldById,
-        soldTo: soldToName, // Store name for now, can be linked to customer later
         lowStockThreshold: 5,
         createdAt: now,
         updatedAt: now,
       };
+
+      // Handle duplicate match keys by appending suffix to name
+      const matchKey = getProductMatchKey(product);
+      const count = seenMatchKeys.get(matchKey) || 0;
+
+      if (count > 0) {
+        product.name = `${productName} (${count})`;
+      }
+
+      seenMatchKeys.set(matchKey, count + 1);
 
       // Generate SKU
       product.sku = `${product.category}-${product.upsBatch}-${product.id.slice(-6).toUpperCase()}`;
@@ -287,10 +289,12 @@ function processElectronicsSheet(
   data: any[],
   errors: string[],
   dropsMap: Map<string, Drop>,
-  staffMap: Map<string, Staff>
 ): Product[] {
   const products: Product[] = [];
   const now = getCurrentISODate();
+
+  // Track seen match keys to handle duplicates
+  const seenMatchKeys = new Map<string, number>();
 
   data.forEach((row, index) => {
     try {
@@ -312,19 +316,24 @@ function processElectronicsSheet(
       // Generate V2 barcode
       const barcode = generateBarcodeFromParsed(parsed, dropSequence);
 
-      // Parse sold info from Observaciones
+      // Observaciones column — used for status detection only
       const observaciones = String(row['Observaciones'] || '').trim();
-      const soldByName = parseSoldBy(observaciones);
 
-      // Track staff if found
-      let soldById: string | undefined;
-      if (soldByName) {
-        soldById = ensureStaffExists(staffMap, soldByName, now);
+      // "Otros" column — user-named column for notes
+      let otrosValue = String(row['Otros'] || '').trim();
+      if (!otrosValue) {
+        const emptyKeys = Object.keys(row).filter(k => k.startsWith('__EMPTY'));
+        otrosValue = emptyKeys
+          .map(k => String(row[k] || '').trim())
+          .filter(v => v.length > 0)
+          .pop() || '';
       }
+
+      let productName = `${row['Marca'] || ''} ${row['Modelo'] || ''} ${row['Color'] || ''}`.trim();
 
       const product: Product = {
         id: generateId(),
-        name: `${row['Marca'] || ''} ${row['Modelo'] || ''} ${row['Color'] || ''}`.trim(),
+        name: productName,
         sku: '',
         // V2 fields
         upsRaw: parsed.raw,
@@ -342,12 +351,22 @@ function processElectronicsSheet(
         color: String(row['Color'] || '').trim() || undefined,
         size: String(row['Cap'] || '').trim() || undefined, // Storage capacity as size
         description: observaciones || undefined,
+        notes: otrosValue || undefined,
         status: detectStatus(observaciones),
-        soldBy: soldById,
         lowStockThreshold: 1,
         createdAt: now,
         updatedAt: now,
       };
+
+      // Handle duplicate match keys by appending suffix to name
+      const matchKey = getProductMatchKey(product);
+      const count = seenMatchKeys.get(matchKey) || 0;
+
+      if (count > 0) {
+        product.name = `${productName} (${count})`;
+      }
+
+      seenMatchKeys.set(matchKey, count + 1);
 
       product.sku = `${product.category}-${product.upsBatch}-${product.id.slice(-6).toUpperCase()}`;
 
@@ -515,7 +534,9 @@ function updateDropStats(drops: Drop[], products: Product[]): void {
     drop.totalUnits = dropProducts.reduce((sum, p) => sum + (p.quantity || 0), 0);
     drop.totalValue = dropProducts.reduce((sum, p) => sum + ((p.quantity || 0) * (p.unitPrice || 0)), 0);
     drop.soldCount = dropProducts.filter(p => p.status === 'sold').length;
-    drop.availableCount = dropProducts.filter(p => p.status === 'available').length;
+    drop.availableCount = dropProducts.filter(p =>
+      p.status === 'available' || p.status === 'reserved' || p.status === 'promotional'
+    ).length;
   }
 }
 

@@ -21,7 +21,7 @@ import {
   FiPackage,
   FiDollarSign,
   FiUsers,
-  FiAlertTriangle,
+  FiAlertCircle,
   FiClipboard,
 } from 'react-icons/fi';
 import { StatCard } from '../components/common';
@@ -34,13 +34,13 @@ import { es } from '../i18n/es';
 export function Home() {
   const navigate = useNavigate();
 
-  const { products, getTotalInventoryValue, getLowStockProducts } = useProductStore();
+  const { products, getTotalInventoryValue } = useProductStore();
   const { getTotalOutstandingBalance } = useCustomerStore();
   const { transactions, getTodaySales } = useTransactionStore();
 
   const totalProducts = products.filter(p => p.status === 'available').length;
   const inventoryValue = getTotalInventoryValue();
-  const lowStockProducts = getLowStockProducts();
+  const reviewProducts = products.filter(p => p.status === 'review');
   const todaySales = getTodaySales();
   const outstandingBalance = getTotalOutstandingBalance();
 
@@ -98,10 +98,10 @@ export function Home() {
           colorScheme="success"
         />
         <StatCard
-          title={es.dashboard.lowStockCount}
-          value={lowStockProducts.length}
-          icon={FiAlertTriangle}
-          colorScheme={lowStockProducts.length > 0 ? 'warning' : 'brand'}
+          title="Por Revisar"
+          value={reviewProducts.length}
+          icon={FiAlertCircle}
+          colorScheme={reviewProducts.length > 0 ? 'warning' : 'brand'}
         />
         <StatCard
           title={es.dashboard.outstandingBalance}
@@ -237,43 +237,44 @@ export function Home() {
         )}
       </Box>
 
-      {/* Low Stock Alert */}
-      {lowStockProducts.length > 0 && (
-        <Box bg="orange.50" borderRadius="xl" p={{ base: 4, md: 6 }} border="2px" borderColor="orange.200">
+      {/* Review Alert */}
+      {reviewProducts.length > 0 && (
+        <Box bg="yellow.50" borderRadius="xl" p={{ base: 4, md: 6 }} border="2px" borderColor="yellow.200">
           <HStack spacing={3} mb={4} flexWrap="wrap">
-            <Icon as={FiAlertTriangle} boxSize={{ base: 5, md: 6 }} color="orange.500" />
-            <Heading size={{ base: 'md', md: 'lg' }} color="orange.700">
-              {es.reports.lowStockItems}
+            <Icon as={FiAlertCircle} boxSize={{ base: 5, md: 6 }} color="yellow.600" />
+            <Heading size={{ base: 'md', md: 'lg' }} color="yellow.700">
+              Productos por Revisar ({reviewProducts.length})
             </Heading>
           </HStack>
           <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={3}>
-            {lowStockProducts.slice(0, 6).map((product) => (
+            {reviewProducts.slice(0, 4).map((product) => (
               <Box
                 key={product.id}
                 p={3}
                 bg="white"
                 borderRadius="lg"
                 border="1px"
-                borderColor="orange.200"
+                borderColor="yellow.200"
               >
                 <Text fontWeight="bold" noOfLines={1}>{product.name}</Text>
                 <HStack justify="space-between">
-                  <Text color="gray.600">Cantidad: {product.quantity}</Text>
-                  <Badge colorScheme="orange">Stock Bajo</Badge>
+                  <Text fontSize="sm" color="gray.600">UPS {product.upsBatch}</Text>
+                  <Text fontSize="sm" fontWeight="bold" color="green.600">{formatCurrency(product.unitPrice)}</Text>
                 </HStack>
+                {product.notes && (
+                  <Text fontSize="xs" color="gray.500" noOfLines={1} mt={1}>{product.notes}</Text>
+                )}
               </Box>
             ))}
           </SimpleGrid>
-          {lowStockProducts.length > 6 && (
-            <Button
-              variant="link"
-              colorScheme="orange"
-              mt={4}
-              onClick={() => navigate('/productos?filter=low-stock')}
-            >
-              Ver todos ({lowStockProducts.length} productos)
-            </Button>
-          )}
+          <Button
+            variant="link"
+            colorScheme="yellow"
+            mt={4}
+            onClick={() => navigate('/productos?tab=review')}
+          >
+            Ver todos ({reviewProducts.length} productos por revisar)
+          </Button>
         </Box>
       )}
     </VStack>

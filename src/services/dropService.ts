@@ -141,7 +141,9 @@ export const dropService = {
       totalUnits: products.reduce((sum, p) => sum + (p.quantity || 0), 0),
       totalValue: products.reduce((sum, p) => sum + ((p.quantity || 0) * (p.unit_price || 0)), 0),
       soldCount: products.filter(p => p.status === 'sold').length,
-      availableCount: products.filter(p => p.status === 'available').length,
+      availableCount: products.filter(p =>
+        p.status === 'available' || p.status === 'reserved' || p.status === 'promotional'
+      ).length,
     };
 
     // Update the drop with new stats

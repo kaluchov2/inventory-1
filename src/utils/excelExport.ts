@@ -1,7 +1,22 @@
 import * as XLSX from 'xlsx';
-import { Product, Customer, Transaction } from '../types';
+import { Product, Customer, Transaction, ProductStatus } from '../types';
 import { getCategoryLabel } from '../constants/categories';
 import { formatDate } from './formatters';
+
+const statusLabels: Record<ProductStatus, string> = {
+  available: 'Disponible',
+  sold: 'Vendido',
+  reserved: 'Reservado',
+  promotional: 'Promocion',
+  donated: 'Donado',
+  review: 'Revisar',
+  expired: 'Caducado',
+  lost: 'Perdido',
+};
+
+function getStatusLabel(status: ProductStatus): string {
+  return statusLabels[status] || status;
+}
 
 // Export products to Excel
 export function exportProductsToExcel(products: Product[]): void {
@@ -16,7 +31,7 @@ export function exportProductsToExcel(products: Product[]): void {
     'Talla': p.size || '',
     'Precio Unitario': p.unitPrice,
     'Valor Total': p.quantity * p.unitPrice,
-    'Estado': p.status === 'available' ? 'Disponible' : p.status === 'sold' ? 'Vendido' : 'Reservado',
+    'Estado': getStatusLabel(p.status),
     'Observaciones': p.description || '',
   }));
 
@@ -154,7 +169,7 @@ export function exportAllToExcel(
     'Color': p.color || '',
     'Talla': p.size || '',
     'Precio Unitario': p.unitPrice,
-    'Estado': p.status === 'available' ? 'Disponible' : p.status === 'sold' ? 'Vendido' : 'Reservado',
+    'Estado': getStatusLabel(p.status),
     'Observaciones': p.description || '',
   }));
   const productsSheet = XLSX.utils.json_to_sheet(productsData);

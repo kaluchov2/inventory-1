@@ -168,8 +168,9 @@ export type Database = {
           color: string | null;
           size: string | null;
           description: string | null;
-          // V2: 5 status values
-          status: 'available' | 'sold' | 'reserved' | 'promotional' | 'donated';
+          notes: string | null;
+          // V2: 8 status values
+          status: 'available' | 'sold' | 'reserved' | 'promotional' | 'donated' | 'review' | 'expired' | 'lost';
           // V2: Tracking
           sold_by: string | null;
           sold_to: string | null;
@@ -201,7 +202,8 @@ export type Database = {
           color?: string | null;
           size?: string | null;
           description?: string | null;
-          status?: 'available' | 'sold' | 'reserved' | 'promotional' | 'donated';
+          notes?: string | null;
+          status?: 'available' | 'sold' | 'reserved' | 'promotional' | 'donated' | 'review' | 'expired' | 'lost';
           sold_by?: string | null;
           sold_to?: string | null;
           sold_at?: string | null;
@@ -232,7 +234,8 @@ export type Database = {
           color?: string | null;
           size?: string | null;
           description?: string | null;
-          status?: 'available' | 'sold' | 'reserved' | 'promotional' | 'donated';
+          notes?: string | null;
+          status?: 'available' | 'sold' | 'reserved' | 'promotional' | 'donated' | 'review' | 'expired' | 'lost';
           sold_by?: string | null;
           sold_to?: string | null;
           sold_at?: string | null;

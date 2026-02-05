@@ -14,8 +14,8 @@ export type CategoryCode =
   // New V2 categories (7 additional)
   | 'COC' | 'JAR' | 'DEC' | 'MUE' | 'PAP' | 'MUS' | 'TOOL';
 
-// Product status (5 values in V2)
-export type ProductStatus = 'available' | 'sold' | 'reserved' | 'promotional' | 'donated';
+// Product status (8 values in V2)
+export type ProductStatus = 'available' | 'sold' | 'reserved' | 'promotional' | 'donated' | 'review' | 'expired' | 'lost';
 
 // Drop status
 export type DropStatus = 'active' | 'completed' | 'archived';
@@ -99,6 +99,7 @@ export interface Product {
   soldBy?: string;             // FK → Staff.id
   soldTo?: string;             // FK → Customer.id
   soldAt?: string;             // When the item was sold
+  notes?: string;              // Extra notes from Observaciones (after status keywords removed)
 
   lowStockThreshold: number;
   createdAt: string;

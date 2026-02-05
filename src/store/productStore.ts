@@ -285,6 +285,7 @@ export const useProductStore = create<ProductStore>()(
                   color: p.color || null,
                   size: p.size || null,
                   description: p.description || null,
+                  notes: p.notes || null,
                   status: p.status,
                   sold_by: p.soldBy || null,
                   sold_to: p.soldTo || null,
@@ -625,17 +626,29 @@ export const useProductStore = create<ProductStore>()(
       loadFromSupabase: async (forceReplace = false) => {
         if (!supabase) return;
 
+        // Concurrency guard: skip if already loading to prevent race conditions
+        if (get().isLoading) {
+          console.log('[loadFromSupabase] Already loading, skipping concurrent call');
+          return;
+        }
+
         set({ isLoading: true });
         try {
           const products = await productService.getAll();
-          console.log(`[loadFromSupabase] Fetched ${products.length} from Supabase, forceReplace=${forceReplace}`);
+          const localProducts = get().products;
+          console.log(`[loadFromSupabase] Fetched ${products.length} from Supabase (local: ${localProducts.length}), forceReplace=${forceReplace}`);
+
+          // Safety check: if remote has drastically fewer products than local, don't force-replace
+          if (forceReplace && products.length < localProducts.length * 0.1 && localProducts.length > 10) {
+            console.warn(`[loadFromSupabase] Safety: remote has ${products.length} vs local ${localProducts.length}. Using merge instead of force-replace.`);
+            forceReplace = false;
+          }
 
           if (forceReplace) {
             // Skip merge - use Supabase data directly (after import/sync)
             set({ products, lastSync: new Date(), isLoading: false });
           } else {
             // Normal merge with local products using last-write-wins
-            const localProducts = get().products;
             const merged = mergeProducts(localProducts, products);
             set({ products: merged, lastSync: new Date(), isLoading: false });
           }
@@ -772,8 +785,10 @@ export const useProductStore = create<ProductStore>()(
             0,
           ),
           soldCount: products.filter((p) => p.status === "sold").length,
-          availableCount: products.filter((p) => p.status === "available")
-            .length,
+          // Available count includes: available, reserved, promotional (items still in inventory)
+          availableCount: products.filter((p) =>
+            p.status === "available" || p.status === "reserved" || p.status === "promotional"
+          ).length,
         };
       },
 
@@ -838,6 +853,7 @@ function convertDbProduct(dbProduct: any): Product {
     color: dbProduct.color || undefined,
     size: dbProduct.size || undefined,
     description: dbProduct.description || undefined,
+    notes: dbProduct.notes || undefined,
     barcode: dbProduct.barcode || undefined,
     status: dbProduct.status,
     soldBy: dbProduct.sold_by || undefined,

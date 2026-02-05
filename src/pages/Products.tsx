@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, Fragment } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react";
 import {
   Box,
   Heading,
@@ -30,6 +30,8 @@ import {
   Tab,
   TabPanels,
   TabPanel,
+  Skeleton,
+  SkeletonText,
 } from "@chakra-ui/react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -43,10 +45,13 @@ import {
   FiDollarSign,
   FiPackage,
   FiShoppingBag,
+  FiAlertCircle,
+  FiCheckCircle,
 } from "react-icons/fi";
 import { SearchInput, EmptyState, ConfirmDialog, AutocompleteSelect } from "../components/common";
-import { ProductForm, SellProductModal, SoldProductDetails } from "../components/products";
+import { ProductForm, SellProductModal, SoldProductDetails, ResolveReviewModal } from "../components/products";
 import type { SaleData } from "../components/products/SellProductModal";
+import type { ResolveData } from "../components/products/ResolveReviewModal";
 import { Product, CategoryCode, ProductStatus, Transaction } from "../types";
 import { CATEGORY_OPTIONS, getCategoryLabel } from "../constants/categories";
 import { UPS_BATCH_OPTIONS } from "../constants/colors";
@@ -84,6 +89,7 @@ function ProductCard({
   onEdit,
   onDelete,
   onSell,
+  onResolve,
   viewMode,
   paymentStatus,
 }: {
@@ -91,7 +97,8 @@ function ProductCard({
   onEdit: () => void;
   onDelete: () => void;
   onSell: () => void;
-  viewMode: 'available' | 'sold';
+  onResolve?: () => void;
+  viewMode: 'available' | 'sold' | 'review' | 'other';
   paymentStatus?: { status: 'paid' | 'pending' | 'unknown'; amount: number };
 }) {
   const { customers } = useCustomerStore();
@@ -138,6 +145,11 @@ function ProductCard({
                 Vender
               </MenuItem>
             )}
+            {product.status === "review" && onResolve && (
+              <MenuItem icon={<Icon as={FiCheckCircle} />} onClick={onResolve}>
+                Resolver
+              </MenuItem>
+            )}
             <MenuItem
               icon={<Icon as={FiTrash2} />}
               color="red.500"
@@ -155,6 +167,13 @@ function ProductCard({
             .filter(Boolean)
             .join(" • ")}
         </Text>
+      )}
+
+      {product.notes && (
+        <Box mb={2} p={2} bg="gray.50" borderRadius="md">
+          <Text fontSize="xs" color="gray.600" fontWeight="semibold" mb={1}>Notas:</Text>
+          <Text fontSize="sm" color="gray.700" noOfLines={3}>{product.notes}</Text>
+        </Box>
       )}
 
       {viewMode === 'sold' && (
@@ -221,14 +240,34 @@ function ProductCard({
               ? "green"
               : product.status === "sold"
                 ? "gray"
-                : "orange"
+                : product.status === "review"
+                  ? "yellow"
+                  : product.status === "donated"
+                    ? "blue"
+                    : product.status === "promotional"
+                      ? "purple"
+                      : product.status === "expired"
+                        ? "red"
+                        : product.status === "lost"
+                          ? "pink"
+                          : "orange"
           }
         >
           {product.status === "available"
             ? es.products.available
             : product.status === "sold"
               ? es.products.sold
-              : es.products.reserved}
+              : product.status === "review"
+                ? "Revisar"
+                : product.status === "donated"
+                  ? "Donado"
+                  : product.status === "promotional"
+                    ? "Promocion"
+                    : product.status === "expired"
+                      ? "Caducado"
+                      : product.status === "lost"
+                        ? "Perdido"
+                        : es.products.reserved}
         </Badge>
       </Flex>
 
@@ -243,6 +282,20 @@ function ProductCard({
           w="full"
         >
           Vender
+        </Button>
+      )}
+
+      {/* Resolve Button - Mobile (Review tab) */}
+      {product.status === "review" && viewMode === 'review' && onResolve && (
+        <Button
+          mt={3}
+          size="sm"
+          colorScheme="yellow"
+          leftIcon={<Icon as={FiCheckCircle} />}
+          onClick={onResolve}
+          w="full"
+        >
+          Resolver
         </Button>
       )}
     </Box>
@@ -293,14 +346,28 @@ export function Products() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode] = useState<'available' | 'sold'>('available');
+  const [viewMode, setViewMode] = useState<'available' | 'sold' | 'review' | 'other'>('available');
+  const [productToResolve, setProductToResolve] = useState<Product | null>(null);
+  const [isTabLoading, setIsTabLoading] = useState(false);
+  const tabLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
   const ITEMS_PER_PAGE = 50;
 
-  // Check if we should open form from URL params
+  // Disclosure for resolve modal
+  const {
+    isOpen: isResolveOpen,
+    onOpen: onResolveOpen,
+    onClose: onResolveClose,
+  } = useDisclosure();
+
+  // Check if we should open form or switch tab from URL params
   useState(() => {
     if (searchParams.get("action") === "new") {
       onFormOpen();
     }
+    const tab = searchParams.get("tab");
+    if (tab === 'review') setViewMode('review');
+    else if (tab === 'sold') setViewMode('sold');
+    else if (tab === 'other') setViewMode('other');
   });
 
   // Set default filter to latest UPS drop on mount
@@ -319,12 +386,18 @@ export function Products() {
     [products, filters],
   );
 
-  // Filter by view mode (available or sold)
+  // Filter by view mode (available, sold, review, or other)
   const filteredProducts = useMemo(() => {
     if (viewMode === 'available') {
       return allFilteredProducts.filter(p => p.status === 'available');
     }
-    return allFilteredProducts.filter(p => p.status === 'sold');
+    if (viewMode === 'sold') {
+      return allFilteredProducts.filter(p => p.status === 'sold');
+    }
+    if (viewMode === 'other') {
+      return allFilteredProducts.filter(p => ['donated', 'expired', 'lost'].includes(p.status));
+    }
+    return allFilteredProducts.filter(p => p.status === 'review');
   }, [allFilteredProducts, viewMode]);
 
   // Pagination
@@ -338,6 +411,28 @@ export function Products() {
   useEffect(() => {
     setCurrentPage(1);
   }, [filters, viewMode]);
+
+  // Clean up timer on unmount
+  useEffect(() => () => clearTimeout(tabLoadingTimer.current), []);
+
+  // Brief loading state for tab/filter transitions so UI feels responsive
+  const triggerTabLoading = useCallback(() => {
+    clearTimeout(tabLoadingTimer.current);
+    setIsTabLoading(true);
+    tabLoadingTimer.current = setTimeout(() => setIsTabLoading(false), 150);
+  }, []);
+
+  // Wrapped setViewMode with loading transition
+  const handleViewModeChange = useCallback((mode: 'available' | 'sold' | 'review' | 'other') => {
+    triggerTabLoading();
+    setViewMode(mode);
+  }, [triggerTabLoading]);
+
+  // Wrapped setFilters with loading transition
+  const handleSetFilters = useCallback((newFilters: Parameters<typeof setFilters>[0]) => {
+    triggerTabLoading();
+    setFilters(newFilters);
+  }, [triggerTabLoading, setFilters]);
 
   const handleAddProduct = () => {
     setSelectedProduct(null);
@@ -357,6 +452,11 @@ export function Products() {
   const handleSellClick = (product: Product) => {
     setProductToSell(product);
     onSellOpen();
+  };
+
+  const handleResolveClick = (product: Product) => {
+    setProductToResolve(product);
+    onResolveOpen();
   };
 
   const handleFormSubmit = async (data: any, addAnother?: boolean) => {
@@ -491,6 +591,158 @@ export function Products() {
     }
   };
 
+  const handleConfirmResolve = (resolveData: ResolveData) => {
+    if (!productToResolve) return;
+
+    setIsLoading(true);
+    try {
+      const resolveQty = resolveData.quantity;
+      const isPartial = resolveQty < productToResolve.quantity;
+
+      // If partial resolution, reduce original product quantity (stays in review)
+      // and create a new split product for the resolved portion
+      let resolvedProductId = productToResolve.id;
+
+      if (isPartial) {
+        // Reduce original product's quantity (it stays in review)
+        updateProduct(productToResolve.id, {
+          quantity: productToResolve.quantity - resolveQty,
+        });
+
+        // Create a new product entry for the resolved portion
+        const splitProduct = addProduct({
+          name: productToResolve.name,
+          upsRaw: productToResolve.upsRaw,
+          identifierType: productToResolve.identifierType,
+          dropNumber: productToResolve.dropNumber,
+          productNumber: productToResolve.productNumber,
+          dropSequence: productToResolve.dropSequence,
+          upsBatch: productToResolve.upsBatch,
+          quantity: resolveQty,
+          unitPrice: productToResolve.unitPrice,
+          originalPrice: productToResolve.originalPrice,
+          category: productToResolve.category,
+          brand: productToResolve.brand,
+          color: productToResolve.color,
+          size: productToResolve.size,
+          description: productToResolve.description,
+          barcode: productToResolve.barcode ? `${productToResolve.barcode}-S` : undefined,
+          status: 'review' as ProductStatus,
+          notes: productToResolve.notes,
+          lowStockThreshold: productToResolve.lowStockThreshold,
+        });
+        resolvedProductId = splitProduct.id;
+      }
+
+      if (resolveData.resolution === 'sold') {
+        // Use custom sale price if provided, otherwise fall back to original
+        const effectiveUnitPrice = resolveData.salePrice ?? productToResolve.unitPrice;
+        const effectiveTotalPrice = resolveQty * effectiveUnitPrice;
+
+        // Create sale transaction for sold resolution
+        const transaction = createSaleTransaction(
+          { id: resolveData.customerId || '', name: resolveData.customerName || es.customers.walkIn },
+          [{
+            productId: resolvedProductId,
+            productName: productToResolve.name,
+            quantity: resolveQty,
+            unitPrice: effectiveUnitPrice,
+            totalPrice: effectiveTotalPrice,
+            category: productToResolve.category,
+            brand: productToResolve.brand,
+            color: productToResolve.color,
+            size: productToResolve.size,
+          }],
+          {
+            method: resolveData.paymentMethod || 'cash',
+            cash: resolveData.cashAmount || 0,
+            transfer: resolveData.transferAmount || 0,
+            card: resolveData.cardAmount || 0,
+          },
+          {
+            notes: resolveData.notes,
+            isInstallment: resolveData.paymentMethod === 'credit',
+          }
+        );
+
+        addTransaction(transaction);
+
+        // Update the resolved product status to sold
+        const productUpdate: Partial<Product> = {
+          status: 'sold' as ProductStatus,
+          description: undefined, // Clear stale "Revisar" from Excel import
+          soldTo: resolveData.customerId,
+          soldAt: new Date().toISOString(),
+          notes: resolveData.notes ? `${productToResolve.notes || ''}\nResolucion: ${resolveData.notes}`.trim() : productToResolve.notes,
+        };
+
+        if (resolveData.discount && resolveData.discount > 0) {
+          productUpdate.originalPrice = productToResolve.unitPrice;
+          productUpdate.unitPrice = effectiveUnitPrice;
+        }
+
+        updateProduct(resolvedProductId, productUpdate);
+
+        // Handle credit balance
+        const paidAmount = (resolveData.cashAmount || 0) + (resolveData.transferAmount || 0) + (resolveData.cardAmount || 0);
+        const unpaidAmount = effectiveTotalPrice - paidAmount;
+
+        if (unpaidAmount > 0 && resolveData.customerId) {
+          addPurchase(resolveData.customerId, unpaidAmount);
+        }
+
+        toast({
+          title: "Producto marcado como vendido",
+          description: `${resolveQty}x ${productToResolve.name} - ${formatCurrency(effectiveTotalPrice)}`,
+          status: "success",
+          duration: 4000,
+          isClosable: true,
+        });
+      } else {
+        // For available, donated, lost, expired - just update status
+        const statusMap: Record<string, ProductStatus> = {
+          available: 'available',
+          donated: 'donated',
+          lost: 'lost',
+          expired: 'expired',
+        };
+
+        const labelMap: Record<string, string> = {
+          available: 'disponible',
+          donated: 'donado',
+          lost: 'perdido',
+          expired: 'caducado',
+        };
+
+        updateProduct(resolvedProductId, {
+          status: statusMap[resolveData.resolution],
+          description: undefined, // Clear stale "Revisar" from Excel import
+          notes: resolveData.notes ? `${productToResolve.notes || ''}\nResolucion: ${resolveData.notes}`.trim() : productToResolve.notes,
+        });
+
+        toast({
+          title: `Producto marcado como ${labelMap[resolveData.resolution]}`,
+          description: `${resolveQty}x ${productToResolve.name}`,
+          status: "success",
+          duration: 3000,
+          isClosable: true,
+        });
+      }
+
+      onResolveClose();
+      setProductToResolve(null);
+    } catch (error) {
+      toast({
+        title: es.errors.saveError,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const toggleExpandRow = (productId: string) => {
     setExpandedRows((prev) => {
       const next = new Set(prev);
@@ -508,8 +760,11 @@ export function Products() {
       available: { color: "green", label: es.products.available },
       sold: { color: "gray", label: es.products.sold },
       reserved: { color: "orange", label: es.products.reserved },
-      promotional: { color: "purple", label: "Promoción" },
+      promotional: { color: "purple", label: "Promocion" },
       donated: { color: "blue", label: "Donado" },
+      review: { color: "yellow", label: "Revisar" },
+      expired: { color: "red", label: "Caducado" },
+      lost: { color: "pink", label: "Perdido" },
     };
     return (
       <Badge colorScheme={config[status].color}>{config[status].label}</Badge>
@@ -540,8 +795,8 @@ export function Products() {
 
       {/* View Mode Tabs */}
       <Tabs
-        index={viewMode === 'available' ? 0 : 1}
-        onChange={(index) => setViewMode(index === 0 ? 'available' : 'sold')}
+        index={viewMode === 'available' ? 0 : viewMode === 'sold' ? 1 : viewMode === 'review' ? 2 : 3}
+        onChange={(index) => handleViewModeChange(index === 0 ? 'available' : index === 1 ? 'sold' : index === 2 ? 'review' : 'other')}
         colorScheme="brand"
         variant="enclosed"
       >
@@ -564,10 +819,34 @@ export function Products() {
               </Badge>
             </HStack>
           </Tab>
+          <Tab>
+            <HStack spacing={2}>
+              <Icon as={FiAlertCircle} />
+              <Text>Revisar</Text>
+              <Badge colorScheme="yellow" ml={1}>
+                {allFilteredProducts.filter(p => p.status === 'review').length}
+              </Badge>
+            </HStack>
+          </Tab>
+          <Tab>
+            <HStack spacing={2}>
+              <Icon as={FiPackage} />
+              <Text>Otros</Text>
+              <Badge colorScheme="teal" ml={1}>
+                {allFilteredProducts.filter(p => ['donated', 'expired', 'lost'].includes(p.status)).length}
+              </Badge>
+            </HStack>
+          </Tab>
         </TabList>
 
         <TabPanels>
-          {/* Both tabs share the same content, just filtered differently */}
+          {/* All tabs share the same content, just filtered differently */}
+          <TabPanel px={0}>
+            {renderProductContent()}
+          </TabPanel>
+          <TabPanel px={0}>
+            {renderProductContent()}
+          </TabPanel>
           <TabPanel px={0}>
             {renderProductContent()}
           </TabPanel>
@@ -605,6 +884,15 @@ export function Products() {
         message={es.products.deleteConfirm}
         confirmText={es.actions.delete}
       />
+
+      {/* Resolve Review Modal */}
+      <ResolveReviewModal
+        isOpen={isResolveOpen}
+        onClose={onResolveClose}
+        product={productToResolve}
+        onConfirm={handleConfirmResolve}
+        isLoading={isLoading}
+      />
     </VStack>
   );
 
@@ -626,7 +914,7 @@ export function Products() {
               <AutocompleteSelect
                 options={CATEGORY_OPTIONS}
                 value={filters.category}
-                onChange={(val) => setFilters({ category: val as CategoryCode | "" })}
+                onChange={(val) => handleSetFilters({ category: val as CategoryCode | "" })}
                 placeholder="Categoría"
                 size="md"
               />
@@ -634,7 +922,7 @@ export function Products() {
               <AutocompleteSelect
                 options={UPS_BATCH_OPTIONS}
                 value={filters.upsBatch || ""}
-                onChange={(val) => setFilters({ upsBatch: val ? Number(val) : "" })}
+                onChange={(val) => handleSetFilters({ upsBatch: val ? Number(val) : "" })}
                 placeholder="UPS"
                 size="md"
               />
@@ -646,7 +934,20 @@ export function Products() {
                     { value: "reserved", label: es.products.reserved },
                   ]}
                   value={filters.status}
-                  onChange={(val) => setFilters({ status: val as ProductStatus | "" })}
+                  onChange={(val) => handleSetFilters({ status: val as ProductStatus | "" })}
+                  placeholder="Estado"
+                  size="md"
+                />
+              )}
+              {viewMode === 'other' && (
+                <AutocompleteSelect
+                  options={[
+                    { value: "donated", label: "Donado" },
+                    { value: "expired", label: "Caducado" },
+                    { value: "lost", label: "Perdido" },
+                  ]}
+                  value={filters.status}
+                  onChange={(val) => handleSetFilters({ status: val as ProductStatus | "" })}
                   placeholder="Estado"
                   size="md"
                 />
@@ -674,11 +975,30 @@ export function Products() {
         </Box>
 
         {/* Products - Cards on Mobile, Table on Desktop */}
-        {filteredProducts.length === 0 ? (
+        {isTabLoading ? (
+          /* Loading skeleton during tab/filter transitions */
+          <VStack spacing={3} align="stretch">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Box key={i} bg="white" p={4} borderRadius="lg" boxShadow="sm">
+                <HStack spacing={3} mb={3}>
+                  <Skeleton height="20px" width="60px" borderRadius="md" />
+                  <Skeleton height="20px" width="80px" borderRadius="md" />
+                </HStack>
+                <Skeleton height="18px" width="70%" mb={2} />
+                <SkeletonText noOfLines={1} width="40%" />
+                <HStack justify="space-between" mt={3}>
+                  <Skeleton height="16px" width="50px" />
+                  <Skeleton height="16px" width="60px" />
+                  <Skeleton height="22px" width="70px" borderRadius="md" />
+                </HStack>
+              </Box>
+            ))}
+          </VStack>
+        ) : filteredProducts.length === 0 ? (
           <Box bg="white" borderRadius="xl" boxShadow="sm">
             <EmptyState
-              title={viewMode === 'available' ? es.products.noProducts : "No hay productos vendidos"}
-              message={viewMode === 'available' ? "Agregue productos para comenzar" : "Los productos vendidos aparecerán aquí"}
+              title={viewMode === 'available' ? es.products.noProducts : viewMode === 'sold' ? "No hay productos vendidos" : viewMode === 'review' ? "No hay productos por revisar" : "No hay productos en esta categoría"}
+              message={viewMode === 'available' ? "Agregue productos para comenzar" : viewMode === 'sold' ? "Los productos vendidos aparecerán aquí" : viewMode === 'review' ? "Los productos por revisar aparecerán aquí" : "Los productos donados, caducados o perdidos aparecerán aquí"}
               actionLabel={viewMode === 'available' ? es.products.addProduct : undefined}
               onAction={viewMode === 'available' ? handleAddProduct : undefined}
             />
@@ -693,6 +1013,7 @@ export function Products() {
                 onEdit={() => handleEditProduct(product)}
                 onDelete={() => handleDeleteClick(product)}
                 onSell={() => handleSellClick(product)}
+                onResolve={() => handleResolveClick(product)}
                 viewMode={viewMode}
                 paymentStatus={viewMode === 'sold' ? getPaymentStatusForProduct(product.id, transactions) : undefined}
               />
@@ -813,6 +1134,17 @@ export function Products() {
                               onClick={() => handleSellClick(product)}
                             />
                           )}
+                          {/* Quick Resolve Button */}
+                          {product.status === "review" && (
+                            <IconButton
+                              icon={<Icon as={FiCheckCircle} />}
+                              aria-label="Resolver"
+                              size="sm"
+                              colorScheme="yellow"
+                              variant="ghost"
+                              onClick={() => handleResolveClick(product)}
+                            />
+                          )}
                           <Menu>
                             <MenuButton
                               as={IconButton}
@@ -834,6 +1166,14 @@ export function Products() {
                                   onClick={() => handleSellClick(product)}
                                 >
                                   Vender
+                                </MenuItem>
+                              )}
+                              {product.status === "review" && (
+                                <MenuItem
+                                  icon={<Icon as={FiCheckCircle} />}
+                                  onClick={() => handleResolveClick(product)}
+                                >
+                                  Resolver
                                 </MenuItem>
                               )}
                               <MenuItem
@@ -874,6 +1214,12 @@ export function Products() {
                                 <Text fontSize="xs" color="gray.500" fontWeight="semibold">Descripción</Text>
                                 <Text fontSize="sm" noOfLines={2}>{product.description || "-"}</Text>
                               </Box>
+                              {product.notes && (
+                                <Box gridColumn={{ md: "span 2" }}>
+                                  <Text fontSize="xs" color="gray.500" fontWeight="semibold">Notas</Text>
+                                  <Text fontSize="sm" whiteSpace="pre-wrap">{product.notes}</Text>
+                                </Box>
+                              )}
                               <Box>
                                 <Text fontSize="xs" color="gray.500" fontWeight="semibold">Creado</Text>
                                 <Text fontSize="sm">{new Date(product.createdAt).toLocaleDateString("es-MX")}</Text>

@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import { Product, Customer, Transaction, ProductStatus } from '../types';
 import { getCategoryLabel } from '../constants/categories';
 import { formatDate } from './formatters';
+import { deriveStatus } from './productHelpers';
 
 const statusLabels: Record<ProductStatus, string> = {
   available: 'Disponible',
@@ -31,7 +32,7 @@ export function exportProductsToExcel(products: Product[]): void {
     'Talla': p.size || '',
     'Precio Unitario': p.unitPrice,
     'Valor Total': p.quantity * p.unitPrice,
-    'Estado': getStatusLabel(p.status),
+    'Estado': getStatusLabel(deriveStatus(p)),
     'Observaciones': p.description || '',
   }));
 
@@ -169,7 +170,7 @@ export function exportAllToExcel(
     'Color': p.color || '',
     'Talla': p.size || '',
     'Precio Unitario': p.unitPrice,
-    'Estado': getStatusLabel(p.status),
+    'Estado': getStatusLabel(deriveStatus(p)),
     'Observaciones': p.description || '',
   }));
   const productsSheet = XLSX.utils.json_to_sheet(productsData);

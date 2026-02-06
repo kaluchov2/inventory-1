@@ -169,6 +169,12 @@ export type Database = {
           size: string | null;
           description: string | null;
           notes: string | null;
+          // Per-status quantity columns
+          available_qty: number;
+          sold_qty: number;
+          donated_qty: number;
+          lost_qty: number;
+          expired_qty: number;
           // V2: 8 status values
           status: 'available' | 'sold' | 'reserved' | 'promotional' | 'donated' | 'review' | 'expired' | 'lost';
           // V2: Tracking
@@ -203,6 +209,11 @@ export type Database = {
           size?: string | null;
           description?: string | null;
           notes?: string | null;
+          available_qty?: number;
+          sold_qty?: number;
+          donated_qty?: number;
+          lost_qty?: number;
+          expired_qty?: number;
           status?: 'available' | 'sold' | 'reserved' | 'promotional' | 'donated' | 'review' | 'expired' | 'lost';
           sold_by?: string | null;
           sold_to?: string | null;
@@ -235,6 +246,11 @@ export type Database = {
           size?: string | null;
           description?: string | null;
           notes?: string | null;
+          available_qty?: number;
+          sold_qty?: number;
+          donated_qty?: number;
+          lost_qty?: number;
+          expired_qty?: number;
           status?: 'available' | 'sold' | 'reserved' | 'promotional' | 'donated' | 'review' | 'expired' | 'lost';
           sold_by?: string | null;
           sold_to?: string | null;

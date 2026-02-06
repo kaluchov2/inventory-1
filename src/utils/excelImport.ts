@@ -233,6 +233,27 @@ function processInventarioSheet(
 
       let productName = String(row['Artículo'] || row['Articulo'] || '').trim();
 
+      const detectedStatus = detectStatus(observaciones);
+      const qty = parseInt(row['Cantidad']) || 0;
+
+      // Set qty fields based on detected status
+      let availableQty = 0, soldQty = 0, donatedQty = 0, lostQty = 0, expiredQty = 0;
+      switch (detectedStatus) {
+        case 'available': case 'reserved': case 'promotional':
+          availableQty = qty; break;
+        case 'sold':
+          soldQty = qty; break;
+        case 'donated':
+          donatedQty = qty; break;
+        case 'lost':
+          lostQty = qty; break;
+        case 'expired':
+          expiredQty = qty; break;
+        case 'review':
+          // All qtys stay 0 → reviewQty = quantity - 0 = quantity
+          break;
+      }
+
       const product: Product = {
         id: generateId(),
         name: productName,
@@ -246,7 +267,7 @@ function processInventarioSheet(
         barcode,
         // Legacy field
         upsBatch: toUpsBatch(upsValue),
-        quantity: parseInt(row['Cantidad']) || 0,
+        quantity: qty,
         unitPrice: parseCurrency(row['Precio unitario'] || row['Precio Unitario']),
         category: normalizeCategory(String(row['Categoría'] || row['Categoria'] || 'VIB')),
         brand: String(row['Marca'] || '').trim() || undefined,
@@ -254,7 +275,12 @@ function processInventarioSheet(
         size: String(row['Talla'] || '').trim() || undefined,
         description: observaciones || undefined,
         notes: otrosValue || undefined,
-        status: detectStatus(observaciones),
+        availableQty,
+        soldQty,
+        donatedQty,
+        lostQty,
+        expiredQty,
+        status: detectedStatus,
         createdAt: now,
         updatedAt: now,
       };
@@ -330,6 +356,25 @@ function processElectronicsSheet(
 
       let productName = `${row['Marca'] || ''} ${row['Modelo'] || ''} ${row['Color'] || ''}`.trim();
 
+      const detectedStatus = detectStatus(observaciones);
+      const qty = 1;
+
+      let availableQty = 0, soldQty = 0, donatedQty = 0, lostQty = 0, expiredQty = 0;
+      switch (detectedStatus) {
+        case 'available': case 'reserved': case 'promotional':
+          availableQty = qty; break;
+        case 'sold':
+          soldQty = qty; break;
+        case 'donated':
+          donatedQty = qty; break;
+        case 'lost':
+          lostQty = qty; break;
+        case 'expired':
+          expiredQty = qty; break;
+        case 'review':
+          break;
+      }
+
       const product: Product = {
         id: generateId(),
         name: productName,
@@ -343,15 +388,20 @@ function processElectronicsSheet(
         barcode,
         // Legacy field
         upsBatch: toUpsBatch(upsValue),
-        quantity: 1,
+        quantity: qty,
         unitPrice: parseCurrency(row['Precio unitario'] || row['Precio Unitario'] || 0),
         category,
         brand: String(row['Marca'] || '').trim() || undefined,
         color: String(row['Color'] || '').trim() || undefined,
-        size: String(row['Cap'] || '').trim() || undefined, // Storage capacity as size
+        size: String(row['Cap'] || '').trim() || undefined,
         description: observaciones || undefined,
         notes: otrosValue || undefined,
-        status: detectStatus(observaciones),
+        availableQty,
+        soldQty,
+        donatedQty,
+        lostQty,
+        expiredQty,
+        status: detectedStatus,
         createdAt: now,
         updatedAt: now,
       };
@@ -531,10 +581,8 @@ function updateDropStats(drops: Drop[], products: Product[]): void {
     drop.totalProducts = dropProducts.length;
     drop.totalUnits = dropProducts.reduce((sum, p) => sum + (p.quantity || 0), 0);
     drop.totalValue = dropProducts.reduce((sum, p) => sum + ((p.quantity || 0) * (p.unitPrice || 0)), 0);
-    drop.soldCount = dropProducts.filter(p => p.status === 'sold').length;
-    drop.availableCount = dropProducts.filter(p =>
-      p.status === 'available' || p.status === 'reserved' || p.status === 'promotional'
-    ).length;
+    drop.soldCount = dropProducts.reduce((sum, p) => sum + (p.soldQty || 0), 0);
+    drop.availableCount = dropProducts.reduce((sum, p) => sum + (p.availableQty || 0), 0);
   }
 }
 

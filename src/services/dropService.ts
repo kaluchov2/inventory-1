@@ -129,21 +129,19 @@ export const dropService = {
     // Get all products for this drop
     const { data: products, error: productsError } = await client
       .from('products')
-      .select('quantity, unit_price, status')
+      .select('quantity, unit_price, status, available_qty, sold_qty')
       .eq('drop_number', dropNumber)
       .eq('is_deleted', false);
 
     if (productsError) throw productsError;
 
-    // Calculate stats
+    // Calculate stats using qty columns
     const stats = {
       totalProducts: products.length,
       totalUnits: products.reduce((sum, p) => sum + (p.quantity || 0), 0),
       totalValue: products.reduce((sum, p) => sum + ((p.quantity || 0) * (p.unit_price || 0)), 0),
-      soldCount: products.filter(p => p.status === 'sold').length,
-      availableCount: products.filter(p =>
-        p.status === 'available' || p.status === 'reserved' || p.status === 'promotional'
-      ).length,
+      soldCount: products.reduce((sum, p) => sum + (p.sold_qty || 0), 0),
+      availableCount: products.reduce((sum, p) => sum + (p.available_qty || 0), 0),
     };
 
     // Update the drop with new stats

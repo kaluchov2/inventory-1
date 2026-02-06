@@ -12,6 +12,7 @@ import { supabase, getSupabaseClient } from "../lib/supabase";
 import { parseUPS } from "../utils/upsParser";
 import { generateBarcodeFromParsed } from "../utils/barcodeGenerator";
 import { getProductMatchKey } from "../utils/excelImport";
+import { deriveStatus } from "../utils/productHelpers";
 
 /**
  * Normalize a string value for comparison during sync.
@@ -136,6 +137,12 @@ export const useProductStore = create<ProductStore>()(
           productNumber: productData.productNumber ?? parsed.productNumber,
           dropSequence,
           barcode,
+          // Qty fields default to 0 (unless provided)
+          availableQty: productData.availableQty ?? 0,
+          soldQty: productData.soldQty ?? 0,
+          donatedQty: productData.donatedQty ?? 0,
+          lostQty: productData.lostQty ?? 0,
+          expiredQty: productData.expiredQty ?? 0,
           createdAt: now,
           updatedAt: now,
         };
@@ -172,13 +179,53 @@ export const useProductStore = create<ProductStore>()(
           ),
         }));
 
-        // Queue for sync
+        // Queue for sync (with direct-sync fallback for localStorage quota)
         if (supabase) {
-          syncManager.queueOperation({
-            type: "products",
-            action: "update",
-            data: updatedProduct,
-          });
+          try {
+            syncManager.queueOperation({
+              type: "products",
+              action: "update",
+              data: updatedProduct,
+            });
+          } catch (queueError) {
+            console.warn('[Store] Queue failed, attempting direct sync:', queueError);
+            getSupabaseClient()
+              .from('products')
+              .upsert({
+                id: updatedProduct.id,
+                name: updatedProduct.name,
+                sku: updatedProduct.sku,
+                ups_raw: updatedProduct.upsRaw || null,
+                identifier_type: updatedProduct.identifierType || null,
+                drop_number: updatedProduct.dropNumber || null,
+                product_number: updatedProduct.productNumber || null,
+                drop_sequence: updatedProduct.dropSequence || null,
+                ups_batch: updatedProduct.upsBatch,
+                quantity: updatedProduct.quantity,
+                unit_price: updatedProduct.unitPrice,
+                original_price: updatedProduct.originalPrice || null,
+                category: updatedProduct.category,
+                brand: updatedProduct.brand || null,
+                color: updatedProduct.color || null,
+                size: updatedProduct.size || null,
+                description: updatedProduct.description || null,
+                notes: updatedProduct.notes || null,
+                available_qty: updatedProduct.availableQty || 0,
+                sold_qty: updatedProduct.soldQty || 0,
+                donated_qty: updatedProduct.donatedQty || 0,
+                lost_qty: updatedProduct.lostQty || 0,
+                expired_qty: updatedProduct.expiredQty || 0,
+                status: updatedProduct.status,
+                sold_by: updatedProduct.soldBy || null,
+                sold_to: updatedProduct.soldTo || null,
+                sold_at: updatedProduct.soldAt || null,
+                barcode: updatedProduct.barcode || null,
+                created_at: updatedProduct.createdAt,
+                updated_at: updatedProduct.updatedAt,
+                is_deleted: false,
+              }, { onConflict: 'id' })
+              .then(({ error }) => { if (error) console.error('[Store] Direct sync failed:', error); });
+          }
         }
       },
 
@@ -201,12 +248,18 @@ export const useProductStore = create<ProductStore>()(
       },
 
       markAsSold: (id, soldBy, soldTo) => {
-        get().updateProduct(id, {
-          status: "sold" as ProductStatus,
+        const product = get().products.find((p) => p.id === id);
+        if (!product) return;
+        const updates: Partial<Product> = {
+          availableQty: Math.max(0, product.availableQty - product.quantity),
+          soldQty: product.soldQty + product.quantity,
           soldBy,
           soldTo,
           soldAt: getCurrentISODate(),
-        });
+        };
+        const updated = { ...product, ...updates };
+        updates.status = deriveStatus(updated as Product);
+        get().updateProduct(id, updates);
       },
 
       setFilters: (newFilters) => {
@@ -285,6 +338,11 @@ export const useProductStore = create<ProductStore>()(
                   size: p.size || null,
                   description: p.description || null,
                   notes: p.notes || null,
+                  available_qty: p.availableQty || 0,
+                  sold_qty: p.soldQty || 0,
+                  donated_qty: p.donatedQty || 0,
+                  lost_qty: p.lostQty || 0,
+                  expired_qty: p.expiredQty || 0,
                   status: p.status,
                   sold_by: p.soldBy || null,
                   sold_to: p.soldTo || null,
@@ -724,19 +782,19 @@ export const useProductStore = create<ProductStore>()(
 
       getTotalInventoryValue: () => {
         return get()
-          .products.filter((p) => p.status === "available")
-          .reduce((sum, p) => sum + p.quantity * p.unitPrice, 0);
+          .products.filter((p) => p.availableQty > 0)
+          .reduce((sum, p) => sum + p.availableQty * p.unitPrice, 0);
       },
 
       getTotalProductCount: () => {
-        return get().products.filter((p) => p.status === "available").length;
+        return get().products.filter((p) => p.availableQty > 0).length;
       },
 
       getProductsByCategory: () => {
-        const products = get().products.filter((p) => p.status === "available");
+        const products = get().products.filter((p) => p.availableQty > 0);
         return products.reduce(
           (acc, p) => {
-            acc[p.category] = (acc[p.category] || 0) + p.quantity;
+            acc[p.category] = (acc[p.category] || 0) + p.availableQty;
             return acc;
           },
           {} as Record<CategoryCode, number>,
@@ -764,11 +822,8 @@ export const useProductStore = create<ProductStore>()(
             (sum, p) => sum + p.quantity * p.unitPrice,
             0,
           ),
-          soldCount: products.filter((p) => p.status === "sold").length,
-          // Available count includes: available, reserved, promotional (items still in inventory)
-          availableCount: products.filter((p) =>
-            p.status === "available" || p.status === "reserved" || p.status === "promotional"
-          ).length,
+          soldCount: products.reduce((sum, p) => sum + p.soldQty, 0),
+          availableCount: products.reduce((sum, p) => sum + p.availableQty, 0),
         };
       },
 
@@ -786,24 +841,67 @@ export const useProductStore = create<ProductStore>()(
     }),
     {
       name: "inventory_products",
-      // Migration for existing data to V2 format
+      // Migration for existing data to V2 format + qty fields
       onRehydrateStorage: () => (state) => {
         if (state) {
-          // Migrate products that don't have V2 fields
+          // Deduplicate by ID first (safety net)
+          const seen = new Map<string, Product>();
+          for (const product of state.products) {
+            seen.set(product.id, product);
+          }
+          state.products = Array.from(seen.values());
+
+          // Migrate products
           state.products = state.products.map((product) => {
-            if (!product.upsRaw) {
-              const upsRaw = String(product.upsBatch || "");
+            let migrated = { ...product };
+
+            // V2 UPS migration
+            if (!migrated.upsRaw) {
+              const upsRaw = String(migrated.upsBatch || "");
               const parsed = parseUPS(upsRaw);
-              return {
-                ...product,
+              migrated = {
+                ...migrated,
                 upsRaw,
                 identifierType: parsed.identifierType,
                 dropNumber: parsed.dropNumber,
                 productNumber: parsed.productNumber,
-                dropSequence: product.dropSequence || 1,
+                dropSequence: migrated.dropSequence || 1,
               };
             }
-            return product;
+
+            // Qty fields migration: if missing, derive from status + quantity
+            if (migrated.availableQty === undefined || migrated.availableQty === null) {
+              migrated.availableQty = 0;
+              migrated.soldQty = 0;
+              migrated.donatedQty = 0;
+              migrated.lostQty = 0;
+              migrated.expiredQty = 0;
+
+              switch (migrated.status) {
+                case 'available':
+                case 'reserved':
+                case 'promotional':
+                  migrated.availableQty = migrated.quantity;
+                  break;
+                case 'sold':
+                  migrated.soldQty = migrated.quantity;
+                  break;
+                case 'donated':
+                  migrated.donatedQty = migrated.quantity;
+                  break;
+                case 'lost':
+                  migrated.lostQty = migrated.quantity;
+                  break;
+                case 'expired':
+                  migrated.expiredQty = migrated.quantity;
+                  break;
+                case 'review':
+                  // All qtys stay 0, reviewQty = quantity - 0 = quantity
+                  break;
+              }
+            }
+
+            return migrated;
           });
         }
       },
@@ -835,6 +933,11 @@ function convertDbProduct(dbProduct: any): Product {
     description: dbProduct.description || undefined,
     notes: dbProduct.notes || undefined,
     barcode: dbProduct.barcode || undefined,
+    availableQty: dbProduct.available_qty || 0,
+    soldQty: dbProduct.sold_qty || 0,
+    donatedQty: dbProduct.donated_qty || 0,
+    lostQty: dbProduct.lost_qty || 0,
+    expiredQty: dbProduct.expired_qty || 0,
     status: dbProduct.status,
     soldBy: dbProduct.sold_by || undefined,
     soldTo: dbProduct.sold_to || undefined,

@@ -39,6 +39,7 @@ import { useCustomerStore } from '../../store/customerStore';
 import { formatCurrency } from '../../utils/formatters';
 import { getCategoryLabel } from '../../constants/categories';
 import { es } from '../../i18n/es';
+import { getReviewQty } from '../../utils/productHelpers';
 
 export type ResolutionType = 'available' | 'sold' | 'donated' | 'lost' | 'expired';
 
@@ -94,11 +95,15 @@ export function ResolveReviewModal({
   const discount = product ? Math.max(0, product.unitPrice - salePrice) : 0;
   const total = resolveQuantity * salePrice;
 
+  // Compute reviewQty for the product
+  const reviewQuantity = product ? getReviewQty(product) : 0;
+
   // Reset form when modal opens
   useEffect(() => {
     if (isOpen && product) {
+      const rQty = getReviewQty(product);
       setResolution('sold');
-      setResolveQuantity(product.quantity);
+      setResolveQuantity(rQty);
       setCustomerId('');
       setIsCreatingClient(false);
       setNewClientName('');
@@ -288,7 +293,7 @@ export function ResolveReviewModal({
                   </Text>
                 )}
                 <Text fontSize="sm" color="gray.500">
-                  Cantidad: {product.quantity} unidades
+                  Cantidad por revisar: {reviewQuantity} unidades
                 </Text>
                 {product.notes && (
                   <Box mt={2} p={2} bg="yellow.100" borderRadius="md" width="100%">
@@ -300,19 +305,19 @@ export function ResolveReviewModal({
             </Box>
 
             {/* Quantity Selector */}
-            {product.quantity > 1 && (
+            {reviewQuantity > 1 && (
               <FormControl>
                 <FormLabel fontWeight="semibold">
                   Cantidad a resolver
                   <Text as="span" fontWeight="normal" color="gray.500" ml={2} fontSize="sm">
-                    (de {product.quantity} disponibles)
+                    (de {reviewQuantity} por revisar)
                   </Text>
                 </FormLabel>
                 <NumberInput
                   value={resolveQuantity}
-                  onChange={(_, val) => setResolveQuantity(Math.max(1, Math.min(product.quantity, val || 1)))}
+                  onChange={(_, val) => setResolveQuantity(Math.max(1, Math.min(reviewQuantity, val || 1)))}
                   min={1}
-                  max={product.quantity}
+                  max={reviewQuantity}
                   size="md"
                 >
                   <NumberInputField />
@@ -321,9 +326,9 @@ export function ResolveReviewModal({
                     <NumberDecrementStepper />
                   </NumberInputStepper>
                 </NumberInput>
-                {resolveQuantity < product.quantity && (
+                {resolveQuantity < reviewQuantity && (
                   <Text fontSize="xs" color="blue.600" mt={1}>
-                    {product.quantity - resolveQuantity} unidades permanecerán en revisión
+                    {reviewQuantity - resolveQuantity} unidades permanecerán en revisión
                   </Text>
                 )}
               </FormControl>
@@ -575,7 +580,7 @@ export function ResolveReviewModal({
             isDisabled={!isValid}
             leftIcon={<Icon as={FiCheckCircle} />}
           >
-            Marcar {resolveQuantity < (product?.quantity || 0) ? `${resolveQuantity}` : ''} como {getResolutionLabel(resolution)}
+            Marcar {resolveQuantity < reviewQuantity ? `${resolveQuantity}` : ''} como {getResolutionLabel(resolution)}
           </Button>
         </ModalFooter>
       </ModalContent>

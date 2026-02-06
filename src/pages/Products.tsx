@@ -65,6 +65,7 @@ import { es } from "../i18n/es";
 import { useProductStore } from "../store/productStore";
 import { useTransactionStore, createSaleTransaction } from "../store/transactionStore";
 import { useCustomerStore } from "../store/customerStore";
+import { getReviewQty, deriveStatus } from "../utils/productHelpers";
 
 // Helper function to get payment status for a product
 function getPaymentStatusForProduct(productId: string, transactions: Transaction[]): { status: 'paid' | 'pending' | 'unknown'; amount: number } {
@@ -145,12 +146,12 @@ function ProductCard({
             <MenuItem icon={<Icon as={FiEdit2} />} onClick={onEdit}>
               {es.actions.edit}
             </MenuItem>
-            {product.status === "available" && (
+            {product.availableQty > 0 && (
               <MenuItem icon={<Icon as={FiDollarSign} />} onClick={onSell}>
                 Vender
               </MenuItem>
             )}
-            {product.status === "review" && onResolve && (
+            {getReviewQty(product) > 0 && onResolve && (
               <MenuItem icon={<Icon as={FiCheckCircle} />} onClick={onResolve}>
                 Resolver
               </MenuItem>
@@ -215,7 +216,7 @@ function ProductCard({
           </Text>
           <HStack>
             <Text fontWeight="bold">
-              {product.quantity}
+              {viewMode === 'review' ? getReviewQty(product) : viewMode === 'available' ? product.availableQty : viewMode === 'sold' ? product.soldQty : (product.donatedQty + product.lostQty + product.expiredQty)}
             </Text>
           </HStack>
         </VStack>
@@ -265,7 +266,7 @@ function ProductCard({
       </Flex>
 
       {/* Quick Sell Button - Mobile */}
-      {product.status === "available" && viewMode === 'available' && (
+      {product.availableQty > 0 && viewMode === 'available' && (
         <Button
           mt={3}
           size="sm"
@@ -279,7 +280,7 @@ function ProductCard({
       )}
 
       {/* Resolve Button - Mobile (Review tab) */}
-      {product.status === "review" && viewMode === 'review' && onResolve && (
+      {getReviewQty(product) > 0 && viewMode === 'review' && onResolve && (
         <Button
           mt={3}
           size="sm"
@@ -374,18 +375,18 @@ export function Products() {
     [products, filters, hasSelection],
   );
 
-  // Filter by view mode (available, sold, review, or other)
+  // Filter by view mode using qty columns (a product CAN appear in multiple tabs)
   const filteredProducts = useMemo(() => {
     if (viewMode === 'available') {
-      return allFilteredProducts.filter(p => p.status === 'available');
+      return allFilteredProducts.filter(p => p.availableQty > 0);
     }
     if (viewMode === 'sold') {
-      return allFilteredProducts.filter(p => p.status === 'sold');
+      return allFilteredProducts.filter(p => p.soldQty > 0);
     }
     if (viewMode === 'other') {
-      return allFilteredProducts.filter(p => ['donated', 'expired', 'lost'].includes(p.status));
+      return allFilteredProducts.filter(p => (p.donatedQty + p.lostQty + p.expiredQty) > 0);
     }
-    return allFilteredProducts.filter(p => p.status === 'review');
+    return allFilteredProducts.filter(p => getReviewQty(p) > 0);
   }, [allFilteredProducts, viewMode]);
 
   // Pagination
@@ -395,12 +396,12 @@ export function Products() {
     return filteredProducts.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredProducts, currentPage]);
 
-  // Memoize tab counts to avoid repeated .filter() calls per render
+  // Memoize tab counts using qty columns
   const tabCounts = useMemo(() => ({
-    available: allFilteredProducts.filter(p => p.status === 'available').length,
-    sold: allFilteredProducts.filter(p => p.status === 'sold').length,
-    review: allFilteredProducts.filter(p => p.status === 'review').length,
-    other: allFilteredProducts.filter(p => ['donated', 'expired', 'lost'].includes(p.status)).length,
+    available: allFilteredProducts.filter(p => p.availableQty > 0).length,
+    sold: allFilteredProducts.filter(p => p.soldQty > 0).length,
+    review: allFilteredProducts.filter(p => getReviewQty(p) > 0).length,
+    other: allFilteredProducts.filter(p => (p.donatedQty + p.lostQty + p.expiredQty) > 0).length,
   }), [allFilteredProducts]);
 
   // Reset page when filters or viewMode change
@@ -532,8 +533,12 @@ export function Products() {
     }
   };
 
+  // Double-click guard ref
+  const isSaleRef = useRef(false);
+
   const handleConfirmSale = (saleData: SaleData) => {
-    if (!productToSell) return;
+    if (!productToSell || isSaleRef.current) return;
+    isSaleRef.current = true;
 
     setIsLoading(true);
     try {
@@ -565,20 +570,17 @@ export function Products() {
 
       addTransaction(transaction);
 
-      // Update product quantity and status
-      const newQuantity = productToSell.quantity - saleData.quantity;
-      const productUpdate: Partial<Product> = {
-        quantity: newQuantity,
+      // Update qty fields on the SAME product (no split)
+      const updates: Partial<Product> = {
+        availableQty: productToSell.availableQty - saleData.quantity,
+        soldQty: productToSell.soldQty + saleData.quantity,
+        soldTo: saleData.customerId,
+        soldAt: new Date().toISOString(),
       };
+      const updatedProduct = { ...productToSell, ...updates };
+      updates.status = deriveStatus(updatedProduct as Product);
 
-      // If quantity becomes 0, mark as sold
-      if (newQuantity === 0) {
-        productUpdate.status = 'sold';
-        productUpdate.soldTo = saleData.customerId;
-        productUpdate.soldAt = new Date().toISOString();
-      }
-
-      updateProduct(productToSell.id, productUpdate);
+      updateProduct(productToSell.id, updates);
 
       // If credit sale, add to customer balance
       const totalSale = saleData.quantity * productToSell.unitPrice;
@@ -608,69 +610,50 @@ export function Products() {
       });
     } finally {
       setIsLoading(false);
+      isSaleRef.current = false;
     }
   };
 
+  // Double-click guard ref for resolve
+  const isResolvingRef = useRef(false);
+
   const handleConfirmResolve = (resolveData: ResolveData) => {
-    if (!productToResolve) return;
+    if (!productToResolve || isResolvingRef.current) return;
+    isResolvingRef.current = true;
+    const product = productToResolve;
+    onResolveClose();
+    setProductToResolve(null);
 
-    setIsLoading(true);
     try {
-      const resolveQty = resolveData.quantity;
-      const isPartial = resolveQty < productToResolve.quantity;
+      const qty = resolveData.quantity;
+      const updates: Partial<Product> = {};
 
-      // If partial resolution, reduce original product quantity (stays in review)
-      // and create a new split product for the resolved portion
-      let resolvedProductId = productToResolve.id;
-
-      if (isPartial) {
-        // Reduce original product's quantity (it stays in review)
-        updateProduct(productToResolve.id, {
-          quantity: productToResolve.quantity - resolveQty,
-        });
-
-        // Create a new product entry for the resolved portion
-        const splitProduct = addProduct({
-          name: productToResolve.name,
-          upsRaw: productToResolve.upsRaw,
-          identifierType: productToResolve.identifierType,
-          dropNumber: productToResolve.dropNumber,
-          productNumber: productToResolve.productNumber,
-          dropSequence: productToResolve.dropSequence,
-          upsBatch: productToResolve.upsBatch,
-          quantity: resolveQty,
-          unitPrice: productToResolve.unitPrice,
-          originalPrice: productToResolve.originalPrice,
-          category: productToResolve.category,
-          brand: productToResolve.brand,
-          color: productToResolve.color,
-          size: productToResolve.size,
-          description: productToResolve.description,
-          barcode: productToResolve.barcode ? `${productToResolve.barcode}-S` : undefined,
-          status: 'review' as ProductStatus,
-          notes: productToResolve.notes,
-        });
-        resolvedProductId = splitProduct.id;
+      // Increment the target qty field on the SAME product — no split
+      switch (resolveData.resolution) {
+        case 'available': updates.availableQty = product.availableQty + qty; break;
+        case 'sold': updates.soldQty = product.soldQty + qty; break;
+        case 'donated': updates.donatedQty = product.donatedQty + qty; break;
+        case 'lost': updates.lostQty = product.lostQty + qty; break;
+        case 'expired': updates.expiredQty = product.expiredQty + qty; break;
       }
 
+      // Handle sold resolution — create transaction + payment
       if (resolveData.resolution === 'sold') {
-        // Use custom sale price if provided, otherwise fall back to original
-        const effectiveUnitPrice = resolveData.salePrice ?? productToResolve.unitPrice;
-        const effectiveTotalPrice = resolveQty * effectiveUnitPrice;
+        const effectiveUnitPrice = resolveData.salePrice ?? product.unitPrice;
+        const effectiveTotalPrice = qty * effectiveUnitPrice;
 
-        // Create sale transaction for sold resolution
         const transaction = createSaleTransaction(
           { id: resolveData.customerId || '', name: resolveData.customerName || es.customers.walkIn },
           [{
-            productId: resolvedProductId,
-            productName: productToResolve.name,
-            quantity: resolveQty,
+            productId: product.id,
+            productName: product.name,
+            quantity: qty,
             unitPrice: effectiveUnitPrice,
             totalPrice: effectiveTotalPrice,
-            category: productToResolve.category,
-            brand: productToResolve.brand,
-            color: productToResolve.color,
-            size: productToResolve.size,
+            category: product.category,
+            brand: product.brand,
+            color: product.color,
+            size: product.size,
           }],
           {
             method: resolveData.paymentMethod || 'cash',
@@ -686,46 +669,29 @@ export function Products() {
 
         addTransaction(transaction);
 
-        // Update the resolved product status to sold
-        const productUpdate: Partial<Product> = {
-          status: 'sold' as ProductStatus,
-          description: undefined, // Clear stale "Revisar" from Excel import
-          soldTo: resolveData.customerId,
-          soldAt: new Date().toISOString(),
-          notes: resolveData.notes ? `${productToResolve.notes || ''}\nResolucion: ${resolveData.notes}`.trim() : productToResolve.notes,
-        };
+        updates.soldTo = resolveData.customerId;
+        updates.soldAt = new Date().toISOString();
 
         if (resolveData.discount && resolveData.discount > 0) {
-          productUpdate.originalPrice = productToResolve.unitPrice;
-          productUpdate.unitPrice = effectiveUnitPrice;
+          updates.originalPrice = product.unitPrice;
+          updates.unitPrice = effectiveUnitPrice;
         }
-
-        updateProduct(resolvedProductId, productUpdate);
 
         // Handle credit balance
         const paidAmount = (resolveData.cashAmount || 0) + (resolveData.transferAmount || 0) + (resolveData.cardAmount || 0);
         const unpaidAmount = effectiveTotalPrice - paidAmount;
-
         if (unpaidAmount > 0 && resolveData.customerId) {
           addPurchase(resolveData.customerId, unpaidAmount);
         }
 
         toast({
           title: "Producto marcado como vendido",
-          description: `${resolveQty}x ${productToResolve.name} - ${formatCurrency(effectiveTotalPrice)}`,
+          description: `${qty}x ${product.name} - ${formatCurrency(effectiveTotalPrice)}`,
           status: "success",
           duration: 4000,
           isClosable: true,
         });
       } else {
-        // For available, donated, lost, expired - just update status
-        const statusMap: Record<string, ProductStatus> = {
-          available: 'available',
-          donated: 'donated',
-          lost: 'lost',
-          expired: 'expired',
-        };
-
         const labelMap: Record<string, string> = {
           available: 'disponible',
           donated: 'donado',
@@ -733,32 +699,27 @@ export function Products() {
           expired: 'caducado',
         };
 
-        updateProduct(resolvedProductId, {
-          status: statusMap[resolveData.resolution],
-          description: undefined, // Clear stale "Revisar" from Excel import
-          notes: resolveData.notes ? `${productToResolve.notes || ''}\nResolucion: ${resolveData.notes}`.trim() : productToResolve.notes,
-        });
-
         toast({
           title: `Producto marcado como ${labelMap[resolveData.resolution]}`,
-          description: `${resolveQty}x ${productToResolve.name}`,
+          description: `${qty}x ${product.name}`,
           status: "success",
           duration: 3000,
           isClosable: true,
         });
       }
 
-      onResolveClose();
-      setProductToResolve(null);
-    } catch (error) {
-      toast({
-        title: es.errors.saveError,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      // Update notes
+      if (resolveData.notes) {
+        updates.notes = `${product.notes || ''}\nResolucion: ${resolveData.notes}`.trim();
+      }
+
+      // Derive status for backward compat
+      const updatedProduct = { ...product, ...updates };
+      updates.status = deriveStatus(updatedProduct as Product);
+
+      updateProduct(product.id, updates);
     } finally {
-      setIsLoading(false);
+      isResolvingRef.current = false;
     }
   };
 
@@ -1127,7 +1088,7 @@ export function Products() {
                       <Td>{product.brand || "-"}</Td>
                       <Td isNumeric>
                         <Text fontWeight="bold">
-                          {product.quantity}
+                          {viewMode === 'review' ? getReviewQty(product) : viewMode === 'available' ? product.availableQty : viewMode === 'sold' ? product.soldQty : (product.donatedQty + product.lostQty + product.expiredQty)}
                         </Text>
                       </Td>
                       <Td isNumeric fontWeight="bold">
@@ -1161,7 +1122,7 @@ export function Products() {
                       <Td onClick={(e) => e.stopPropagation()}>
                         <HStack spacing={1}>
                           {/* Quick Sell Button */}
-                          {product.status === "available" && (
+                          {product.availableQty > 0 && (
                             <IconButton
                               icon={<Icon as={FiDollarSign} />}
                               aria-label="Vender"
@@ -1172,7 +1133,7 @@ export function Products() {
                             />
                           )}
                           {/* Quick Resolve Button */}
-                          {product.status === "review" && (
+                          {getReviewQty(product) > 0 && (
                             <IconButton
                               icon={<Icon as={FiCheckCircle} />}
                               aria-label="Resolver"
@@ -1197,7 +1158,7 @@ export function Products() {
                               >
                                 {es.actions.edit}
                               </MenuItem>
-                              {product.status === "available" && (
+                              {product.availableQty > 0 && (
                                 <MenuItem
                                   icon={<Icon as={FiDollarSign} />}
                                   onClick={() => handleSellClick(product)}
@@ -1205,7 +1166,7 @@ export function Products() {
                                   Vender
                                 </MenuItem>
                               )}
-                              {product.status === "review" && (
+                              {getReviewQty(product) > 0 && (
                                 <MenuItem
                                   icon={<Icon as={FiCheckCircle} />}
                                   onClick={() => handleResolveClick(product)}

@@ -39,6 +39,7 @@ import { parseBarcode } from '../utils/barcodeGenerator';
 import { formatCurrency } from '../utils/formatters';
 import { getCategoryLabel } from '../constants/categories';
 import { es } from '../i18n/es';
+import { deriveStatus } from '../utils/productHelpers';
 
 type ScanMode = 'sell' | 'register';
 
@@ -92,7 +93,7 @@ export function Scanner() {
     const product = getProductByBarcode(trimmedBarcode);
 
     if (product) {
-      if (product.status === 'sold') {
+      if (product.availableQty <= 0 && product.soldQty > 0) {
         // Product already sold
         setLastScan({
           barcode: trimmedBarcode,
@@ -212,17 +213,17 @@ export function Scanner() {
 
       addTransaction(transaction);
 
-      // Update product
-      const newQuantity = productToSell.quantity - saleData.quantity;
-      const productUpdate: Partial<Product> = { quantity: newQuantity };
+      // Update qty fields on the SAME product
+      const updates: Partial<Product> = {
+        availableQty: productToSell.availableQty - saleData.quantity,
+        soldQty: productToSell.soldQty + saleData.quantity,
+        soldTo: saleData.customerId,
+        soldAt: new Date().toISOString(),
+      };
+      const updatedProduct = { ...productToSell, ...updates };
+      updates.status = deriveStatus(updatedProduct as Product);
 
-      if (newQuantity === 0) {
-        productUpdate.status = 'sold';
-        productUpdate.soldTo = saleData.customerId;
-        productUpdate.soldAt = new Date().toISOString();
-      }
-
-      updateProduct(productToSell.id, productUpdate);
+      updateProduct(productToSell.id, updates);
 
       // Update customer balance if credit
       const totalSale = saleData.quantity * productToSell.unitPrice;
@@ -480,11 +481,11 @@ export function Scanner() {
                   )}
 
                   <Text fontSize="sm" color="gray.500">
-                    Disponibles: {lastScan.product.quantity} unidades
+                    Disponibles: {lastScan.product.availableQty} unidades
                   </Text>
 
                   {/* Action Button */}
-                  {lastScan.product.status === 'available' && mode === 'sell' && (
+                  {lastScan.product.availableQty > 0 && mode === 'sell' && (
                     <Button
                       colorScheme="green"
                       size="lg"

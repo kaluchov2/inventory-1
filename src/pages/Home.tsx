@@ -30,6 +30,7 @@ import { useCustomerStore } from '../store/customerStore';
 import { useTransactionStore } from '../store/transactionStore';
 import { formatCurrency, formatDateTime } from '../utils/formatters';
 import { es } from '../i18n/es';
+import { getReviewQty } from '../utils/productHelpers';
 
 export function Home() {
   const navigate = useNavigate();
@@ -38,9 +39,9 @@ export function Home() {
   const { getTotalOutstandingBalance } = useCustomerStore();
   const { transactions, getTodaySales } = useTransactionStore();
 
-  const totalProducts = products.filter(p => p.status === 'available').length;
+  const totalProducts = products.filter(p => p.availableQty > 0).length;
   const inventoryValue = getTotalInventoryValue();
-  const reviewProducts = products.filter(p => p.status === 'review');
+  const reviewProducts = products.filter(p => getReviewQty(p) > 0);
   const todaySales = getTodaySales();
   const outstandingBalance = getTotalOutstandingBalance();
 

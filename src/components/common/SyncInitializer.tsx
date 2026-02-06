@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useProductStore } from '../../store/productStore';
 import { useCustomerStore } from '../../store/customerStore';
 import { useTransactionStore } from '../../store/transactionStore';
 import { useRealtimeProducts, useRealtimeCustomers, useRealtimeTransactions } from '../../hooks/useRealtimeSync';
+import { syncManager } from '../../lib/syncManager';
 
 /**
  * SyncInitializer Component
@@ -16,16 +17,19 @@ export function SyncInitializer() {
   const loadCustomers = useCustomerStore((state) => state.loadFromSupabase);
   const loadTransactions = useTransactionStore((state) => state.loadFromSupabase);
 
-  // Initial load from Supabase
+  // Initial load from Supabase — flush pending queue first
   useEffect(() => {
     if (isAuthenticated && !isOfflineMode) {
-      console.log('[Sync] Loading initial data from Supabase...');
+      console.log('[Sync] Flushing pending queue before initial load...');
 
-      Promise.all([
-        loadProducts(true), // Force replace on initial load - Supabase is source of truth
-        loadCustomers(),
-        loadTransactions(),
-      ]).then(() => {
+      syncManager.syncPendingOperations().then(() => {
+        console.log('[Sync] Queue flushed, loading initial data from Supabase...');
+        return Promise.all([
+          loadProducts(true), // Force replace on initial load - Supabase is source of truth
+          loadCustomers(),
+          loadTransactions(),
+        ]);
+      }).then(() => {
         console.log('[Sync] Initial data loaded successfully');
       }).catch((error) => {
         console.error('[Sync] Failed to load initial data:', error);
@@ -38,8 +42,17 @@ export function SyncInitializer() {
   const customerReloadTimer = useRef<ReturnType<typeof setTimeout>>();
   const transactionReloadTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  // Subscribe to real-time updates (debounced to prevent race conditions)
-  useRealtimeProducts(() => {
+  // Cleanup timeout refs on unmount
+  useEffect(() => {
+    return () => {
+      clearTimeout(productReloadTimer.current);
+      clearTimeout(customerReloadTimer.current);
+      clearTimeout(transactionReloadTimer.current);
+    };
+  }, []);
+
+  // Wrap realtime callbacks in useCallback
+  const handleProductChange = useCallback(() => {
     if (isAuthenticated && !isOfflineMode) {
       clearTimeout(productReloadTimer.current);
       productReloadTimer.current = setTimeout(() => {
@@ -47,9 +60,9 @@ export function SyncInitializer() {
         loadProducts();
       }, 2000);
     }
-  });
+  }, [isAuthenticated, isOfflineMode, loadProducts]);
 
-  useRealtimeCustomers(() => {
+  const handleCustomerChange = useCallback(() => {
     if (isAuthenticated && !isOfflineMode) {
       clearTimeout(customerReloadTimer.current);
       customerReloadTimer.current = setTimeout(() => {
@@ -57,9 +70,9 @@ export function SyncInitializer() {
         loadCustomers();
       }, 2000);
     }
-  });
+  }, [isAuthenticated, isOfflineMode, loadCustomers]);
 
-  useRealtimeTransactions(() => {
+  const handleTransactionChange = useCallback(() => {
     if (isAuthenticated && !isOfflineMode) {
       clearTimeout(transactionReloadTimer.current);
       transactionReloadTimer.current = setTimeout(() => {
@@ -67,7 +80,12 @@ export function SyncInitializer() {
         loadTransactions();
       }, 2000);
     }
-  });
+  }, [isAuthenticated, isOfflineMode, loadTransactions]);
+
+  // Subscribe to real-time updates (debounced to prevent race conditions)
+  useRealtimeProducts(handleProductChange);
+  useRealtimeCustomers(handleCustomerChange);
+  useRealtimeTransactions(handleTransactionChange);
 
   return null; // This component doesn't render anything
 }

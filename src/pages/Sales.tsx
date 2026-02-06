@@ -48,6 +48,7 @@ import { useTransactionStore, createSaleTransaction } from '../store/transaction
 import { TransactionItem, PaymentMethod, Product } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { es } from '../i18n/es';
+import { deriveStatus } from '../utils/productHelpers';
 
 interface CartItem extends TransactionItem {
   productId: string;
@@ -157,7 +158,7 @@ export function Sales() {
   const addProductToCart = (product: Product, quantity: number) => {
     const existingItem = cart.find(item => item.productId === product.id);
     const currentQty = existingItem ? existingItem.quantity : 0;
-    const availableQty = product.quantity - currentQty;
+    const availableQty = product.availableQty - currentQty;
 
     if (quantity > availableQty) {
       toast({
@@ -190,7 +191,7 @@ export function Sales() {
         brand: product.brand,
         color: product.color,
         size: product.size,
-        maxQuantity: product.quantity,
+        maxQuantity: product.availableQty,
       };
       setCart([...cart, newItem]);
     }
@@ -277,17 +278,19 @@ export function Sales() {
 
     addTransaction(transaction);
 
-    // Update product quantities
+    // Update product qty fields
     cart.forEach(item => {
       const product = products.find(p => p.id === item.productId);
       if (product) {
-        const newQuantity = product.quantity - item.quantity;
-        updateProduct(product.id, {
-          quantity: newQuantity,
-          status: newQuantity === 0 ? 'sold' : 'available',
-          soldTo: newQuantity === 0 ? (selectedCustomerId || undefined) : undefined,
-          soldAt: newQuantity === 0 ? new Date().toISOString() : undefined,
-        });
+        const updates: Partial<Product> = {
+          availableQty: product.availableQty - item.quantity,
+          soldQty: product.soldQty + item.quantity,
+          soldTo: selectedCustomerId || undefined,
+          soldAt: new Date().toISOString(),
+        };
+        const updatedProduct = { ...product, ...updates };
+        updates.status = deriveStatus(updatedProduct as Product);
+        updateProduct(product.id, updates);
       }
     });
 
@@ -756,7 +759,7 @@ export function Sales() {
                     {formatCurrency(selectedProductForQuantity.unitPrice)} c/u
                   </Text>
                   <Text fontSize="sm" color="gray.500">
-                    {selectedProductForQuantity.quantity} disponibles
+                    {selectedProductForQuantity.availableQty} disponibles
                   </Text>
                 </Box>
 
@@ -764,7 +767,7 @@ export function Sales() {
                   <FormLabel>Cantidad</FormLabel>
                   <NumberInput
                     min={1}
-                    max={selectedProductForQuantity.quantity}
+                    max={selectedProductForQuantity.availableQty}
                     value={quantityToAdd}
                     onChange={(_, val) => setQuantityToAdd(val || 1)}
                   >

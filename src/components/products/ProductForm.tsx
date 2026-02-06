@@ -20,14 +20,18 @@ import {
   NumberInputStepper,
   NumberIncrementStepper,
   NumberDecrementStepper,
-} from '@chakra-ui/react';
-import { useForm, Controller } from 'react-hook-form';
-import { useEffect, useRef } from 'react';
-import { Product, CategoryCode } from '../../types';
-import { CATEGORY_OPTIONS } from '../../constants/categories';
-import { PRODUCT_COLORS, UPS_BATCH_OPTIONS, DEFAULT_BRANDS } from '../../constants/colors';
-import { CurrencyInput } from '../common';
-import { es } from '../../i18n/es';
+} from "@chakra-ui/react";
+import { useForm, Controller } from "react-hook-form";
+import { useEffect, useRef } from "react";
+import { Product, CategoryCode } from "../../types";
+import { CATEGORY_OPTIONS } from "../../constants/categories";
+import {
+  PRODUCT_COLORS,
+  UPS_BATCH_OPTIONS,
+  DEFAULT_BRANDS,
+} from "../../constants/colors";
+import { CurrencyInput } from "../common";
+import { es } from "../../i18n/es";
 
 interface ProductFormData {
   name: string;
@@ -70,15 +74,15 @@ export function ProductForm({
     formState: { errors },
   } = useForm<ProductFormData>({
     defaultValues: {
-      name: '',
+      name: "",
       upsBatch: initialUpsBatch || 19,
       quantity: 1,
       unitPrice: 0,
-      category: 'VIB',
-      brand: '',
-      color: '',
-      size: '',
-      description: '',
+      category: "VIB",
+      brand: "",
+      color: "",
+      size: "",
+      description: "",
     },
   });
 
@@ -90,22 +94,22 @@ export function ProductForm({
         quantity: product.quantity,
         unitPrice: product.unitPrice,
         category: product.category,
-        brand: product.brand || '',
-        color: product.color || '',
-        size: product.size || '',
-        description: product.description || '',
+        brand: product.brand || "",
+        color: product.color || "",
+        size: product.size || "",
+        description: product.description || "",
       });
     } else {
       reset({
-        name: '',
+        name: "",
         upsBatch: initialUpsBatch || 19,
         quantity: 1,
         unitPrice: 0,
-        category: 'VIB',
-        brand: '',
-        color: '',
-        size: '',
-        description: '',
+        category: "VIB",
+        brand: "",
+        color: "",
+        size: "",
+        description: "",
       });
     }
   }, [product, reset, initialUpsBatch]);
@@ -121,15 +125,15 @@ export function ProductForm({
       const currentUpsBatch = data.upsBatch;
       const currentCategory = data.category;
       reset({
-        name: '',
+        name: "",
         upsBatch: currentUpsBatch,
         quantity: 1,
         unitPrice: 0,
         category: currentCategory,
-        brand: '',
-        color: '',
-        size: '',
-        description: '',
+        brand: "",
+        color: "",
+        size: "",
+        description: "",
       });
     }
   };
@@ -160,9 +164,9 @@ export function ProductForm({
               <FormControl isInvalid={!!errors.name} isRequired>
                 <FormLabel>{es.products.productName}</FormLabel>
                 <Input
-                  {...register('name', {
+                  {...register("name", {
                     required: es.validation.required,
-                    minLength: { value: 2, message: 'Mínimo 2 caracteres' },
+                    minLength: { value: 2, message: "Mínimo 2 caracteres" },
                   })}
                   placeholder="Ej: Camisa de algodón azul"
                 />
@@ -173,7 +177,11 @@ export function ProductForm({
               <SimpleGrid columns={2} spacing={4} w="full">
                 <FormControl isInvalid={!!errors.upsBatch} isRequired>
                   <FormLabel>{es.products.upsBatch}</FormLabel>
-                  <Select {...register('upsBatch', { valueAsNumber: true })} size="lg">
+                  <Select
+                    height={"fit-content"}
+                    {...register("upsBatch", { valueAsNumber: true })}
+                    size="lg"
+                  >
                     {UPS_BATCH_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label}
@@ -184,7 +192,11 @@ export function ProductForm({
 
                 <FormControl isInvalid={!!errors.category} isRequired>
                   <FormLabel>{es.products.category}</FormLabel>
-                  <Select {...register('category')} size="lg">
+                  <Select
+                    height={"fit-content"}
+                    {...register("category")}
+                    size={{ base: "lg", md: "lg" }}
+                  >
                     {CATEGORY_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label}
@@ -219,7 +231,9 @@ export function ProductForm({
                       </NumberInput>
                     )}
                   />
-                  <FormErrorMessage>{errors.quantity?.message}</FormErrorMessage>
+                  <FormErrorMessage>
+                    {errors.quantity?.message}
+                  </FormErrorMessage>
                 </FormControl>
 
                 <FormControl isInvalid={!!errors.unitPrice} isRequired>
@@ -239,7 +253,9 @@ export function ProductForm({
                       />
                     )}
                   />
-                  <FormErrorMessage>{errors.unitPrice?.message}</FormErrorMessage>
+                  <FormErrorMessage>
+                    {errors.unitPrice?.message}
+                  </FormErrorMessage>
                 </FormControl>
               </SimpleGrid>
 
@@ -248,7 +264,7 @@ export function ProductForm({
                 <FormControl>
                   <FormLabel>{es.products.brand}</FormLabel>
                   <Input
-                    {...register('brand')}
+                    {...register("brand")}
                     list="brands-list"
                     placeholder="Ej: Nike, Samsung"
                   />
@@ -261,7 +277,12 @@ export function ProductForm({
 
                 <FormControl>
                   <FormLabel>{es.products.color}</FormLabel>
-                  <Select {...register('color')} placeholder="Seleccionar color" size="lg">
+                  <Select
+                    height={"fit-content"}
+                    {...register("color")}
+                    placeholder="Seleccionar color"
+                    size="lg"
+                  >
                     {PRODUCT_COLORS.map((color) => (
                       <option key={color} value={color}>
                         {color}
@@ -274,17 +295,14 @@ export function ProductForm({
               {/* Size */}
               <FormControl>
                 <FormLabel>{es.products.size}</FormLabel>
-                <Input
-                  {...register('size')}
-                  placeholder="Ej: M, 32, Grande"
-                />
+                <Input {...register("size")} placeholder="Ej: M, 32, Grande" />
               </FormControl>
 
               {/* Description */}
               <FormControl>
                 <FormLabel>{es.products.description}</FormLabel>
                 <Textarea
-                  {...register('description')}
+                  {...register("description")}
                   placeholder="Observaciones adicionales..."
                   rows={3}
                 />

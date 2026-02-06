@@ -153,7 +153,7 @@ export function SellProductModal({
   // Validation
   const isValid = useMemo(() => {
     if (!product) return false;
-    if (quantity < 1 || quantity > product.quantity) return false;
+    if (quantity < 1 || quantity > product.availableQty) return false;
 
     // If there's pending balance, must have a customer selected
     if (pendingBalance > 0 && !customerId) return false;
@@ -231,7 +231,7 @@ export function SellProductModal({
                   </Text>
                 )}
                 <Text fontSize="sm" color="gray.500">
-                  Disponibles: {product.quantity} unidades
+                  Disponibles: {product.availableQty} unidades
                 </Text>
               </VStack>
             </Box>
@@ -241,7 +241,7 @@ export function SellProductModal({
               <FormLabel>{es.sales.quantity}</FormLabel>
               <NumberInput
                 min={1}
-                max={product.quantity}
+                max={product.availableQty}
                 value={quantity}
                 onChange={(_, val) => setQuantity(val || 1)}
               >

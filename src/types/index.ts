@@ -94,6 +94,13 @@ export interface Product {
   description?: string;        // Observaciones
   barcode?: string;            // V2: UPS-based barcode (e.g., "D15-0042" or "0523-20")
 
+  // Per-status quantity columns
+  availableQty: number;
+  soldQty: number;
+  donatedQty: number;
+  lostQty: number;
+  expiredQty: number;
+
   // Status and tracking
   status: ProductStatus;
   soldBy?: string;             // FK → Staff.id

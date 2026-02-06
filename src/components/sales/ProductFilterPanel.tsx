@@ -37,9 +37,9 @@ export function ProductFilterPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Get available products only
+  // Get available products only (using qty column)
   const availableProducts = useMemo(
-    () => products.filter((p) => p.status === 'available' && p.quantity > 0),
+    () => products.filter((p) => p.availableQty > 0),
     [products]
   );
 

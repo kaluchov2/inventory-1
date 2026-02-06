@@ -70,7 +70,7 @@ export function SelectableProductCard({
               {formatCurrency(product.unitPrice)}
             </Text>
             <Text fontSize="xs" color="gray.500">
-              {product.quantity} disponibles
+              {product.availableQty} disponibles
             </Text>
           </VStack>
 

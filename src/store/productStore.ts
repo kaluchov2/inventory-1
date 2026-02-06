@@ -881,6 +881,22 @@ export const useProductStore = create<ProductStore>()(
     }),
     {
       name: "inventory_products",
+      // Safe storage: catches localStorage quota errors on mobile
+      // Data stays in Zustand memory + syncs to Supabase even if localStorage is full
+      storage: {
+        getItem: (name) => {
+          const value = localStorage.getItem(name);
+          return value ? JSON.parse(value) : null;
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value));
+          } catch (e) {
+            console.warn('[Storage] localStorage write failed (quota exceeded?), data lives in memory only');
+          }
+        },
+        removeItem: (name) => localStorage.removeItem(name),
+      },
       // Migration for existing data to V2 format + qty fields
       onRehydrateStorage: () => (state) => {
         if (state) {

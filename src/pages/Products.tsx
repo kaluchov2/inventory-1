@@ -495,6 +495,7 @@ export function Products() {
         addProduct({
           ...data,
           status: "available",
+          availableQty: data.quantity,
         });
         toast({
           title: es.success.productAdded,

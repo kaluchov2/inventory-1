@@ -30,7 +30,7 @@ import {
   UPS_BATCH_OPTIONS,
   DEFAULT_BRANDS,
 } from "../../constants/colors";
-import { CurrencyInput } from "../common";
+import { CurrencyInput, AutocompleteSelect } from "../common";
 import { es } from "../../i18n/es";
 
 interface ProductFormData {
@@ -177,32 +177,40 @@ export function ProductForm({
               <SimpleGrid columns={2} spacing={4} w="full">
                 <FormControl isInvalid={!!errors.upsBatch} isRequired>
                   <FormLabel>{es.products.upsBatch}</FormLabel>
-                  <Select
-                    height={"fit-content"}
-                    {...register("upsBatch", { valueAsNumber: true })}
-                    size="lg"
-                  >
-                    {UPS_BATCH_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </Select>
+                  <Controller
+                    name="upsBatch"
+                    control={control}
+                    rules={{ required: es.validation.required }}
+                    render={({ field }) => (
+                      <AutocompleteSelect
+                        options={UPS_BATCH_OPTIONS}
+                        value={field.value}
+                        onChange={(val) => field.onChange(val ? Number(val) : '')}
+                        placeholder="Buscar UPS..."
+                        size="lg"
+                      />
+                    )}
+                  />
+                  <FormErrorMessage>{errors.upsBatch?.message}</FormErrorMessage>
                 </FormControl>
 
                 <FormControl isInvalid={!!errors.category} isRequired>
                   <FormLabel>{es.products.category}</FormLabel>
-                  <Select
-                    height={"fit-content"}
-                    {...register("category")}
-                    size={{ base: "lg", md: "lg" }}
-                  >
-                    {CATEGORY_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </Select>
+                  <Controller
+                    name="category"
+                    control={control}
+                    rules={{ required: es.validation.required }}
+                    render={({ field }) => (
+                      <AutocompleteSelect
+                        options={CATEGORY_OPTIONS}
+                        value={field.value}
+                        onChange={(val) => field.onChange(val as CategoryCode)}
+                        placeholder="Buscar categoría..."
+                        size="lg"
+                      />
+                    )}
+                  />
+                  <FormErrorMessage>{errors.category?.message}</FormErrorMessage>
                 </FormControl>
               </SimpleGrid>
 

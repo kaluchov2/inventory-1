@@ -47,15 +47,13 @@ import {
   FiFilter,
   FiChevronDown,
   FiChevronUp,
-  FiDollarSign,
   FiPackage,
   FiShoppingBag,
   FiAlertCircle,
   FiCheckCircle,
 } from "react-icons/fi";
 import { SearchInput, EmptyState, ConfirmDialog, AutocompleteSelect } from "../components/common";
-import { ProductForm, SellProductModal, SoldProductDetails, ResolveReviewModal } from "../components/products";
-import type { SaleData } from "../components/products/SellProductModal";
+import { ProductForm, SoldProductDetails, ResolveReviewModal } from "../components/products";
 import type { ResolveData } from "../components/products/ResolveReviewModal";
 import { Product, CategoryCode, ProductStatus, Transaction } from "../types";
 import { CATEGORY_OPTIONS, getCategoryLabel } from "../constants/categories";
@@ -94,7 +92,6 @@ function ProductCard({
   product,
   onEdit,
   onDelete,
-  onSell,
   onResolve,
   viewMode,
   paymentStatus,
@@ -102,7 +99,6 @@ function ProductCard({
   product: Product;
   onEdit: () => void;
   onDelete: () => void;
-  onSell: () => void;
   onResolve?: () => void;
   viewMode: 'available' | 'sold' | 'review' | 'other';
   paymentStatus?: { status: 'paid' | 'pending' | 'unknown'; amount: number };
@@ -146,11 +142,6 @@ function ProductCard({
             <MenuItem icon={<Icon as={FiEdit2} />} onClick={onEdit}>
               {es.actions.edit}
             </MenuItem>
-            {product.availableQty > 0 && (
-              <MenuItem icon={<Icon as={FiDollarSign} />} onClick={onSell}>
-                Vender
-              </MenuItem>
-            )}
             {getReviewQty(product) > 0 && onResolve && (
               <MenuItem icon={<Icon as={FiCheckCircle} />} onClick={onResolve}>
                 Resolver
@@ -265,20 +256,6 @@ function ProductCard({
         </Badge>
       </Flex>
 
-      {/* Quick Sell Button - Mobile */}
-      {product.availableQty > 0 && viewMode === 'available' && (
-        <Button
-          mt={3}
-          size="sm"
-          colorScheme="green"
-          leftIcon={<Icon as={FiDollarSign} />}
-          onClick={onSell}
-          w="full"
-        >
-          Vender
-        </Button>
-      )}
-
       {/* Resolve Button - Mobile (Review tab) */}
       {getReviewQty(product) > 0 && viewMode === 'review' && onResolve && (
         <Button
@@ -328,15 +305,8 @@ export function Products() {
     onClose: onDeleteClose,
   } = useDisclosure();
 
-  const {
-    isOpen: isSellOpen,
-    onOpen: onSellOpen,
-    onClose: onSellClose,
-  } = useDisclosure();
-
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
-  const [productToSell, setProductToSell] = useState<Product | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -470,11 +440,6 @@ export function Products() {
     onDeleteOpen();
   };
 
-  const handleSellClick = (product: Product) => {
-    setProductToSell(product);
-    onSellOpen();
-  };
-
   const handleResolveClick = (product: Product) => {
     setProductToResolve(product);
     onResolveOpen();
@@ -531,87 +496,6 @@ export function Products() {
       });
       onDeleteClose();
       setProductToDelete(null);
-    }
-  };
-
-  // Double-click guard ref
-  const isSaleRef = useRef(false);
-
-  const handleConfirmSale = (saleData: SaleData) => {
-    if (!productToSell || isSaleRef.current) return;
-    isSaleRef.current = true;
-
-    setIsLoading(true);
-    try {
-      // Create transaction
-      const transaction = createSaleTransaction(
-        { id: saleData.customerId, name: saleData.customerName },
-        [{
-          productId: productToSell.id,
-          productName: productToSell.name,
-          quantity: saleData.quantity,
-          unitPrice: productToSell.unitPrice,
-          totalPrice: saleData.quantity * productToSell.unitPrice,
-          category: productToSell.category,
-          brand: productToSell.brand,
-          color: productToSell.color,
-          size: productToSell.size,
-        }],
-        {
-          method: saleData.paymentMethod,
-          cash: saleData.cashAmount,
-          transfer: saleData.transferAmount,
-          card: saleData.cardAmount,
-        },
-        {
-          notes: saleData.notes,
-          isInstallment: saleData.paymentMethod === 'credit',
-        }
-      );
-
-      addTransaction(transaction);
-
-      // Update qty fields on the SAME product (no split)
-      const updates: Partial<Product> = {
-        availableQty: productToSell.availableQty - saleData.quantity,
-        soldQty: productToSell.soldQty + saleData.quantity,
-        soldTo: saleData.customerId,
-        soldAt: new Date().toISOString(),
-      };
-      const updatedProduct = { ...productToSell, ...updates };
-      updates.status = deriveStatus(updatedProduct as Product);
-
-      updateProduct(productToSell.id, updates);
-
-      // If credit sale, add to customer balance
-      const totalSale = saleData.quantity * productToSell.unitPrice;
-      const paidAmount = saleData.cashAmount + saleData.transferAmount + saleData.cardAmount;
-      const unpaidAmount = totalSale - paidAmount;
-
-      if (unpaidAmount > 0 && saleData.customerId) {
-        addPurchase(saleData.customerId, unpaidAmount);
-      }
-
-      toast({
-        title: es.sales.saleCompleted,
-        description: `${saleData.quantity}x ${productToSell.name} - ${formatCurrency(totalSale)}`,
-        status: "success",
-        duration: 4000,
-        isClosable: true,
-      });
-
-      onSellClose();
-      setProductToSell(null);
-    } catch (error) {
-      toast({
-        title: es.errors.saveError,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
-    } finally {
-      setIsLoading(false);
-      isSaleRef.current = false;
     }
   };
 
@@ -839,15 +723,6 @@ export function Products() {
         initialUpsBatch={filters.upsBatch ? Number(filters.upsBatch) : undefined}
       />
 
-      {/* Sell Product Modal */}
-      <SellProductModal
-        isOpen={isSellOpen}
-        onClose={onSellClose}
-        product={productToSell}
-        onConfirm={handleConfirmSale}
-        isLoading={isLoading}
-      />
-
       {/* Delete Confirmation */}
       <ConfirmDialog
         isOpen={isDeleteOpen}
@@ -1023,7 +898,6 @@ export function Products() {
                 product={product}
                 onEdit={() => handleEditProduct(product)}
                 onDelete={() => handleDeleteClick(product)}
-                onSell={() => handleSellClick(product)}
                 onResolve={() => handleResolveClick(product)}
                 viewMode={viewMode}
                 paymentStatus={viewMode === 'sold' ? getPaymentStatusForProduct(product.id, transactions) : undefined}
@@ -1122,17 +996,6 @@ export function Products() {
                       <Td>{getStatusBadge(product.status)}</Td>
                       <Td onClick={(e) => e.stopPropagation()}>
                         <HStack spacing={1}>
-                          {/* Quick Sell Button */}
-                          {product.availableQty > 0 && (
-                            <IconButton
-                              icon={<Icon as={FiDollarSign} />}
-                              aria-label="Vender"
-                              size="sm"
-                              colorScheme="green"
-                              variant="ghost"
-                              onClick={() => handleSellClick(product)}
-                            />
-                          )}
                           {/* Quick Resolve Button */}
                           {getReviewQty(product) > 0 && (
                             <IconButton
@@ -1159,14 +1022,6 @@ export function Products() {
                               >
                                 {es.actions.edit}
                               </MenuItem>
-                              {product.availableQty > 0 && (
-                                <MenuItem
-                                  icon={<Icon as={FiDollarSign} />}
-                                  onClick={() => handleSellClick(product)}
-                                >
-                                  Vender
-                                </MenuItem>
-                              )}
                               {getReviewQty(product) > 0 && (
                                 <MenuItem
                                   icon={<Icon as={FiCheckCircle} />}

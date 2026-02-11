@@ -45,7 +45,7 @@ export function ProductFilterPanel({
 
   // Get unique UPS batches from available products
   const availableUpsOptions = useMemo(() => {
-    const upsBatches = new Set(availableProducts.map((p) => p.upsBatch));
+    const upsBatches = new Set(availableProducts.map((p) => Number(p.upsBatch)));
     return UPS_BATCH_OPTIONS.filter((opt) => upsBatches.has(Number(opt.value)));
   }, [availableProducts]);
 
@@ -55,7 +55,7 @@ export function ProductFilterPanel({
 
     // Filter by UPS if selected
     if (selectedUps) {
-      productsToCheck = productsToCheck.filter((p) => p.upsBatch === selectedUps);
+      productsToCheck = productsToCheck.filter((p) => Number(p.upsBatch) === Number(selectedUps));
     }
 
     const categories = new Set(productsToCheck.map((p) => p.category));
@@ -68,7 +68,10 @@ export function ProductFilterPanel({
 
     // Filter by UPS (required first for cascading)
     if (selectedUps) {
-      filtered = filtered.filter((p) => p.upsBatch === selectedUps);
+      const sample = availableProducts.slice(0, 3);
+      const filterUps = Number(selectedUps);
+      console.log(`[ProductFilterPanel] selectedUps=${selectedUps} (type: ${typeof selectedUps}), sample upsBatch types: [${sample.map(p => typeof p.upsBatch).join(', ')}], sample values: [${sample.map(p => p.upsBatch).join(', ')}], total=${availableProducts.length}, matched=${filtered.filter((p) => Number(p.upsBatch) === filterUps).length}`);
+      filtered = filtered.filter((p) => Number(p.upsBatch) === filterUps);
     }
 
     // Filter by category

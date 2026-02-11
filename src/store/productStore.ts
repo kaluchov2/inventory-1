@@ -726,6 +726,18 @@ export const useProductStore = create<ProductStore>()(
         try {
           const products = await productService.getAll();
           console.log(`[loadFromSupabase] Fetched ${products.length} from Supabase, forceReplace=${forceReplace}`);
+          // DEBUG: Check UPS 20/21 after conversion
+          const ups20 = products.filter(p => p.upsBatch === 20);
+          const ups21 = products.filter(p => p.upsBatch === 21);
+          console.log(`[loadFromSupabase] UPS 20: ${ups20.length}, UPS 21: ${ups21.length}`);
+          if (ups21.length === 0) {
+            // Check if they exist with different upsBatch value
+            const withDrop21 = products.filter(p => String(p.dropNumber) === '21');
+            console.log(`[loadFromSupabase] Products with dropNumber=21: ${withDrop21.length}`);
+            if (withDrop21.length > 0) {
+              console.log(`[loadFromSupabase] Sample drop21 product:`, { upsBatch: withDrop21[0].upsBatch, dropNumber: withDrop21[0].dropNumber, upsRaw: withDrop21[0].upsRaw, name: withDrop21[0].name });
+            }
+          }
 
           if (forceReplace) {
             // Skip merge - use Supabase data directly (after import/sync)
@@ -773,6 +785,12 @@ export const useProductStore = create<ProductStore>()(
         const { products, filters } = get();
         let filtered = [...products];
 
+        // DEBUG: UPS filter diagnostics
+        if (filters.upsBatch) {
+          const sample = products.slice(0, 3);
+          console.log(`[getFilteredProducts] total=${products.length}, filter.upsBatch=${filters.upsBatch} (type: ${typeof filters.upsBatch}), sample upsBatch types: [${sample.map(p => typeof p.upsBatch).join(', ')}], sample values: [${sample.map(p => p.upsBatch).join(', ')}]`);
+        }
+
         if (filters.search) {
           const searchLower = filters.search.toLowerCase();
           filtered = filtered.filter(
@@ -789,7 +807,8 @@ export const useProductStore = create<ProductStore>()(
         }
 
         if (filters.upsBatch) {
-          filtered = filtered.filter((p) => p.upsBatch === filters.upsBatch);
+          const filterUps = Number(filters.upsBatch);
+          filtered = filtered.filter((p) => Number(p.upsBatch) === filterUps);
         }
 
         if (filters.dropNumber) {
@@ -907,9 +926,28 @@ export const useProductStore = create<ProductStore>()(
           }
           state.products = Array.from(seen.values());
 
+          // DEBUG: Log UPS distribution after rehydration
+          const upsCounts = new Map<number, number>();
+          for (const p of state.products) {
+            const ups = Number(p.upsBatch) || 0;
+            upsCounts.set(ups, (upsCounts.get(ups) || 0) + 1);
+          }
+          console.log('[Rehydrate] UPS distribution:', Object.fromEntries([...upsCounts.entries()].sort((a, b) => a[0] - b[0])));
+          console.log(`[Rehydrate] Total products: ${state.products.length}`);
+          // Check for UPS 20/21 specifically
+          const ups20 = state.products.filter(p => Number(p.upsBatch) === 20);
+          const ups21 = state.products.filter(p => Number(p.upsBatch) === 21);
+          console.log(`[Rehydrate] UPS 20: ${ups20.length} products, UPS 21: ${ups21.length} products`);
+          if (ups21.length > 0) {
+            console.log('[Rehydrate] Sample UPS 21 product:', { id: ups21[0].id, name: ups21[0].name, upsBatch: ups21[0].upsBatch, type: typeof ups21[0].upsBatch, availableQty: ups21[0].availableQty });
+          }
+
           // Migrate products
           state.products = state.products.map((product) => {
             let migrated = { ...product };
+
+            // Normalize upsBatch to number (DB may return string), fallback to dropNumber
+            migrated.upsBatch = Number(migrated.upsBatch) || Number(migrated.dropNumber) || 0;
 
             // V2 UPS migration
             if (!migrated.upsRaw) {
@@ -966,7 +1004,12 @@ export const useProductStore = create<ProductStore>()(
 );
 
 // Helper functions
+let _convertDbLogCount = 0;
 function convertDbProduct(dbProduct: any): Product {
+  if (_convertDbLogCount < 3) {
+    console.log(`[convertDbProduct] ups_batch=${dbProduct.ups_batch} (type: ${typeof dbProduct.ups_batch})`);
+    _convertDbLogCount++;
+  }
   return {
     id: dbProduct.id,
     name: dbProduct.name,
@@ -977,8 +1020,8 @@ function convertDbProduct(dbProduct: any): Product {
     dropNumber: dbProduct.drop_number || String(dbProduct.ups_batch || ""),
     productNumber: dbProduct.product_number || undefined,
     dropSequence: dbProduct.drop_sequence || undefined,
-    // Legacy field
-    upsBatch: dbProduct.ups_batch,
+    // Legacy field — fall back to drop_number if ups_batch is missing
+    upsBatch: Number(dbProduct.ups_batch) || Number(dbProduct.drop_number) || 0,
     quantity: dbProduct.quantity,
     unitPrice: dbProduct.unit_price,
     originalPrice: dbProduct.original_price || undefined,

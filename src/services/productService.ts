@@ -1,5 +1,5 @@
-import { getSupabaseClient } from '../lib/supabase';
-import { Product, ProductStatus } from '../types';
+import { getSupabaseClient } from "../lib/supabase";
+import { Product, ProductStatus } from "../types";
 
 /**
  * Product Service
@@ -18,20 +18,27 @@ export const productService = {
     let hasMore = true;
     let batchNumber = 0;
 
-    console.log('[ProductService.getAll] Starting fetch...');
+    console.log("[ProductService.getAll] Starting fetch...");
 
     while (hasMore) {
       const { data, error } = await client
-        .from('products')
-        .select('*')
-        .eq('is_deleted', false)
-        .order('created_at', { ascending: false })
+        .from("products")
+        .select("*")
+        .eq("is_deleted", false)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
         .range(offset, offset + BATCH_SIZE - 1);
 
       if (error) throw error;
 
       batchNumber++;
-      console.log(`[ProductService.getAll] Batch ${batchNumber}: offset=${offset}, received=${data?.length || 0}`);
+      console.log(
+        `[ProductService.getAll] Batch ${batchNumber}: offset=${offset}, received=${data?.length || 0}`,
+      );
+      if (data && data.length > 0) {
+        const last5 = data.slice(-5);
+        console.log(`[ProductService.getAll] Batch ${batchNumber} last 5:`, last5.map((p: any) => ({ name: p.name, ups_batch: p.ups_batch, drop_number: p.drop_number, ups_raw: p.ups_raw, is_deleted: p.is_deleted })));
+      }
 
       if (data && data.length > 0) {
         allProducts = allProducts.concat(data);
@@ -42,7 +49,31 @@ export const productService = {
       }
     }
 
-    console.log(`[ProductService.getAll] Complete: ${allProducts.length} products in ${batchNumber} batches`);
+    console.log(
+      `[ProductService.getAll] Complete: ${allProducts.length} products in ${batchNumber} batches`,
+    );
+    // Log last 5 products overall
+    console.log(`[ProductService.getAll] Last 5 overall:`, allProducts.slice(-5).map((p: any) => ({ name: p.name, ups_batch: p.ups_batch, drop_number: p.drop_number, ups_raw: p.ups_raw })));
+
+    // DEBUG: Check raw DB data for UPS 20/21 before conversion
+    const rawUps21 = allProducts.filter(
+      (p) => Number(p.ups_batch) === 21 || Number(p.drop_number) === 21,
+    );
+    console.log(
+      `[ProductService.getAll] RAW DB — ups_batch=20: ${allProducts.filter((p) => Number(p.ups_batch) === 20).length}, ups_batch=21: ${allProducts.filter((p) => Number(p.ups_batch) === 21).length}`,
+    );
+    console.log(
+      `[ProductService.getAll] RAW DB — drop_number=20: ${allProducts.filter((p) => String(p.drop_number) === "20").length}, drop_number=21: ${allProducts.filter((p) => String(p.drop_number) === "21").length}`,
+    );
+    if (rawUps21.length > 0) {
+      const s = rawUps21[0];
+      console.log(`[ProductService.getAll] Sample UPS21 raw:`, {
+        ups_batch: s.ups_batch,
+        drop_number: s.drop_number,
+        ups_raw: s.ups_raw,
+        name: s.name,
+      });
+    }
 
     return allProducts.map(convertFromDbFormat);
   },
@@ -57,20 +88,20 @@ export const productService = {
 
     // Count all products
     const { count: totalCount } = await client
-      .from('products')
-      .select('*', { count: 'exact', head: true });
+      .from("products")
+      .select("*", { count: "exact", head: true });
 
     // Count active (non-deleted)
     const { count: activeCount } = await client
-      .from('products')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_deleted', false);
+      .from("products")
+      .select("*", { count: "exact", head: true })
+      .eq("is_deleted", false);
 
     // Count soft-deleted
     const { count: deletedCount } = await client
-      .from('products')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_deleted', true);
+      .from("products")
+      .select("*", { count: "exact", head: true })
+      .eq("is_deleted", true);
 
     // Fetch all and compare
     const fetched = await this.getAll();
@@ -82,8 +113,8 @@ export const productService = {
       fetchedCount: fetched.length,
     };
 
-    console.log('[ProductService.validateProductCount]', result);
-    console.log('Discrepancy:', result.activeInDB - result.fetchedCount);
+    console.log("[ProductService.validateProductCount]", result);
+    console.log("Discrepancy:", result.activeInDB - result.fetchedCount);
 
     return result;
   },
@@ -92,14 +123,14 @@ export const productService = {
     const client = getSupabaseClient();
 
     const { data, error } = await client
-      .from('products')
-      .select('*')
-      .eq('id', id)
-      .eq('is_deleted', false)
+      .from("products")
+      .select("*")
+      .eq("id", id)
+      .eq("is_deleted", false)
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') return null; // Not found
+      if (error.code === "PGRST116") return null; // Not found
       throw error;
     }
 
@@ -110,14 +141,14 @@ export const productService = {
     const client = getSupabaseClient();
 
     const { data, error } = await client
-      .from('products')
-      .select('*')
-      .eq('barcode', barcode)
-      .eq('is_deleted', false)
+      .from("products")
+      .select("*")
+      .eq("barcode", barcode)
+      .eq("is_deleted", false)
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') return null; // Not found
+      if (error.code === "PGRST116") return null; // Not found
       throw error;
     }
 
@@ -130,7 +161,7 @@ export const productService = {
     const dbData = convertToDbFormat(product);
 
     const { data, error } = await client
-      .from('products')
+      .from("products")
       .insert(dbData)
       .select()
       .single();
@@ -146,9 +177,9 @@ export const productService = {
     const dbData = convertToDbFormat(updates as Product);
 
     const { data, error } = await client
-      .from('products')
+      .from("products")
       .update({ ...dbData, updated_at: new Date().toISOString() })
-      .eq('id', id)
+      .eq("id", id)
       .select()
       .single();
 
@@ -161,9 +192,9 @@ export const productService = {
     const client = getSupabaseClient();
 
     const { error } = await client
-      .from('products')
+      .from("products")
       .update({ is_deleted: true, deleted_at: new Date().toISOString() })
-      .eq('id', id);
+      .eq("id", id);
 
     if (error) throw error;
   },
@@ -172,10 +203,12 @@ export const productService = {
     const client = getSupabaseClient();
 
     const { data, error } = await client
-      .from('products')
-      .select('*')
-      .eq('is_deleted', false)
-      .or(`name.ilike.%${query}%,sku.ilike.%${query}%,brand.ilike.%${query}%,barcode.ilike.%${query}%`)
+      .from("products")
+      .select("*")
+      .eq("is_deleted", false)
+      .or(
+        `name.ilike.%${query}%,sku.ilike.%${query}%,brand.ilike.%${query}%,barcode.ilike.%${query}%`,
+      )
       .limit(50);
 
     if (error) throw error;
@@ -188,11 +221,11 @@ export const productService = {
     const client = getSupabaseClient();
 
     const { data, error } = await client
-      .from('products')
-      .select('*')
-      .eq('drop_number', dropNumber)
-      .eq('is_deleted', false)
-      .order('drop_sequence', { ascending: true });
+      .from("products")
+      .select("*")
+      .eq("drop_number", dropNumber)
+      .eq("is_deleted", false)
+      .order("drop_sequence", { ascending: true });
 
     if (error) throw error;
 
@@ -204,11 +237,11 @@ export const productService = {
     const client = getSupabaseClient();
 
     const { data, error } = await client
-      .from('products')
-      .select('*')
-      .eq('sold_by', staffId)
-      .eq('is_deleted', false)
-      .order('sold_at', { ascending: false });
+      .from("products")
+      .select("*")
+      .eq("sold_by", staffId)
+      .eq("is_deleted", false)
+      .order("sold_at", { ascending: false });
 
     if (error) throw error;
 
@@ -227,11 +260,12 @@ export const productService = {
 
     while (hasMore) {
       const { data, error } = await client
-        .from('products')
-        .select('*')
-        .eq('status', 'available')
-        .eq('is_deleted', false)
-        .order('created_at', { ascending: false })
+        .from("products")
+        .select("*")
+        .eq("status", "available")
+        .eq("is_deleted", false)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
         .range(offset, offset + BATCH_SIZE - 1);
 
       if (error) throw error;
@@ -260,11 +294,12 @@ export const productService = {
 
     while (hasMore) {
       const { data, error } = await client
-        .from('products')
-        .select('*')
-        .eq('status', status)
-        .eq('is_deleted', false)
-        .order('created_at', { ascending: false })
+        .from("products")
+        .select("*")
+        .eq("status", status)
+        .eq("is_deleted", false)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
         .range(offset, offset + BATCH_SIZE - 1);
 
       if (error) throw error;
@@ -286,11 +321,11 @@ export const productService = {
     const client = getSupabaseClient();
 
     const { data, error } = await client
-      .from('products')
-      .select('drop_sequence')
-      .eq('drop_number', dropNumber)
-      .eq('is_deleted', false)
-      .order('drop_sequence', { ascending: false })
+      .from("products")
+      .select("drop_sequence")
+      .eq("drop_number", dropNumber)
+      .eq("is_deleted", false)
+      .order("drop_sequence", { ascending: false })
       .limit(1);
 
     if (error) throw error;
@@ -301,19 +336,26 @@ export const productService = {
   },
 };
 
+let _convertFromDbLogCount = 0;
 function convertFromDbFormat(data: any): Product {
+  if (_convertFromDbLogCount < 3) {
+    console.log(
+      `[convertFromDbFormat] ups_batch=${data.ups_batch} (type: ${typeof data.ups_batch})`,
+    );
+    _convertFromDbLogCount++;
+  }
   return {
     id: data.id,
     name: data.name,
     sku: data.sku,
     // V2 fields
-    upsRaw: data.ups_raw || String(data.ups_batch || ''),
-    identifierType: data.identifier_type || 'legacy',
-    dropNumber: data.drop_number || String(data.ups_batch || ''),
+    upsRaw: data.ups_raw || String(data.ups_batch || ""),
+    identifierType: data.identifier_type || "legacy",
+    dropNumber: data.drop_number || String(data.ups_batch || ""),
     productNumber: data.product_number || undefined,
     dropSequence: data.drop_sequence || undefined,
-    // Legacy field
-    upsBatch: data.ups_batch,
+    // Legacy field — fall back to drop_number if ups_batch is missing
+    upsBatch: Number(data.ups_batch) || Number(data.drop_number) || 0,
     quantity: data.quantity,
     unitPrice: data.unit_price,
     originalPrice: data.original_price || undefined,

@@ -25,6 +25,9 @@ import { FiPrinter, FiEye, FiGrid } from 'react-icons/fi';
 import { generateBarcode } from '../utils/barcodeGenerator';
 import { UPS_BATCH_OPTIONS } from '../constants/colors';
 import { AutocompleteSelect } from '../components/common';
+import { useProductStore } from '../store/productStore';
+import { formatCurrency } from '../utils/formatters';
+import type { Product } from '../types';
 
 type QRSize = 'S' | 'M' | 'L';
 
@@ -42,6 +45,8 @@ export function QRGenerator() {
   const [size, setSize] = useState<QRSize>('M');
   const [showPreview, setShowPreview] = useState(false);
 
+  const { getProductByBarcode, products } = useProductStore();
+
   // Generate barcodes based on settings
   const generatedCodes = useMemo(() => {
     if (!selectedUps || quantity <= 0) return [];
@@ -53,6 +58,17 @@ export function QRGenerator() {
     }
     return codes;
   }, [selectedUps, quantity, startSequence]);
+
+  // Look up products for each generated barcode
+  const productMap = useMemo(() => {
+    const map = new Map<string, Product>();
+    for (const code of generatedCodes) {
+      const product = getProductByBarcode(code);
+      if (product) map.set(code, product);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generatedCodes, products]);
 
   const handleGeneratePreview = () => {
     if (!selectedUps) {
@@ -140,6 +156,26 @@ export function QRGenerator() {
               margin-top: 5px;
               letter-spacing: 1px;
             }
+            .product-name {
+              font-size: 11px;
+              font-weight: bold;
+              margin-top: 4px;
+              max-width: 100%;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+            .product-price {
+              font-size: 14px;
+              font-weight: bold;
+              color: #2e7d32;
+            }
+            .unregistered {
+              font-size: 10px;
+              color: #999;
+              font-style: italic;
+              margin-top: 4px;
+            }
             @media print {
               .header {
                 margin-bottom: 10px;
@@ -157,12 +193,19 @@ export function QRGenerator() {
             <p>Del ${generatedCodes[0]} al ${generatedCodes[generatedCodes.length - 1]} (${generatedCodes.length} códigos)</p>
           </div>
           <div class="grid" id="qr-grid">
-            ${generatedCodes.map((code, idx) => `
+            ${generatedCodes.map((code, idx) => {
+              const product = productMap.get(code);
+              const productInfoHtml = product
+                ? `<div class="product-name" title="${product.name.replace(/"/g, '&quot;')}">${product.name.length > 30 ? product.name.slice(0, 30) + '…' : product.name}</div>
+                   <div class="product-price">${formatCurrency(product.unitPrice)}</div>`
+                : `<div class="unregistered">Sin registrar</div>`;
+              return `
               <div class="qr-item">
                 <div id="qr-${idx}"></div>
+                ${productInfoHtml}
                 <div class="qr-text">${code}</div>
-              </div>
-            `).join('')}
+              </div>`;
+            }).join('')}
           </div>
           <script>
             // Generate QR codes
@@ -351,32 +394,55 @@ export function QRGenerator() {
               }}
               spacing={3}
             >
-              {generatedCodes.map((code) => (
-                <Box
-                  key={code}
-                  p={SIZE_CONFIG[size].padding / 4}
-                  border="1px dashed"
-                  borderColor="gray.300"
-                  borderRadius="md"
-                  textAlign="center"
-                  bg="white"
-                >
-                  <QRCodeSVG
-                    value={code}
-                    size={SIZE_CONFIG[size].qrSize}
-                    level="H"
-                    includeMargin={false}
-                  />
-                  <Text
-                    fontFamily="mono"
-                    fontSize={SIZE_CONFIG[size].fontSize}
-                    fontWeight="bold"
-                    mt={1}
+              {generatedCodes.map((code) => {
+                const product = productMap.get(code);
+                return (
+                  <Box
+                    key={code}
+                    p={SIZE_CONFIG[size].padding / 4}
+                    border="1px dashed"
+                    borderColor={product ? 'green.300' : 'gray.300'}
+                    borderRadius="md"
+                    textAlign="center"
+                    bg="white"
                   >
-                    {code}
-                  </Text>
-                </Box>
-              ))}
+                    <QRCodeSVG
+                      value={code}
+                      size={SIZE_CONFIG[size].qrSize}
+                      level="H"
+                      includeMargin={false}
+                    />
+                    {product ? (
+                      <>
+                        <Text
+                          fontSize="xs"
+                          fontWeight="bold"
+                          mt={1}
+                          noOfLines={1}
+                          title={product.name}
+                        >
+                          {product.name}
+                        </Text>
+                        <Text fontSize="sm" fontWeight="bold" color="green.600">
+                          {formatCurrency(product.unitPrice)}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text fontSize="xs" color="gray.400" fontStyle="italic" mt={1}>
+                        Sin registrar
+                      </Text>
+                    )}
+                    <Text
+                      fontFamily="mono"
+                      fontSize={SIZE_CONFIG[size].fontSize}
+                      fontWeight="bold"
+                      mt={1}
+                    >
+                      {code}
+                    </Text>
+                  </Box>
+                );
+              })}
             </SimpleGrid>
           </Box>
         </Box>

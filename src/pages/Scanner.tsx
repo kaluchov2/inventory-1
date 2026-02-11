@@ -162,8 +162,16 @@ export function Scanner() {
       }
     }
 
+    setCameraEnabled(false); // Pause camera after each scan
+
     setTimeout(() => setIsProcessing(false), 1000); // Debounce
   }, [mode, isProcessing, getProductByBarcode, onSellOpen, onFormOpen, toast]);
+
+  // Resume scanning
+  const handleScanAgain = useCallback(() => {
+    setLastScan(null);
+    setCameraEnabled(true);
+  }, []);
 
   // Handle camera scan
   const handleScan = useCallback((result: { rawValue: string }[]) => {
@@ -244,7 +252,7 @@ export function Scanner() {
 
       onSellClose();
       setProductToSell(null);
-      setLastScan(null);
+      handleScanAgain();
     } catch (error) {
       toast({
         title: es.errors.saveError,
@@ -271,7 +279,7 @@ export function Scanner() {
 
     onFormClose();
     setPrefillData(null);
-    setLastScan(null);
+    handleScanAgain();
   };
 
   return (
@@ -535,6 +543,18 @@ export function Scanner() {
                 </HStack>
               </Box>
             )}
+
+            {/* Scan Again Button */}
+            <Button
+              leftIcon={<Icon as={FiCamera} />}
+              colorScheme="blue"
+              size="lg"
+              w="full"
+              mt={2}
+              onClick={handleScanAgain}
+            >
+              Escanear Otro
+            </Button>
           </VStack>
         </Box>
       )}
@@ -542,7 +562,10 @@ export function Scanner() {
       {/* Sell Product Modal */}
       <SellProductModal
         isOpen={isSellOpen}
-        onClose={onSellClose}
+        onClose={() => {
+          onSellClose();
+          handleScanAgain();
+        }}
         product={productToSell}
         onConfirm={handleConfirmSale}
       />
@@ -553,6 +576,7 @@ export function Scanner() {
         onClose={() => {
           onFormClose();
           setPrefillData(null);
+          handleScanAgain();
         }}
         onSubmit={handleProductSubmit}
         product={null}

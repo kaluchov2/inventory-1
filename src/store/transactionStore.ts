@@ -41,6 +41,7 @@ interface TransactionStore {
   getSalesByDateRange: (from: string, to: string) => Transaction[];
   getTotalSalesByCategory: () => Record<string, number>;
   getUnpaidTransactionsByCustomer: (customerId: string) => Transaction[];
+  getEffectivePendingMap: (customerId: string) => Map<string, number>;
 }
 
 const defaultFilters: TransactionFilters = {
@@ -246,11 +247,47 @@ export const useTransactionStore = create<TransactionStore>()(
       },
 
       getUnpaidTransactionsByCustomer: (customerId: string) => {
+        const pendingMap = get().getEffectivePendingMap(customerId);
         return get().transactions.filter(t =>
           t.customerId === customerId &&
           t.type === 'sale' &&
-          (t.cashAmount + t.transferAmount + t.cardAmount) < t.total
+          (pendingMap.get(t.id) ?? 0) > 0.01
         ).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      },
+
+      getEffectivePendingMap: (customerId: string) => {
+        const allTx = get().transactions;
+
+        // Get all sale transactions for this customer that had original debt
+        const sales = allTx
+          .filter(t =>
+            t.customerId === customerId &&
+            t.type === 'sale' &&
+            (t.cashAmount + t.transferAmount + t.cardAmount) < t.total
+          )
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        // Sum all installment payments for this customer
+        const totalInstallments = allTx
+          .filter(t => t.customerId === customerId && t.type === 'installment_payment')
+          .reduce((sum, t) => sum + t.total, 0);
+
+        // Distribute installment payments FIFO across unpaid sales
+        let remaining = totalInstallments;
+        const pendingMap = new Map<string, number>();
+
+        for (const sale of sales) {
+          const originalDebt = sale.total - (sale.cashAmount + sale.transferAmount + sale.cardAmount);
+          if (remaining >= originalDebt) {
+            remaining -= originalDebt;
+            pendingMap.set(sale.id, 0);
+          } else {
+            pendingMap.set(sale.id, originalDebt - remaining);
+            remaining = 0;
+          }
+        }
+
+        return pendingMap;
       },
     }),
     {

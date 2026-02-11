@@ -20,7 +20,7 @@ interface SoldProductDetailsProps {
 
 export function SoldProductDetails({ product }: SoldProductDetailsProps) {
   const { customers } = useCustomerStore();
-  const { transactions } = useTransactionStore();
+  const { transactions, getEffectivePendingMap } = useTransactionStore();
 
   // Find the customer if soldTo is set
   const customer = useMemo(() => {
@@ -43,21 +43,31 @@ export function SoldProductDetails({ product }: SoldProductDetailsProps) {
     return relatedTransaction.items.find((item) => item.productId === product.id);
   }, [relatedTransaction, product.id]);
 
-  // Calculate payment status
+  // Calculate payment status accounting for installment payments
   const paymentStatus = useMemo(() => {
     if (!relatedTransaction) return { status: 'unknown', amount: 0 };
 
-    const totalPaid =
+    const originalPaid =
       relatedTransaction.cashAmount +
       relatedTransaction.transferAmount +
       relatedTransaction.cardAmount;
 
-    if (totalPaid >= relatedTransaction.total) {
+    if (originalPaid >= relatedTransaction.total) {
       return { status: 'paid', amount: 0 };
     }
 
-    return { status: 'pending', amount: relatedTransaction.total - totalPaid };
-  }, [relatedTransaction]);
+    // Check effective pending if customer has installment payments
+    if (relatedTransaction.customerId) {
+      const pendingMap = getEffectivePendingMap(relatedTransaction.customerId);
+      const effectivePending = pendingMap.get(relatedTransaction.id);
+      if (effectivePending !== undefined) {
+        if (effectivePending <= 0.01) return { status: 'paid', amount: 0 };
+        return { status: 'pending', amount: effectivePending };
+      }
+    }
+
+    return { status: 'pending', amount: relatedTransaction.total - originalPaid };
+  }, [relatedTransaction, getEffectivePendingMap]);
 
   return (
     <Box bg="blue.50" p={4} borderRadius="lg">

@@ -66,7 +66,11 @@ import { useCustomerStore } from "../store/customerStore";
 import { getReviewQty, deriveStatus } from "../utils/productHelpers";
 
 // Helper function to get payment status for a product
-function getPaymentStatusForProduct(productId: string, transactions: Transaction[]): { status: 'paid' | 'pending' | 'unknown'; amount: number } {
+function getPaymentStatusForProduct(
+  productId: string,
+  transactions: Transaction[],
+  getEffectivePendingMap?: (customerId: string) => Map<string, number>
+): { status: 'paid' | 'pending' | 'unknown'; amount: number } {
   const relatedTransaction = transactions.find(
     (t) =>
       t.type === 'sale' &&
@@ -75,16 +79,26 @@ function getPaymentStatusForProduct(productId: string, transactions: Transaction
 
   if (!relatedTransaction) return { status: 'unknown', amount: 0 };
 
-  const totalPaid =
+  const originalPaid =
     relatedTransaction.cashAmount +
     relatedTransaction.transferAmount +
     relatedTransaction.cardAmount;
 
-  if (totalPaid >= relatedTransaction.total) {
+  if (originalPaid >= relatedTransaction.total) {
     return { status: 'paid', amount: 0 };
   }
 
-  return { status: 'pending', amount: relatedTransaction.total - totalPaid };
+  // Account for installment payments
+  if (getEffectivePendingMap && relatedTransaction.customerId) {
+    const pendingMap = getEffectivePendingMap(relatedTransaction.customerId);
+    const effectivePending = pendingMap.get(relatedTransaction.id);
+    if (effectivePending !== undefined) {
+      if (effectivePending <= 0.01) return { status: 'paid', amount: 0 };
+      return { status: 'pending', amount: effectivePending };
+    }
+  }
+
+  return { status: 'pending', amount: relatedTransaction.total - originalPaid };
 }
 
 // Mobile Product Card Component
@@ -289,7 +303,7 @@ export function Products() {
     getFilteredProducts,
   } = useProductStore();
 
-  const { addTransaction, transactions } = useTransactionStore();
+  const { addTransaction, transactions, getEffectivePendingMap } = useTransactionStore();
   const { addPurchase } = useCustomerStore();
   const { customers } = useCustomerStore();
 
@@ -900,7 +914,7 @@ export function Products() {
                 onDelete={() => handleDeleteClick(product)}
                 onResolve={() => handleResolveClick(product)}
                 viewMode={viewMode}
-                paymentStatus={viewMode === 'sold' ? getPaymentStatusForProduct(product.id, transactions) : undefined}
+                paymentStatus={viewMode === 'sold' ? getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap) : undefined}
               />
             ))}
           </VStack>
@@ -977,7 +991,7 @@ export function Products() {
                       {viewMode === 'sold' && (
                         <Td>
                           {(() => {
-                            const paymentStatus = getPaymentStatusForProduct(product.id, transactions);
+                            const paymentStatus = getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap);
                             return (
                               <Badge
                                 colorScheme={paymentStatus.status === 'paid' ? 'green' : paymentStatus.status === 'pending' ? 'orange' : 'gray'}

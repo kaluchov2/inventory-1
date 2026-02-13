@@ -24,6 +24,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import { FiPrinter, FiEye, FiGrid } from 'react-icons/fi';
 import { generateBarcode } from '../utils/barcodeGenerator';
 import { UPS_BATCH_OPTIONS } from '../constants/colors';
+
+const NUMBERED_UPS_THRESHOLD = 20;
 import { AutocompleteSelect } from '../components/common';
 import { useProductStore } from '../store/productStore';
 import { formatCurrency } from '../utils/formatters';
@@ -52,8 +54,11 @@ export function QRGenerator() {
     if (!selectedUps || quantity <= 0) return [];
 
     const codes: string[] = [];
+    const isNumbered = selectedUps >= NUMBERED_UPS_THRESHOLD;
     for (let i = startSequence; i < startSequence + quantity; i++) {
-      const barcode = generateBarcode('legacy', String(selectedUps), undefined, i);
+      const barcode = isNumbered
+        ? generateBarcode('numbered', String(selectedUps), i)
+        : generateBarcode('legacy', String(selectedUps), undefined, i);
       codes.push(barcode);
     }
     return codes;
@@ -350,11 +355,15 @@ export function QRGenerator() {
               </Text>
               <HStack spacing={2}>
                 <Badge colorScheme="blue" fontSize="md" px={2} py={1}>
-                  {generateBarcode('legacy', String(selectedUps), undefined, startSequence)}
+                  {selectedUps >= NUMBERED_UPS_THRESHOLD
+                    ? generateBarcode('numbered', String(selectedUps), startSequence)
+                    : generateBarcode('legacy', String(selectedUps), undefined, startSequence)}
                 </Badge>
                 <Text color="blue.700">→</Text>
                 <Badge colorScheme="blue" fontSize="md" px={2} py={1}>
-                  {generateBarcode('legacy', String(selectedUps), undefined, startSequence + quantity - 1)}
+                  {selectedUps >= NUMBERED_UPS_THRESHOLD
+                    ? generateBarcode('numbered', String(selectedUps), startSequence + quantity - 1)
+                    : generateBarcode('legacy', String(selectedUps), undefined, startSequence + quantity - 1)}
                 </Badge>
               </HStack>
             </Flex>

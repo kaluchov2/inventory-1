@@ -79,7 +79,8 @@ export function MobileNav() {
         top={0}
         left={0}
         right={0}
-        h="60px"
+        h="calc(60px + env(safe-area-inset-top))"
+        pt="env(safe-area-inset-top)"
         bg="white"
         borderBottom="1px"
         borderColor="gray.200"

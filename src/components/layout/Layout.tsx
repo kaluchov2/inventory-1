@@ -17,7 +17,7 @@ export function Layout() {
         as="main"
         flex={1}
         ml={{ base: 0, lg: '280px' }}
-        mt={{ base: '60px', lg: 0 }}
+        mt={{ base: 'calc(60px + env(safe-area-inset-top))', lg: 0 }}
         p={{ base: 4, md: 6, lg: 8 }}
         bg="gray.50"
         minH="100vh"

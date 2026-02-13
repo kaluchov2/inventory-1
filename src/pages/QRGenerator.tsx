@@ -31,9 +31,10 @@ import { useProductStore } from '../store/productStore';
 import { formatCurrency } from '../utils/formatters';
 import type { Product } from '../types';
 
-type QRSize = 'S' | 'M' | 'L';
+type QRSize = 'T' | 'S' | 'M' | 'L';
 
 const SIZE_CONFIG: Record<QRSize, { qrSize: number; fontSize: string; padding: number }> = {
+  T: { qrSize: 70, fontSize: '9px', padding: 4 },
   S: { qrSize: 80, fontSize: '10px', padding: 8 },
   M: { qrSize: 120, fontSize: '12px', padding: 12 },
   L: { qrSize: 160, fontSize: '14px', padding: 16 },
@@ -93,7 +94,6 @@ export function QRGenerator() {
     if (generatedCodes.length === 0) return;
 
     const { qrSize, fontSize, padding } = SIZE_CONFIG[size];
-    const columns = size === 'S' ? 5 : size === 'M' ? 4 : 3;
 
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
@@ -107,6 +107,135 @@ export function QRGenerator() {
       return;
     }
 
+    const isThermal = size === 'T';
+    const columns = isThermal ? 2 : size === 'S' ? 5 : size === 'M' ? 4 : 3;
+
+    const thermalStyles = `
+      @page {
+        size: 100mm auto;
+        margin: 1mm 2mm;
+      }
+      body {
+        font-family: Arial, sans-serif;
+        padding: 0;
+        margin: 0;
+        width: 100mm;
+      }
+      .header { display: none; }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1mm;
+      }
+      .qr-item {
+        text-align: center;
+        padding: 2mm 1mm;
+        border-bottom: 1px dashed #aaa;
+        break-inside: avoid;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .qr-item canvas, .qr-item svg {
+        display: block;
+        margin: 0 auto;
+      }
+      .qr-text {
+        font-family: monospace;
+        font-size: 8px;
+        font-weight: bold;
+        margin-top: 1mm;
+        letter-spacing: 0.5px;
+      }
+      .product-name { display: none; }
+      .product-price {
+        font-size: 14px;
+        font-weight: bold;
+        margin-top: 1mm;
+      }
+      .unregistered {
+        font-size: 8px;
+        color: #999;
+        font-style: italic;
+        margin-top: 1mm;
+      }
+    `;
+
+    const regularStyles = `
+      @page { margin: 10px; }
+      body {
+        font-family: Arial, sans-serif;
+        padding: 10px;
+      }
+      .header {
+        text-align: center;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #333;
+      }
+      .header h1 {
+        font-size: 18px;
+        margin-bottom: 5px;
+      }
+      .header p {
+        font-size: 12px;
+        color: #666;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(${columns}, 1fr);
+        gap: 10px;
+        justify-items: center;
+      }
+      .qr-item {
+        text-align: center;
+        padding: ${padding}px;
+        border: 1px dashed #ccc;
+        border-radius: 4px;
+        break-inside: avoid;
+      }
+      .qr-item canvas {
+        display: block;
+        margin: 0 auto;
+      }
+      .qr-text {
+        font-family: monospace;
+        font-size: ${fontSize};
+        font-weight: bold;
+        margin-top: 5px;
+        letter-spacing: 1px;
+      }
+      .product-name {
+        font-size: 11px;
+        font-weight: bold;
+        margin-top: 4px;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .product-price {
+        font-size: 14px;
+        font-weight: bold;
+        color: #2e7d32;
+      }
+      .unregistered {
+        font-size: 10px;
+        color: #999;
+        font-style: italic;
+        margin-top: 4px;
+      }
+      @media print {
+        .header {
+          margin-bottom: 10px;
+          padding-bottom: 5px;
+        }
+        .qr-item {
+          border: 1px solid #ddd;
+        }
+      }
+    `;
+
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
@@ -119,77 +248,7 @@ export function QRGenerator() {
               padding: 0;
               box-sizing: border-box;
             }
-            body {
-              font-family: Arial, sans-serif;
-              padding: 10px;
-            }
-            .header {
-              text-align: center;
-              margin-bottom: 20px;
-              padding-bottom: 10px;
-              border-bottom: 2px solid #333;
-            }
-            .header h1 {
-              font-size: 18px;
-              margin-bottom: 5px;
-            }
-            .header p {
-              font-size: 12px;
-              color: #666;
-            }
-            .grid {
-              display: grid;
-              grid-template-columns: repeat(${columns}, 1fr);
-              gap: 10px;
-              justify-items: center;
-            }
-            .qr-item {
-              text-align: center;
-              padding: ${padding}px;
-              border: 1px dashed #ccc;
-              border-radius: 4px;
-              break-inside: avoid;
-            }
-            .qr-item canvas {
-              display: block;
-              margin: 0 auto;
-            }
-            .qr-text {
-              font-family: monospace;
-              font-size: ${fontSize};
-              font-weight: bold;
-              margin-top: 5px;
-              letter-spacing: 1px;
-            }
-            .product-name {
-              font-size: 11px;
-              font-weight: bold;
-              margin-top: 4px;
-              max-width: 100%;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              white-space: nowrap;
-            }
-            .product-price {
-              font-size: 14px;
-              font-weight: bold;
-              color: #2e7d32;
-            }
-            .unregistered {
-              font-size: 10px;
-              color: #999;
-              font-style: italic;
-              margin-top: 4px;
-            }
-            @media print {
-              .header {
-                margin-bottom: 10px;
-                padding-bottom: 5px;
-              }
-              .qr-item {
-                border: 1px solid #ddd;
-              }
-            }
+            ${isThermal ? thermalStyles : regularStyles}
           </style>
         </head>
         <body>
@@ -215,12 +274,12 @@ export function QRGenerator() {
           <script>
             // Generate QR codes
             const codes = ${JSON.stringify(generatedCodes)};
-            const qrSize = ${qrSize};
+            const qrSize = ${isThermal ? 60 : qrSize};
 
             codes.forEach((code, idx) => {
               const container = document.getElementById('qr-' + idx);
               if (container) {
-                const qr = qrcode(0, 'H');
+                const qr = qrcode(0, '${isThermal ? 'M' : 'H'}');
                 qr.addData(code);
                 qr.make();
                 container.innerHTML = qr.createSvgTag(Math.floor(qrSize / (qr.getModuleCount() + 8)));
@@ -311,6 +370,14 @@ export function QRGenerator() {
             <ButtonGroup size="lg" isAttached variant="outline" w="full">
               <Button
                 flex={1}
+                onClick={() => setSize('T')}
+                colorScheme={size === 'T' ? 'orange' : 'gray'}
+                variant={size === 'T' ? 'solid' : 'outline'}
+              >
+                T - Térmica
+              </Button>
+              <Button
+                flex={1}
                 onClick={() => setSize('S')}
                 colorScheme={size === 'S' ? 'brand' : 'gray'}
                 variant={size === 'S' ? 'solid' : 'outline'}
@@ -398,8 +465,8 @@ export function QRGenerator() {
           >
             <SimpleGrid
               columns={{
-                base: size === 'S' ? 3 : 2,
-                md: size === 'S' ? 5 : size === 'M' ? 4 : 3,
+                base: size === 'T' ? 2 : size === 'S' ? 3 : 2,
+                md: size === 'T' ? 2 : size === 'S' ? 5 : size === 'M' ? 4 : 3,
               }}
               spacing={3}
             >

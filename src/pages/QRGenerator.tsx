@@ -66,23 +66,16 @@ export function QRGenerator() {
   }, [selectedUps, quantity, startSequence]);
 
   // Look up products for each generated barcode
-  // For UPS >= 20, also check legacy format (D30-0001) as fallback
+  // getProductByBarcode handles alternate format fallback (numbered <-> legacy)
   const productMap = useMemo(() => {
     const map = new Map<string, Product>();
-    const isNumbered = selectedUps && selectedUps >= NUMBERED_UPS_THRESHOLD;
-    for (let idx = 0; idx < generatedCodes.length; idx++) {
-      const code = generatedCodes[idx];
-      let product = getProductByBarcode(code);
-      if (!product && isNumbered) {
-        const seq = startSequence + idx;
-        const legacyCode = generateBarcode('legacy', String(selectedUps), undefined, seq);
-        product = getProductByBarcode(legacyCode);
-      }
+    for (const code of generatedCodes) {
+      const product = getProductByBarcode(code);
       if (product) map.set(code, product);
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generatedCodes, products, selectedUps, startSequence]);
+  }, [generatedCodes, products]);
 
   const handleGeneratePreview = () => {
     if (!selectedUps) {

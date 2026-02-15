@@ -10,7 +10,7 @@ import { syncManager } from "../lib/syncManager";
 import { productService } from "../services/productService";
 import { supabase, getSupabaseClient } from "../lib/supabase";
 import { parseUPS } from "../utils/upsParser";
-import { generateBarcodeFromParsed } from "../utils/barcodeGenerator";
+import { generateBarcode, generateBarcodeFromParsed, parseBarcode } from "../utils/barcodeGenerator";
 import { getProductMatchKey } from "../utils/excelImport";
 import { deriveStatus } from "../utils/productHelpers";
 
@@ -836,7 +836,27 @@ export const useProductStore = create<ProductStore>()(
       },
 
       getProductByBarcode: (barcode) => {
-        return get().products.find((p) => p.barcode === barcode);
+        const products = get().products;
+        // Try exact match first
+        const exact = products.find((p) => p.barcode === barcode);
+        if (exact) return exact;
+
+        // Try alternate barcode format (numbered <-> legacy)
+        const parsed = parseBarcode(barcode);
+        if (!parsed) return undefined;
+
+        let altBarcode: string | undefined;
+        if (parsed.type === 'numbered' && parsed.productNumber !== undefined) {
+          // Scanned 0030-1 → try D30-0001
+          altBarcode = generateBarcode('legacy', parsed.dropNumber, undefined, parsed.productNumber);
+        } else if (parsed.type === 'legacy' && parsed.sequence !== undefined) {
+          // Scanned D30-0001 → try 0030-1
+          altBarcode = generateBarcode('numbered', parsed.dropNumber, parsed.sequence);
+        }
+        if (altBarcode) {
+          return products.find((p) => p.barcode === altBarcode);
+        }
+        return undefined;
       },
 
       getTotalInventoryValue: () => {

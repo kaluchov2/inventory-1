@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Box,
   Heading,
@@ -50,6 +50,8 @@ import {
 } from '../utils/excelExport';
 import { exportBackup, importBackup, BackupData } from '../utils/storage';
 import { es } from '../i18n/es';
+import { UPS_BATCH_OPTIONS } from '../constants/colors';
+import { AutocompleteSelect } from '../components/common';
 import { syncQueue } from '../lib/syncQueue';
 import { syncManager } from '../lib/syncManager';
 
@@ -69,6 +71,19 @@ export function Settings() {
   const [importProgress, setImportProgress] = useState(0);
   const [syncResult, setSyncResult] = useState<ImportSyncResult | null>(null);
   const [queueInfo, setQueueInfo] = useState<{count: number; sizeKB: string; oldestOperation?: string} | null>(null);
+  const [exportUps, setExportUps] = useState<number | null>(null);
+
+  const filteredByUpsCount = useMemo(() => {
+    if (!exportUps) return 0;
+    return products.filter(p => Number(p.upsBatch) === exportUps).length;
+  }, [products, exportUps]);
+
+  const handleExportByUps = () => {
+    if (!exportUps) return;
+    const filtered = products.filter(p => Number(p.upsBatch) === exportUps);
+    const date = new Date().toISOString().split('T')[0];
+    exportProductsToExcel(filtered, `inventario_UPS${exportUps}_${date}.xlsx`);
+  };
 
   // Update queue info on mount and when sync status changes
   useEffect(() => {
@@ -515,6 +530,28 @@ export function Settings() {
             Todo
           </Button>
         </SimpleGrid>
+
+        <HStack mt={4} spacing={{ base: 2, md: 4 }} flexWrap="wrap">
+          <Box flex="1" minW="180px" maxW="300px">
+            <AutocompleteSelect
+              options={UPS_BATCH_OPTIONS.map(o => ({ value: String(o.value), label: o.label }))}
+              value={exportUps ? String(exportUps) : ''}
+              onChange={(val) => setExportUps(val ? Number(val) : null)}
+              placeholder="Seleccionar UPS..."
+            />
+          </Box>
+          <Button
+            leftIcon={<Icon as={FiDownload} />}
+            colorScheme="teal"
+            size={{ base: 'sm', md: 'lg' }}
+            fontSize={{ base: 'xs', md: 'md' }}
+            onClick={handleExportByUps}
+            isDisabled={!exportUps || filteredByUpsCount === 0}
+          >
+            {exportUps ? `Descargar UPS ${exportUps}` : 'Descargar UPS'}
+            {exportUps && <Badge ml={2} colorScheme="teal" fontSize={{ base: '2xs', md: 'sm' }}>{filteredByUpsCount}</Badge>}
+          </Button>
+        </HStack>
       </Box>
 
       {/* Sync Queue Management */}

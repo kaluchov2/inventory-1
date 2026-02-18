@@ -20,7 +20,7 @@ function getStatusLabel(status: ProductStatus): string {
 }
 
 // Export products to Excel
-export function exportProductsToExcel(products: Product[]): void {
+export function exportProductsToExcel(products: Product[], filename?: string): void {
   const data = products.map(p => ({
     'UPS': p.upsBatch,
     'Categoría': getCategoryLabel(p.category),
@@ -57,7 +57,7 @@ export function exportProductsToExcel(products: Product[]): void {
   ];
 
   const date = new Date().toISOString().split('T')[0];
-  XLSX.writeFile(workbook, `inventario_${date}.xlsx`);
+  XLSX.writeFile(workbook, filename || `inventario_${date}.xlsx`);
 }
 
 // Export customers to Excel

@@ -7,6 +7,32 @@ import { connectionStatus } from './connectionStatus';
  * V2: Orchestrates sync operations between local storage and Supabase
  * Now handles: products, customers, transactions, drops, staff
  * Implements last-write-wins conflict resolution using updated_at timestamps
+ *
+ * ## Multi-User Sync Architecture (3-5 concurrent users)
+ *
+ * - Optimistic UI: Local state updates instantly, operations queued for async sync
+ * - Flush interval: 60s timer + immediate flush on new operation if connected
+ * - Realtime: Full loadFromSupabase() reload on any change event, debounced 2s
+ * - Conflict resolution: Last-write-wins based on updated_at timestamps
+ * - Queue persistence: localStorage, survives app restarts
+ *
+ * ## Known Edge Cases
+ *
+ * | Scenario                              | Behavior                                              | Risk   |
+ * |---------------------------------------|-------------------------------------------------------|--------|
+ * | Two users add products to same UPS    | Both succeed (different IDs)                          | None   |
+ * | Two users edit different products     | Both succeed independently                            | None   |
+ * | Two users edit SAME product           | Last writer wins, first edit lost silently             | Medium |
+ * | User A deletes, User B edits same     | is_deleted=true may be overwritten back by B's update  | Medium |
+ * | User adds product offline, reconnects | Queued op syncs on reconnect, then full reload         | Low    |
+ * | Rapid "Save & Add Another"            | Sequential queue, no parallel conflicts                | Low    |
+ *
+ * ## Future Recommendations
+ *
+ * - Add optimistic locking: check updated_at matches before saving, warn user if stale
+ * - Reduce sync interval to 5-10s for snappier multi-user experience
+ * - Switch from full-reload realtime to incremental handleRealtimeUpdate/handleRealtimeDelete
+ * - Add a visual "sync pending" indicator showing queued operations count
  */
 class SyncManager {
   private isSyncing = false;

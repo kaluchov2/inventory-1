@@ -5,3 +5,5 @@ export { SoldProductDetails } from './SoldProductDetails';
 export { QRCodeDisplay } from './QRCodeDisplay';
 export { ResolveReviewModal } from './ResolveReviewModal';
 export type { ResolveData, ResolutionType } from './ResolveReviewModal';
+export { RefundModal } from './RefundModal';
+export type { RefundData } from './RefundModal';

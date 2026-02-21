@@ -52,6 +52,10 @@ export default defineConfig({
         clientsClaim: true,
         runtimeCaching: [
           {
+            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
+            handler: 'NetworkOnly',
+          },
+          {
             urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/i,
             handler: 'CacheFirst',
             options: {

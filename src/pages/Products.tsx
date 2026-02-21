@@ -51,10 +51,12 @@ import {
   FiShoppingBag,
   FiAlertCircle,
   FiCheckCircle,
+  FiRotateCcw,
 } from "react-icons/fi";
 import { SearchInput, EmptyState, ConfirmDialog, AutocompleteSelect } from "../components/common";
-import { ProductForm, SoldProductDetails, ResolveReviewModal } from "../components/products";
+import { ProductForm, SoldProductDetails, ResolveReviewModal, RefundModal } from "../components/products";
 import type { ResolveData } from "../components/products/ResolveReviewModal";
+import type { RefundData } from "../components/products/RefundModal";
 import { Product, CategoryCode, ProductStatus, Transaction } from "../types";
 import { CATEGORY_OPTIONS, getCategoryLabel } from "../constants/categories";
 import { UPS_BATCH_OPTIONS } from "../constants/colors";
@@ -107,6 +109,7 @@ function ProductCard({
   onEdit,
   onDelete,
   onResolve,
+  onRefund,
   viewMode,
   paymentStatus,
 }: {
@@ -114,6 +117,7 @@ function ProductCard({
   onEdit: () => void;
   onDelete: () => void;
   onResolve?: () => void;
+  onRefund?: () => void;
   viewMode: 'available' | 'sold' | 'review' | 'other';
   paymentStatus?: { status: 'paid' | 'pending' | 'unknown'; amount: number };
 }) {
@@ -159,6 +163,11 @@ function ProductCard({
             {getReviewQty(product) > 0 && onResolve && (
               <MenuItem icon={<Icon as={FiCheckCircle} />} onClick={onResolve}>
                 Resolver
+              </MenuItem>
+            )}
+            {product.soldQty > 0 && paymentStatus?.status === 'paid' && onRefund && (
+              <MenuItem icon={<Icon as={FiRotateCcw} />} color="orange.500" onClick={onRefund}>
+                Devolucion
               </MenuItem>
             )}
             <MenuItem
@@ -339,6 +348,15 @@ export function Products() {
     onClose: onResolveClose,
   } = useDisclosure();
 
+  // Disclosure for refund modal
+  const {
+    isOpen: isRefundOpen,
+    onOpen: onRefundOpen,
+    onClose: onRefundClose,
+  } = useDisclosure();
+  const [productToRefund, setProductToRefund] = useState<Product | null>(null);
+  const [refundTransaction, setRefundTransaction] = useState<Transaction | null>(null);
+
   // Check if we should open form or switch tab from URL params
   useState(() => {
     if (searchParams.get("action") === "new") {
@@ -457,6 +475,16 @@ export function Products() {
   const handleResolveClick = (product: Product) => {
     setProductToResolve(product);
     onResolveOpen();
+  };
+
+  const handleRefundClick = (product: Product) => {
+    const relatedTransaction = transactions.find(
+      (t) => t.type === 'sale' && t.items.some((item) => item.productId === product.id)
+    );
+    if (!relatedTransaction) return;
+    setProductToRefund(product);
+    setRefundTransaction(relatedTransaction);
+    onRefundOpen();
   };
 
   const handleFormSubmit = async (data: any, addAnother?: boolean) => {
@@ -622,6 +650,96 @@ export function Products() {
     }
   };
 
+  // Double-click guard ref for refund
+  const isRefundingRef = useRef(false);
+
+  const handleConfirmRefund = (refundData: RefundData) => {
+    if (!productToRefund || isRefundingRef.current) return;
+    isRefundingRef.current = true;
+    const product = productToRefund;
+    const originalTransaction = refundTransaction!;
+    onRefundClose();
+    setProductToRefund(null);
+    setRefundTransaction(null);
+
+    try {
+      const qty = refundData.quantity;
+      const updates: Partial<Product> = {
+        soldQty: product.soldQty - qty,
+        availableQty: product.availableQty + qty,
+      };
+
+      // Clear sold fields if all sold units are returned
+      if (product.soldQty - qty === 0) {
+        updates.soldTo = undefined;
+        updates.soldAt = undefined;
+        updates.soldBy = undefined;
+
+        // Restore original price if there was a discount
+        if (product.originalPrice) {
+          updates.unitPrice = product.originalPrice;
+          updates.originalPrice = undefined;
+        }
+      }
+
+      // Append refund note
+      updates.notes = `${product.notes || ''}\nDevolucion: ${refundData.notes}`.trim();
+
+      // Derive new status
+      const updatedProduct = { ...product, ...updates } as Product;
+      updates.status = deriveStatus(updatedProduct);
+
+      updateProduct(product.id, updates);
+
+      // Create return transaction with negative amounts (proportional to original payment split)
+      const originalTotal = originalTransaction.total;
+      const originalItems = originalTransaction.items;
+      const originalItemQty = originalItems.reduce((sum, i) => sum + i.quantity, 0);
+      const perUnitPrice = originalTotal / originalItemQty;
+      const refundTotal = qty * perUnitPrice;
+      const ratio = refundTotal / originalTotal;
+
+      const returnTransaction: Omit<Transaction, 'id' | 'createdAt'> = {
+        customerId: originalTransaction.customerId,
+        customerName: originalTransaction.customerName,
+        items: [{
+          productId: product.id,
+          productName: product.name,
+          quantity: qty,
+          unitPrice: perUnitPrice,
+          totalPrice: refundTotal,
+          category: product.category,
+          brand: product.brand,
+          color: product.color,
+          size: product.size,
+        }],
+        subtotal: -refundTotal,
+        discount: 0,
+        total: -refundTotal,
+        paymentMethod: originalTransaction.paymentMethod,
+        cashAmount: -(originalTransaction.cashAmount * ratio),
+        transferAmount: -(originalTransaction.transferAmount * ratio),
+        cardAmount: -(originalTransaction.cardAmount * ratio),
+        isInstallment: false,
+        notes: `Devolucion de venta ${originalTransaction.id}. Razon: ${refundData.notes}`,
+        date: new Date().toISOString(),
+        type: 'return',
+      };
+
+      addTransaction(returnTransaction);
+
+      toast({
+        title: "Devolucion procesada",
+        description: `${qty}x ${product.name} - ${formatCurrency(refundTotal)} reembolsado`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+    } finally {
+      isRefundingRef.current = false;
+    }
+  };
+
   const toggleExpandRow = (productId: string) => {
     setExpandedRows((prev) => {
       const next = new Set(prev);
@@ -753,6 +871,16 @@ export function Products() {
         onClose={onResolveClose}
         product={productToResolve}
         onConfirm={handleConfirmResolve}
+        isLoading={isLoading}
+      />
+
+      {/* Refund Modal */}
+      <RefundModal
+        isOpen={isRefundOpen}
+        onClose={onRefundClose}
+        product={productToRefund}
+        transaction={refundTransaction}
+        onConfirm={handleConfirmRefund}
         isLoading={isLoading}
       />
     </VStack>
@@ -913,6 +1041,7 @@ export function Products() {
                 onEdit={() => handleEditProduct(product)}
                 onDelete={() => handleDeleteClick(product)}
                 onResolve={() => handleResolveClick(product)}
+                onRefund={() => handleRefundClick(product)}
                 viewMode={viewMode}
                 paymentStatus={viewMode === 'sold' ? getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap) : undefined}
               />
@@ -1042,6 +1171,18 @@ export function Products() {
                                   onClick={() => handleResolveClick(product)}
                                 >
                                   Resolver
+                                </MenuItem>
+                              )}
+                              {product.soldQty > 0 && (() => {
+                                const ps = getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap);
+                                return ps.status === 'paid';
+                              })() && (
+                                <MenuItem
+                                  icon={<Icon as={FiRotateCcw} />}
+                                  color="orange.500"
+                                  onClick={() => handleRefundClick(product)}
+                                >
+                                  Devolucion
                                 </MenuItem>
                               )}
                               <MenuItem

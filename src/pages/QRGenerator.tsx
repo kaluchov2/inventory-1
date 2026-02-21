@@ -46,8 +46,8 @@ const SIZE_CONFIG: Record<QRSize, { qrSize: number; fontSize: string; padding: n
 export function QRGenerator() {
   const toast = useToast();
   const [selectedUps, setSelectedUps] = useState<number | ''>('');
-  const [quantity, setQuantity] = useState(40);
-  const [startSequence, setStartSequence] = useState(1);
+  const [fromSeq, setFromSeq] = useState(1);
+  const [toSeq, setToSeq] = useState(40);
   const [size, setSize] = useState<QRSize>('M');
   const [showPreview, setShowPreview] = useState(false);
   const [mode, setMode] = useState<Mode>('generate');
@@ -56,20 +56,38 @@ export function QRGenerator() {
 
   const { getProductByBarcode, getProductsByDrop, products } = useProductStore();
 
+  // Derived quantity from range
+  const quantity = Math.max(0, toSeq - fromSeq + 1);
+
+  // Barcode previews for the range endpoints
+  const fromBarcode = useMemo(() => {
+    if (!selectedUps) return '';
+    return selectedUps >= NUMBERED_UPS_THRESHOLD
+      ? generateBarcode('numbered', String(selectedUps), fromSeq)
+      : generateBarcode('legacy', String(selectedUps), undefined, fromSeq);
+  }, [selectedUps, fromSeq]);
+
+  const toBarcode = useMemo(() => {
+    if (!selectedUps) return '';
+    return selectedUps >= NUMBERED_UPS_THRESHOLD
+      ? generateBarcode('numbered', String(selectedUps), toSeq)
+      : generateBarcode('legacy', String(selectedUps), undefined, toSeq);
+  }, [selectedUps, toSeq]);
+
   // Generate barcodes based on settings
   const generatedCodes = useMemo(() => {
     if (!selectedUps || quantity <= 0) return [];
 
     const codes: string[] = [];
     const isNumbered = selectedUps >= NUMBERED_UPS_THRESHOLD;
-    for (let i = startSequence; i < startSequence + quantity; i++) {
+    for (let i = fromSeq; i <= toSeq; i++) {
       const barcode = isNumbered
         ? generateBarcode('numbered', String(selectedUps), i)
         : generateBarcode('legacy', String(selectedUps), undefined, i);
       codes.push(barcode);
     }
     return codes;
-  }, [selectedUps, quantity, startSequence]);
+  }, [selectedUps, fromSeq, toSeq, quantity]);
 
   // Look up products for each generated barcode
   // getProductByBarcode handles alternate format fallback (numbered <-> legacy)
@@ -138,6 +156,8 @@ export function QRGenerator() {
     setSelectedUps(val ? Number(val) : '');
     setShowPreview(false);
     setReprintSelections(new Map());
+    setFromSeq(1);
+    setToSeq(40);
   }, []);
 
   const toggleProduct = useCallback((productId: string) => {
@@ -447,8 +467,8 @@ export function QRGenerator() {
       {/* Settings */}
       <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
         <VStack spacing={4} align="stretch">
-          <SimpleGrid columns={{ base: 1, md: mode === 'generate' ? 3 : 2 }} spacing={4}>
-            {/* UPS Selection */}
+          {/* UPS Selection — shared by both modes */}
+          <SimpleGrid columns={{ base: 1, md: mode === 'reprint' ? 2 : 1 }} spacing={4}>
             <FormControl isRequired>
               <FormLabel fontWeight="bold">UPS</FormLabel>
               <AutocompleteSelect
@@ -460,89 +480,142 @@ export function QRGenerator() {
               />
             </FormControl>
 
-            {/* Quantity - generate mode only */}
-            {mode === 'generate' && (
-              <FormControl>
-                <FormLabel fontWeight="bold">Cantidad</FormLabel>
-                <NumberInput
-                  value={quantity}
-                  onChange={(_, val) => setQuantity(val || 1)}
-                  min={1}
-                  max={200}
-                  size="lg"
-                >
-                  <NumberInputField />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </FormControl>
-            )}
-
-            {/* Starting Sequence - generate mode only */}
-            {mode === 'generate' && (
-              <FormControl>
-                <FormLabel fontWeight="bold">Inicio desde</FormLabel>
-                <NumberInput
-                  value={startSequence}
-                  onChange={(_, val) => setStartSequence(val || 1)}
-                  min={1}
-                  max={9999}
-                  size="lg"
-                >
-                  <NumberInputField />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </FormControl>
-            )}
-
-            {/* Size Selection - reprint mode: put it in the grid */}
+            {/* Size in same row for reprint */}
             {mode === 'reprint' && (
               <FormControl>
                 <FormLabel fontWeight="bold">Tamaño de Etiqueta</FormLabel>
                 <ButtonGroup size="lg" isAttached variant="outline" w="full">
-                  <Button
-                    flex={1}
-                    onClick={() => setSize('T')}
-                    colorScheme={size === 'T' ? 'orange' : 'gray'}
-                    variant={size === 'T' ? 'solid' : 'outline'}
-                  >
-                    T
-                  </Button>
-                  <Button
-                    flex={1}
-                    onClick={() => setSize('S')}
-                    colorScheme={size === 'S' ? 'brand' : 'gray'}
-                    variant={size === 'S' ? 'solid' : 'outline'}
-                  >
-                    S
-                  </Button>
-                  <Button
-                    flex={1}
-                    onClick={() => setSize('M')}
-                    colorScheme={size === 'M' ? 'brand' : 'gray'}
-                    variant={size === 'M' ? 'solid' : 'outline'}
-                  >
-                    M
-                  </Button>
-                  <Button
-                    flex={1}
-                    onClick={() => setSize('L')}
-                    colorScheme={size === 'L' ? 'brand' : 'gray'}
-                    variant={size === 'L' ? 'solid' : 'outline'}
-                  >
-                    L
-                  </Button>
+                  {(['T', 'S', 'M', 'L'] as QRSize[]).map((s) => (
+                    <Button
+                      key={s}
+                      flex={1}
+                      onClick={() => setSize(s)}
+                      colorScheme={size === s ? (s === 'T' ? 'orange' : 'brand') : 'gray'}
+                      variant={size === s ? 'solid' : 'outline'}
+                    >
+                      {s}
+                    </Button>
+                  ))}
                 </ButtonGroup>
               </FormControl>
             )}
           </SimpleGrid>
 
-          {/* Size Selection - generate mode: full width below grid */}
+          {/* Range Selector — generate mode only */}
+          {mode === 'generate' && (
+            <Box
+              bg={selectedUps ? 'blue.50' : 'gray.50'}
+              border="1px solid"
+              borderColor={selectedUps ? 'blue.200' : 'gray.200'}
+              borderRadius="xl"
+              p={4}
+            >
+              <Text fontWeight="bold" fontSize="sm" color={selectedUps ? 'blue.700' : 'gray.500'} mb={3}>
+                Rango de Códigos a Generar
+              </Text>
+
+              <Flex align="flex-start" gap={3}>
+                {/* FROM */}
+                <VStack flex={1} spacing={1} align="stretch">
+                  <FormLabel fontSize="sm" fontWeight="semibold" color="gray.600" mb={0}>
+                    Desde (N°)
+                  </FormLabel>
+                  <NumberInput
+                    value={fromSeq}
+                    onChange={(_, val) => {
+                      const v = val || 1;
+                      setFromSeq(v);
+                      if (v > toSeq) setToSeq(v);
+                    }}
+                    min={1}
+                    max={9999}
+                    size="lg"
+                  >
+                    <NumberInputField fontFamily="mono" fontWeight="bold" />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                  {selectedUps && (
+                    <Box bg="white" border="1px solid" borderColor="blue.200" borderRadius="md" px={2} py={1} textAlign="center">
+                      <Text fontFamily="mono" fontSize="xs" fontWeight="bold" color="blue.700">
+                        {fromBarcode}
+                      </Text>
+                    </Box>
+                  )}
+                </VStack>
+
+                {/* Arrow */}
+                <Flex direction="column" align="center" pt={9}>
+                  <Text fontSize="2xl" color="blue.400" fontWeight="light">→</Text>
+                </Flex>
+
+                {/* TO */}
+                <VStack flex={1} spacing={1} align="stretch">
+                  <FormLabel fontSize="sm" fontWeight="semibold" color="gray.600" mb={0}>
+                    Hasta (N°)
+                  </FormLabel>
+                  <NumberInput
+                    value={toSeq}
+                    onChange={(_, val) => {
+                      const v = val || fromSeq;
+                      setToSeq(Math.max(fromSeq, v));
+                    }}
+                    min={fromSeq}
+                    max={9999}
+                    size="lg"
+                  >
+                    <NumberInputField fontFamily="mono" fontWeight="bold" />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                  {selectedUps && (
+                    <Box bg="white" border="1px solid" borderColor="blue.200" borderRadius="md" px={2} py={1} textAlign="center">
+                      <Text fontFamily="mono" fontSize="xs" fontWeight="bold" color="blue.700">
+                        {toBarcode}
+                      </Text>
+                    </Box>
+                  )}
+                </VStack>
+
+                {/* Total pill */}
+                <Flex direction="column" align="center" pt={8}>
+                  <Badge
+                    colorScheme={quantity > 0 ? 'blue' : 'gray'}
+                    fontSize="md"
+                    px={3}
+                    py={2}
+                    borderRadius="lg"
+                    textAlign="center"
+                    whiteSpace="nowrap"
+                  >
+                    {quantity > 0 ? `${quantity} cód.` : '—'}
+                  </Badge>
+                </Flex>
+              </Flex>
+
+              {/* Quick-set buttons */}
+              <HStack spacing={2} mt={3} flexWrap="wrap">
+                <Text fontSize="xs" color="gray.500" mr={1}>Cantidad rápida:</Text>
+                {[10, 20, 40, 80].map((n) => (
+                  <Button
+                    key={n}
+                    size="xs"
+                    variant="outline"
+                    colorScheme="blue"
+                    onClick={() => setToSeq(fromSeq + n - 1)}
+                  >
+                    {n}
+                  </Button>
+                ))}
+              </HStack>
+            </Box>
+          )}
+
+          {/* Size selector — generate mode: full width */}
           {mode === 'generate' && (
             <FormControl>
               <FormLabel fontWeight="bold">Tamaño de Etiqueta</FormLabel>
@@ -723,27 +796,6 @@ export function QRGenerator() {
               : 'Generar Vista Previa'}
           </Button>
 
-          {/* Summary - generate mode */}
-          {mode === 'generate' && selectedUps && (
-            <Flex justify="space-between" align="center" p={3} bg="blue.50" borderRadius="lg">
-              <Text fontWeight="medium" color="blue.700">
-                Se generarán {quantity} códigos:
-              </Text>
-              <HStack spacing={2}>
-                <Badge colorScheme="blue" fontSize="md" px={2} py={1}>
-                  {selectedUps >= NUMBERED_UPS_THRESHOLD
-                    ? generateBarcode('numbered', String(selectedUps), startSequence)
-                    : generateBarcode('legacy', String(selectedUps), undefined, startSequence)}
-                </Badge>
-                <Text color="blue.700">→</Text>
-                <Badge colorScheme="blue" fontSize="md" px={2} py={1}>
-                  {selectedUps >= NUMBERED_UPS_THRESHOLD
-                    ? generateBarcode('numbered', String(selectedUps), startSequence + quantity - 1)
-                    : generateBarcode('legacy', String(selectedUps), undefined, startSequence + quantity - 1)}
-                </Badge>
-              </HStack>
-            </Flex>
-          )}
         </VStack>
       </Box>
 

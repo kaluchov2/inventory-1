@@ -3,8 +3,24 @@ import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../store/authStore';
 
 /**
- * Real-time sync hook
- * Subscribes to Supabase real-time changes and triggers store updates
+ * useRealtimeSync — Supabase Realtime subscription hook
+ *
+ * ## What triggers realtime events?
+ * Supabase emits `postgres_changes` events whenever a row is INSERTed, UPDATEd,
+ * or DELETEd in the watched table. In this app the trigger is:
+ *   syncManager.syncPendingOperations() → upserts rows in Supabase →
+ *   Supabase broadcasts the change to all connected clients on the same channel.
+ *
+ * ## What happens on receipt?
+ * The callback passed to useRealtimeProducts / useRealtimeCustomers /
+ * useRealtimeTransactions is called immediately. SyncInitializer wraps these
+ * callbacks in a 2-second debounce before calling loadFromSupabase(), so
+ * rapid back-to-back events don't cause multiple concurrent reloads.
+ *
+ * ## Channel lifecycle
+ * The channel is created on mount and removed on unmount (React cleanup).
+ * The subscription is re-established whenever isAuthenticated or isOfflineMode
+ * changes (e.g. login / logout / going offline).
  */
 
 type TableName = 'products' | 'customers' | 'transactions';

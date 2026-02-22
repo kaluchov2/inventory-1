@@ -55,7 +55,7 @@ export function Sidebar() {
     <Box
       as="nav"
       w="280px"
-      minH="100vh"
+      h="100vh"
       bg="white"
       borderRight="1px"
       borderColor="gray.200"
@@ -63,7 +63,9 @@ export function Sidebar() {
       position="fixed"
       left={0}
       top={0}
-      display={{ base: 'none', lg: 'block' }}
+      display={{ base: 'none', lg: 'flex' }}
+      flexDirection="column"
+      overflowY="hidden"
     >
       {/* Logo/Title */}
       <Flex px={6} pb={6} alignItems="center">
@@ -75,7 +77,7 @@ export function Sidebar() {
       <Divider mb={4} />
 
       {/* Navigation Items */}
-      <VStack spacing={2} px={4} align="stretch" flex={1}>
+      <VStack spacing={2} px={4} align="stretch" flex={1} overflowY="auto">
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
 
@@ -112,7 +114,7 @@ export function Sidebar() {
       </VStack>
 
       {/* User Info & Logout at bottom */}
-      <Box px={4} mt="auto">
+      <Box px={4}>
         <Divider mb={4} />
 
         {/* Sync Status */}

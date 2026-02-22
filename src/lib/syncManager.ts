@@ -55,14 +55,33 @@ class SyncManager {
       }
     });
 
+    // SYNC TIMING NOTE FOR THE TEAM:
+    // This interval fires every 60 seconds. A sale recorded by User A will be
+    // visible on User B's Products page in roughly:
+    //   - Best case  (~3–4s):  A's queue flushed immediately + realtime event + 2s debounce
+    //   - Typical    (~30–35s): Queue was already syncing; waits for next flush
+    //   - Worst case (~63–65s): This timer just reset; full 60s wait + realtime + 2s debounce
+    // To speed this up, reduce 60000 to 5000–10000 ms (see Future Recommendations above).
     setInterval(() => {
       const status = connectionStatus.getStatus();
       if (status.isOnline && status.isSupabaseConnected && !this.isSyncing) {
         this.syncPendingOperations();
       }
-    }, 60000); // Sync every minute if online
+    }, 60000); // Flush queue to Supabase every 60 seconds when online
   }
 
+  /**
+   * Flush all queued operations to Supabase.
+   *
+   * Called automatically by:
+   *  - The 60-second interval timer (see initialize())
+   *  - queueOperation() when connected and not already syncing (immediate flush)
+   *  - SyncInitializer on app startup (before initial data load)
+   *
+   * After all operations are flushed, Supabase emits `postgres_changes` realtime
+   * events to every connected client. SyncInitializer debounces these by 2 seconds,
+   * then calls loadFromSupabase() to refresh the local store.
+   */
   public async syncPendingOperations() {
     if (this.isSyncing || !supabase) return;
 
@@ -531,6 +550,16 @@ class SyncManager {
     return this.currentStatus;
   }
 
+  /**
+   * Enqueue a single operation and immediately attempt to flush if online.
+   *
+   * The operation is persisted to localStorage so it survives page reloads.
+   * If the app is offline, the operation stays queued until the next time
+   * syncPendingOperations() is called (either on reconnect or the 60s timer).
+   *
+   * Immediate flush path: if connected right now, this triggers an upload
+   * within milliseconds → Supabase realtime fires → other clients reload in ~2–4s.
+   */
   public queueOperation(operation: Omit<SyncOperation, 'id' | 'timestamp' | 'retryCount'>) {
     const id = syncQueue.enqueue(operation);
     this.updateStatus({ pendingCount: syncQueue.size() });

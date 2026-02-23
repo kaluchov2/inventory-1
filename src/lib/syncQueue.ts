@@ -19,10 +19,13 @@ export type SyncOperation = {
 class SyncQueue {
   private queue: SyncOperation[] = [];
   private readonly STORAGE_KEY = 'inventory_sync_queue';
+  private readonly DEAD_LETTER_KEY = 'inventory_sync_dead_letter';
   private readonly MAX_RETRIES = 3;
+  private deadLetter: SyncOperation[] = [];
 
   constructor() {
     this.loadQueue();
+    this.loadDeadLetter();
   }
 
   private loadQueue() {
@@ -35,6 +38,53 @@ class SyncQueue {
       console.error('Failed to load sync queue:', error);
       this.queue = [];
     }
+  }
+
+  private loadDeadLetter() {
+    try {
+      const stored = localStorage.getItem(this.DEAD_LETTER_KEY);
+      if (stored) {
+        this.deadLetter = JSON.parse(stored);
+      }
+    } catch (error) {
+      console.error('Failed to load dead letter queue:', error);
+      this.deadLetter = [];
+    }
+  }
+
+  public moveToDeadLetter(operation: SyncOperation) {
+    operation.retryCount = 0; // Reset retries for future retry attempts
+    this.deadLetter.push(operation);
+    try {
+      localStorage.setItem(this.DEAD_LETTER_KEY, JSON.stringify(this.deadLetter));
+    } catch { /* best effort */ }
+  }
+
+  public getDeadLetter(): SyncOperation[] {
+    return [...this.deadLetter];
+  }
+
+  public getDeadLetterCount(): number {
+    return this.deadLetter.length;
+  }
+
+  public retryDeadLetter() {
+    const ops = [...this.deadLetter];
+    this.deadLetter = [];
+    try {
+      localStorage.removeItem(this.DEAD_LETTER_KEY);
+    } catch { /* best effort */ }
+    // Re-enqueue all dead letter operations
+    for (const op of ops) {
+      this.enqueue({ type: op.type, action: op.action, data: op.data });
+    }
+  }
+
+  public clearDeadLetter() {
+    this.deadLetter = [];
+    try {
+      localStorage.removeItem(this.DEAD_LETTER_KEY);
+    } catch { /* best effort */ }
   }
 
   private saveQueue() {

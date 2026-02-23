@@ -1067,6 +1067,8 @@ function convertDbProduct(dbProduct: any): Product {
 }
 
 function mergeProducts(local: Product[], remote: Product[]): Product[] {
+  const { syncQueue } = require('../lib/syncQueue');
+
   const remoteMap = new Map(remote.map((p) => [p.id, p]));
   const localMap = new Map(local.map((p) => [p.id, p]));
 
@@ -1088,6 +1090,21 @@ function mergeProducts(local: Product[], remote: Product[]): Product[] {
   for (const [id, remoteProd] of remoteMap) {
     if (!merged.has(id)) {
       merged.set(id, remoteProd);
+    }
+  }
+
+  // Remove local-only records that aren't pending in the sync queue
+  // These are ghost records from localStorage that were deleted on the server
+  const pendingIds = new Set(
+    syncQueue.getAll()
+      .filter((op: any) => op.type === 'products' && (op.action === 'create' || op.action === 'update'))
+      .map((op: any) => op.data?.id)
+      .filter(Boolean)
+  );
+
+  for (const [id] of merged) {
+    if (!remoteMap.has(id) && !pendingIds.has(id)) {
+      merged.delete(id);
     }
   }
 

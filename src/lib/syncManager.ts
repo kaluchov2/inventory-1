@@ -11,7 +11,7 @@ import { connectionStatus } from './connectionStatus';
  * ## Multi-User Sync Architecture (3-5 concurrent users)
  *
  * - Optimistic UI: Local state updates instantly, operations queued for async sync
- * - Flush interval: 60s timer + immediate flush on new operation if connected
+ * - Flush interval: 10s timer + immediate flush on new operation if connected + visibilitychange
  * - Realtime: Full loadFromSupabase() reload on any change event, debounced 2s
  * - Conflict resolution: Last-write-wins based on updated_at timestamps
  * - Queue persistence: localStorage, survives app restarts
@@ -30,16 +30,18 @@ import { connectionStatus } from './connectionStatus';
  * ## Future Recommendations
  *
  * - Add optimistic locking: check updated_at matches before saving, warn user if stale
- * - Reduce sync interval to 5-10s for snappier multi-user experience
+ * - (DONE) Reduced sync interval to 10s for snappier multi-user experience
  * - Switch from full-reload realtime to incremental handleRealtimeUpdate/handleRealtimeDelete
  * - Add a visual "sync pending" indicator showing queued operations count
  */
 class SyncManager {
   private isSyncing = false;
+  private readonly MAX_RETRIES = 3;
   private syncListeners: Set<(status: SyncStatus) => void> = new Set();
   private currentStatus: SyncStatus = {
     isSyncing: false,
     pendingCount: 0,
+    deadLetterCount: 0,
     lastSync: null,
     error: null,
   };
@@ -56,18 +58,17 @@ class SyncManager {
     });
 
     // SYNC TIMING NOTE FOR THE TEAM:
-    // This interval fires every 60 seconds. A sale recorded by User A will be
+    // This interval fires every 10 seconds. A sale recorded by User A will be
     // visible on User B's Products page in roughly:
     //   - Best case  (~3–4s):  A's queue flushed immediately + realtime event + 2s debounce
-    //   - Typical    (~30–35s): Queue was already syncing; waits for next flush
-    //   - Worst case (~63–65s): This timer just reset; full 60s wait + realtime + 2s debounce
-    // To speed this up, reduce 60000 to 5000–10000 ms (see Future Recommendations above).
+    //   - Typical    (~7–8s):  Queue was already syncing; waits for next flush
+    //   - Worst case (~13–15s): This timer just reset; full 10s wait + realtime + 2s debounce
     setInterval(() => {
       const status = connectionStatus.getStatus();
       if (status.isOnline && status.isSupabaseConnected && !this.isSyncing) {
         this.syncPendingOperations();
       }
-    }, 60000); // Flush queue to Supabase every 60 seconds when online
+    }, 10000); // Flush queue to Supabase every 10 seconds when online
   }
 
   /**
@@ -138,14 +139,18 @@ class SyncManager {
           try {
             const shouldRetry = syncQueue.incrementRetry(operation.id);
             if (!shouldRetry) {
-              console.error('[SyncManager] Max retries reached, removing operation:', operation.id);
+              console.error('[SyncManager] Max retries reached, moving to dead letter:', operation.id);
               try {
+                syncQueue.moveToDeadLetter(operation);
                 syncQueue.remove(operation.id);
               } catch (removeError) {
                 console.error('[SyncManager] Failed to remove operation (localStorage issue):', removeError);
                 // Can't remove from queue - localStorage is full
                 throw new Error('LocalStorage quota exceeded - cannot manage sync queue');
               }
+              this.updateStatus({
+                error: `Falló sincronizar ${operation.type} ${operation.action} después de ${this.MAX_RETRIES} intentos. Datos guardados localmente.`,
+              });
               consecutiveErrors = 0; // Reset after removing failed operation
             } else {
               // Add exponential backoff delay before retrying
@@ -169,14 +174,18 @@ class SyncManager {
       this.updateStatus({
         isSyncing: false,
         pendingCount: syncQueue.size(),
+        deadLetterCount: syncQueue.getDeadLetterCount(),
         lastSync: new Date(),
-        error: null,
+        error: syncQueue.getDeadLetterCount() > 0
+          ? `${syncQueue.getDeadLetterCount()} operación(es) fallaron. Datos guardados localmente.`
+          : null,
       });
     } catch (error) {
       console.error('[SyncManager] Sync error:', error);
       this.updateStatus({
         isSyncing: false,
         pendingCount: syncQueue.size(),
+        deadLetterCount: syncQueue.getDeadLetterCount(),
         error: error instanceof Error ? error.message : 'Unknown sync error',
       });
     } finally {
@@ -186,7 +195,8 @@ class SyncManager {
       // CRITICAL: Always ensure UI status is updated
       this.updateStatus({
         isSyncing: false,
-        pendingCount: syncQueue.size()
+        pendingCount: syncQueue.size(),
+        deadLetterCount: syncQueue.getDeadLetterCount(),
       });
     }
   }
@@ -250,7 +260,7 @@ class SyncManager {
         // Single delete (soft delete)
         const { error: deleteError } = await client
           .from('products')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .eq('id', data.id);
         if (deleteError) throw deleteError;
         break;
@@ -260,7 +270,7 @@ class SyncManager {
         const ids = data.map((item: any) => item.id);
         const { error: batchDeleteError } = await client
           .from('products')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .in('id', ids);
         if (batchDeleteError) throw batchDeleteError;
         break;
@@ -287,7 +297,7 @@ class SyncManager {
       case 'delete':
         const { error: deleteError } = await client
           .from('customers')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .eq('id', data.id);
         if (deleteError) throw deleteError;
         break;
@@ -341,7 +351,7 @@ class SyncManager {
       case 'delete':
         const { error: deleteError } = await client
           .from('transactions')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .eq('id', data.id);
         if (deleteError) throw deleteError;
         break;
@@ -372,7 +382,7 @@ class SyncManager {
         // Delete by drop_number for consistency
         const { error: deleteError } = await client
           .from('drops')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .eq('drop_number', data.dropNumber);
         if (deleteError) throw deleteError;
         break;
@@ -400,7 +410,7 @@ class SyncManager {
       case 'delete':
         const { error: deleteError } = await client
           .from('staff')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .eq('id', data.id);
         if (deleteError) throw deleteError;
         break;
@@ -555,7 +565,7 @@ class SyncManager {
    *
    * The operation is persisted to localStorage so it survives page reloads.
    * If the app is offline, the operation stays queued until the next time
-   * syncPendingOperations() is called (either on reconnect or the 60s timer).
+   * syncPendingOperations() is called (either on reconnect or the 10s timer).
    *
    * Immediate flush path: if connected right now, this triggers an upload
    * within milliseconds → Supabase realtime fires → other clients reload in ~2–4s.
@@ -571,11 +581,26 @@ class SyncManager {
 
     return id;
   }
+
+  /**
+   * Re-enqueue all dead-letter operations and attempt sync.
+   * Called when the user clicks "Retry" on failed operations.
+   */
+  public retryDeadLetter() {
+    syncQueue.retryDeadLetter();
+    this.updateStatus({
+      pendingCount: syncQueue.size(),
+      deadLetterCount: 0,
+      error: null,
+    });
+    this.syncPendingOperations();
+  }
 }
 
 export interface SyncStatus {
   isSyncing: boolean;
   pendingCount: number;
+  deadLetterCount: number;
   lastSync: Date | null;
   error: string | null;
 }

@@ -22,6 +22,14 @@ class ConnectionStatusManager {
     window.addEventListener('online', () => this.updateStatus({ isOnline: true }));
     window.addEventListener('offline', () => this.updateStatus({ isOnline: false }));
 
+    // When PWA returns from background, immediately re-check connection
+    // This triggers syncManager's subscription → flushes pending queue
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        this.checkSupabaseConnection();
+      }
+    });
+
     this.checkSupabaseConnection();
     setInterval(() => this.checkSupabaseConnection(), 30000); // Check every 30s
   }

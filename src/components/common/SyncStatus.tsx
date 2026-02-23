@@ -68,6 +68,26 @@ export function SyncStatus() {
     );
   }
 
+  if (syncStatus.deadLetterCount > 0) {
+    return (
+      <Tooltip label={`${syncStatus.deadLetterCount} operación(es) fallaron — toca para reintentar`}>
+        <Badge
+          colorScheme="orange"
+          display="flex"
+          alignItems="center"
+          gap={2}
+          px={3}
+          py={1}
+          cursor="pointer"
+          onClick={() => syncManager.retryDeadLetter()}
+        >
+          <Icon as={FiAlertCircle} />
+          <Text fontSize="sm">{syncStatus.deadLetterCount} fallido(s) — Reintentar</Text>
+        </Badge>
+      </Tooltip>
+    );
+  }
+
   if (syncStatus.error) {
     return (
       <Tooltip label={`Error: ${syncStatus.error}`}>

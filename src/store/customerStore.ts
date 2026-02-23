@@ -207,6 +207,20 @@ export const useCustomerStore = create<CustomerStore>()(
     }),
     {
       name: 'inventory_customers',
+      storage: {
+        getItem: (name) => {
+          const value = localStorage.getItem(name);
+          return value ? JSON.parse(value) : null;
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value));
+          } catch (e) {
+            console.warn('[Storage] localStorage write failed for customers, data lives in memory only');
+          }
+        },
+        removeItem: (name) => localStorage.removeItem(name),
+      },
     }
   )
 );
@@ -225,6 +239,8 @@ function convertDbCustomer(dbCustomer: any): Customer {
 }
 
 function mergeCustomers(local: Customer[], remote: Customer[]): Customer[] {
+  const { syncQueue } = require('../lib/syncQueue');
+
   const remoteMap = new Map(remote.map(c => [c.id, c]));
   const localMap = new Map(local.map(c => [c.id, c]));
   const merged = new Map<string, Customer>();
@@ -243,6 +259,21 @@ function mergeCustomers(local: Customer[], remote: Customer[]): Customer[] {
   for (const [id, remoteCust] of remoteMap) {
     if (!merged.has(id)) {
       merged.set(id, remoteCust);
+    }
+  }
+
+  // Remove local-only records that aren't pending in the sync queue
+  // These are ghost records from localStorage that were deleted on the server
+  const pendingIds = new Set(
+    syncQueue.getAll()
+      .filter((op: any) => op.type === 'customers' && (op.action === 'create' || op.action === 'update'))
+      .map((op: any) => op.data?.id)
+      .filter(Boolean)
+  );
+
+  for (const [id] of merged) {
+    if (!remoteMap.has(id) && !pendingIds.has(id)) {
+      merged.delete(id);
     }
   }
 

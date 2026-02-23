@@ -29,8 +29,8 @@ import { syncManager } from '../../lib/syncManager';
  *
  * End-to-end timing for other users to see a change on their Products page:
  *   Best case  ~3–4s  — queue flushed immediately + realtime + 2s debounce
- *   Typical   ~30–35s — queue waited partway through the 60s sync interval
- *   Worst case ~63–65s — 60s timer just reset when the sale happened
+ *   Typical   ~7–8s  — queue waited partway through the 10s sync interval
+ *   Worst case ~13–15s — 10s timer just reset when the sale happened
  */
 export function SyncInitializer() {
   const { isAuthenticated, isOfflineMode } = useAuthStore();
@@ -56,6 +56,21 @@ export function SyncInitializer() {
         console.error('[Sync] Failed to load initial data:', error);
       });
     }
+  }, [isAuthenticated, isOfflineMode, loadProducts, loadCustomers, loadTransactions]);
+
+  // When app returns from background, flush pending queue then reload all data
+  // This ensures changes from other devices are picked up immediately
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (!document.hidden && isAuthenticated && !isOfflineMode) {
+        console.log('[Sync] App returned to foreground, flushing queue and reloading...');
+        syncManager.syncPendingOperations().then(() => {
+          Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [isAuthenticated, isOfflineMode, loadProducts, loadCustomers, loadTransactions]);
 
   // Debounce timers — one per table.

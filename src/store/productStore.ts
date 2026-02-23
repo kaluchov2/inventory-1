@@ -13,6 +13,7 @@ import { parseUPS } from "../utils/upsParser";
 import { generateBarcode, generateBarcodeFromParsed, parseBarcode } from "../utils/barcodeGenerator";
 import { getProductMatchKey } from "../utils/excelImport";
 import { deriveStatus } from "../utils/productHelpers";
+import { syncQueue } from "../lib/syncQueue";
 
 /**
  * Normalize a string value for comparison during sync.
@@ -1067,8 +1068,6 @@ function convertDbProduct(dbProduct: any): Product {
 }
 
 function mergeProducts(local: Product[], remote: Product[]): Product[] {
-  const { syncQueue } = require('../lib/syncQueue');
-
   const remoteMap = new Map(remote.map((p) => [p.id, p]));
   const localMap = new Map(local.map((p) => [p.id, p]));
 

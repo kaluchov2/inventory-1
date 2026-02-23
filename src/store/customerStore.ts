@@ -5,6 +5,7 @@ import { generateId, getCurrentISODate } from '../utils/formatters';
 import { syncManager } from '../lib/syncManager';
 import { customerService } from '../services/customerService';
 import { supabase } from '../lib/supabase';
+import { syncQueue } from '../lib/syncQueue';
 
 interface CustomerStore {
   customers: Customer[];
@@ -239,8 +240,6 @@ function convertDbCustomer(dbCustomer: any): Customer {
 }
 
 function mergeCustomers(local: Customer[], remote: Customer[]): Customer[] {
-  const { syncQueue } = require('../lib/syncQueue');
-
   const remoteMap = new Map(remote.map(c => [c.id, c]));
   const localMap = new Map(local.map(c => [c.id, c]));
   const merged = new Map<string, Customer>();

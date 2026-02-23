@@ -5,6 +5,7 @@ import { generateId, getCurrentISODate } from '../utils/formatters';
 import { syncManager } from '../lib/syncManager';
 import { transactionService } from '../services/transactionService';
 import { supabase } from '../lib/supabase';
+import { syncQueue } from '../lib/syncQueue';
 
 interface TransactionFilters {
   dateFrom: string;
@@ -338,8 +339,6 @@ function convertDbTransaction(dbTransaction: any): Transaction {
 }
 
 function mergeTransactions(local: Transaction[], remote: Transaction[]): Transaction[] {
-  const { syncQueue } = require('../lib/syncQueue');
-
   const remoteMap = new Map(remote.map(t => [t.id, t]));
   const localMap = new Map(local.map(t => [t.id, t]));
   const merged = new Map<string, Transaction>();

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from "react";
 import {
   Box,
   VStack,
@@ -21,57 +21,70 @@ import {
   useToast,
   Checkbox,
   IconButton,
-} from '@chakra-ui/react';
-import { QRCodeSVG } from 'qrcode.react';
-import { FiPrinter, FiEye, FiGrid, FiPlus, FiMinus, FiRefreshCw } from 'react-icons/fi';
-import { generateBarcode } from '../utils/barcodeGenerator';
-import { UPS_BATCH_OPTIONS } from '../constants/colors';
+} from "@chakra-ui/react";
+import { QRCodeSVG } from "qrcode.react";
+import {
+  FiPrinter,
+  FiEye,
+  FiGrid,
+  FiPlus,
+  FiMinus,
+  FiRefreshCw,
+} from "react-icons/fi";
+import { generateBarcode } from "../utils/barcodeGenerator";
+import { UPS_BATCH_OPTIONS } from "../constants/colors";
 
 const NUMBERED_UPS_THRESHOLD = 20;
-import { AutocompleteSelect } from '../components/common';
-import { useProductStore } from '../store/productStore';
-import { formatCurrency } from '../utils/formatters';
-import type { Product } from '../types';
+import { AutocompleteSelect } from "../components/common";
+import { useProductStore } from "../store/productStore";
+import { formatCurrency } from "../utils/formatters";
+import type { Product } from "../types";
 
-type QRSize = 'T' | 'S' | 'M' | 'L';
-type Mode = 'generate' | 'reprint';
+type QRSize = "T" | "S" | "M" | "L";
+type Mode = "generate" | "reprint";
 
-const SIZE_CONFIG: Record<QRSize, { qrSize: number; fontSize: string; padding: number }> = {
-  T: { qrSize: 70, fontSize: '9px', padding: 4 },
-  S: { qrSize: 80, fontSize: '10px', padding: 8 },
-  M: { qrSize: 120, fontSize: '12px', padding: 12 },
-  L: { qrSize: 160, fontSize: '14px', padding: 16 },
+const SIZE_CONFIG: Record<
+  QRSize,
+  { qrSize: number; fontSize: string; padding: number }
+> = {
+  T: { qrSize: 70, fontSize: "14px", padding: 4 },
+  S: { qrSize: 80, fontSize: "14px", padding: 8 },
+  M: { qrSize: 120, fontSize: "14px", padding: 12 },
+  L: { qrSize: 160, fontSize: "16px", padding: 16 },
 };
 
 export function QRGenerator() {
   const toast = useToast();
-  const [selectedUps, setSelectedUps] = useState<number | ''>('');
+  const [selectedUps, setSelectedUps] = useState<number | "">("");
   const [fromSeq, setFromSeq] = useState(1);
   const [toSeq, setToSeq] = useState(40);
-  const [size, setSize] = useState<QRSize>('M');
+  const [size, setSize] = useState<QRSize>("M");
   const [showPreview, setShowPreview] = useState(false);
-  const [mode, setMode] = useState<Mode>('generate');
+  const [mode, setMode] = useState<Mode>("generate");
   // Map of product.id → number of copies
-  const [reprintSelections, setReprintSelections] = useState<Map<string, number>>(new Map());
+  const [reprintSelections, setReprintSelections] = useState<
+    Map<string, number>
+  >(new Map());
 
-  const { getProductByBarcode, getProductsByDrop, products } = useProductStore();
+  const { getProductByBarcode, getProductsByDrop, products } =
+    useProductStore();
 
   // Derived quantity from range
   const quantity = Math.max(0, toSeq - fromSeq + 1);
 
   // Barcode previews for the range endpoints
   const fromBarcode = useMemo(() => {
-    if (!selectedUps) return '';
+    if (!selectedUps) return "";
     return selectedUps >= NUMBERED_UPS_THRESHOLD
-      ? generateBarcode('numbered', String(selectedUps), fromSeq)
-      : generateBarcode('legacy', String(selectedUps), undefined, fromSeq);
+      ? generateBarcode("numbered", String(selectedUps), fromSeq)
+      : generateBarcode("legacy", String(selectedUps), undefined, fromSeq);
   }, [selectedUps, fromSeq]);
 
   const toBarcode = useMemo(() => {
-    if (!selectedUps) return '';
+    if (!selectedUps) return "";
     return selectedUps >= NUMBERED_UPS_THRESHOLD
-      ? generateBarcode('numbered', String(selectedUps), toSeq)
-      : generateBarcode('legacy', String(selectedUps), undefined, toSeq);
+      ? generateBarcode("numbered", String(selectedUps), toSeq)
+      : generateBarcode("legacy", String(selectedUps), undefined, toSeq);
   }, [selectedUps, toSeq]);
 
   // Generate barcodes based on settings
@@ -82,8 +95,8 @@ export function QRGenerator() {
     const isNumbered = selectedUps >= NUMBERED_UPS_THRESHOLD;
     for (let i = fromSeq; i <= toSeq; i++) {
       const barcode = isNumbered
-        ? generateBarcode('numbered', String(selectedUps), i)
-        : generateBarcode('legacy', String(selectedUps), undefined, i);
+        ? generateBarcode("numbered", String(selectedUps), i)
+        : generateBarcode("legacy", String(selectedUps), undefined, i);
       codes.push(barcode);
     }
     return codes;
@@ -106,20 +119,28 @@ export function QRGenerator() {
     if (!selectedUps) return [];
     return getProductsByDrop(String(selectedUps))
       .filter((p) => !!p.barcode)
-      .sort((a, b) => (a.productNumber ?? a.dropSequence ?? 0) - (b.productNumber ?? b.dropSequence ?? 0));
+      .sort(
+        (a, b) =>
+          (a.productNumber ?? a.dropSequence ?? 0) -
+          (b.productNumber ?? b.dropSequence ?? 0),
+      );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUps, products]);
 
   // Count of products in this UPS that have no barcode (for warning)
   const excludedCount = useMemo(() => {
     if (!selectedUps) return 0;
-    return getProductsByDrop(String(selectedUps)).filter((p) => !p.barcode).length;
+    return getProductsByDrop(String(selectedUps)).filter((p) => !p.barcode)
+      .length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUps, products]);
 
   // Unified print data for both modes
-  const printCodes = useMemo((): Array<{ barcode: string; product?: Product }> => {
-    if (mode === 'generate') {
+  const printCodes = useMemo((): Array<{
+    barcode: string;
+    product?: Product;
+  }> => {
+    if (mode === "generate") {
       return generatedCodes.map((code) => ({
         barcode: code,
         product: productMap.get(code),
@@ -153,7 +174,7 @@ export function QRGenerator() {
   }, []);
 
   const handleUpsChange = useCallback((val: string | number) => {
-    setSelectedUps(val ? Number(val) : '');
+    setSelectedUps(val ? Number(val) : "");
     setShowPreview(false);
     setReprintSelections(new Map());
     setFromSeq(1);
@@ -196,19 +217,19 @@ export function QRGenerator() {
   const handleGeneratePreview = () => {
     if (!selectedUps) {
       toast({
-        title: 'Selecciona un UPS',
-        description: 'Debes seleccionar un número de UPS para generar códigos',
-        status: 'warning',
+        title: "Selecciona un UPS",
+        description: "Debes seleccionar un número de UPS para generar códigos",
+        status: "warning",
         duration: 3000,
         isClosable: true,
       });
       return;
     }
-    if (mode === 'reprint' && reprintSelections.size === 0) {
+    if (mode === "reprint" && reprintSelections.size === 0) {
       toast({
-        title: 'Selecciona productos',
-        description: 'Debes seleccionar al menos un producto para reimprimir',
-        status: 'warning',
+        title: "Selecciona productos",
+        description: "Debes seleccionar al menos un producto para reimprimir",
+        status: "warning",
         duration: 3000,
         isClosable: true,
       });
@@ -223,24 +244,25 @@ export function QRGenerator() {
     const { qrSize, fontSize, padding } = SIZE_CONFIG[size];
     const allBarcodes = printCodes.map((c) => c.barcode);
 
-    const printWindow = window.open('', '_blank');
+    const printWindow = window.open("", "_blank");
     if (!printWindow) {
       toast({
-        title: 'Error',
-        description: 'No se pudo abrir la ventana de impresión',
-        status: 'error',
+        title: "Error",
+        description: "No se pudo abrir la ventana de impresión",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
       return;
     }
 
-    const isThermal = size === 'T';
-    const columns = isThermal ? 2 : size === 'S' ? 5 : size === 'M' ? 4 : 3;
+    const isThermal = size === "T";
+    const columns = isThermal ? 2 : size === "S" ? 5 : size === "M" ? 4 : 3;
 
-    const headerText = mode === 'reprint'
-      ? `Reimpresión - UPS ${selectedUps}, ${reprintSelections.size} productos, ${totalReprintLabels} etiquetas`
-      : `Del ${allBarcodes[0]} al ${allBarcodes[allBarcodes.length - 1]} (${allBarcodes.length} códigos)`;
+    const headerText =
+      mode === "reprint"
+        ? `Reimpresión - UPS ${selectedUps}, ${reprintSelections.size} productos, ${totalReprintLabels} etiquetas`
+        : `Del ${allBarcodes[0]} al ${allBarcodes[allBarcodes.length - 1]} (${allBarcodes.length} códigos)`;
 
     const thermalStyles = `
       @page {
@@ -274,7 +296,7 @@ export function QRGenerator() {
       }
       .qr-text {
         font-family: monospace;
-        font-size: 8px;
+        font-size: 12px;
         font-weight: bold;
         margin-top: 1mm;
         letter-spacing: 0.5px;
@@ -389,19 +411,21 @@ export function QRGenerator() {
             <p>${headerText}</p>
           </div>
           <div class="grid" id="qr-grid">
-            ${printCodes.map((entry, idx) => {
-              const product = entry.product;
-              const productInfoHtml = product
-                ? `<div class="product-name" title="${product.name.replace(/"/g, '&quot;')}">${product.name.length > 30 ? product.name.slice(0, 30) + '…' : product.name}</div>
+            ${printCodes
+              .map((entry, idx) => {
+                const product = entry.product;
+                const productInfoHtml = product
+                  ? `<div class="product-name" title="${product.name.replace(/"/g, "&quot;")}">${product.name.length > 30 ? product.name.slice(0, 30) + "…" : product.name}</div>
                    <div class="product-price">${formatCurrency(product.unitPrice)}</div>`
-                : `<div class="unregistered">Sin registrar</div>`;
-              return `
+                  : `<div class="unregistered">Sin registrar</div>`;
+                return `
               <div class="qr-item">
                 <div id="qr-${idx}"></div>
                 ${productInfoHtml}
                 <div class="qr-text">${entry.barcode}</div>
               </div>`;
-            }).join('')}
+              })
+              .join("")}
           </div>
           <script>
             // Generate QR codes
@@ -411,7 +435,7 @@ export function QRGenerator() {
             codes.forEach((code, idx) => {
               const container = document.getElementById('qr-' + idx);
               if (container) {
-                const qr = qrcode(0, '${isThermal ? 'M' : 'H'}');
+                const qr = qrcode(0, '${isThermal ? "M" : "H"}');
                 qr.addData(code);
                 qr.make();
                 container.innerHTML = qr.createSvgTag(Math.floor(qrSize / (qr.getModuleCount() + 8)));
@@ -436,7 +460,7 @@ export function QRGenerator() {
   return (
     <VStack spacing={{ base: 4, md: 6 }} align="stretch">
       {/* Header */}
-      <Heading size={{ base: 'lg', md: 'xl' }}>
+      <Heading size={{ base: "lg", md: "xl" }}>
         <HStack>
           <Icon as={FiGrid} />
           <Text>Generador de Códigos QR</Text>
@@ -447,17 +471,17 @@ export function QRGenerator() {
       <ButtonGroup size="lg" isAttached variant="outline" w="full">
         <Button
           flex={1}
-          onClick={() => handleModeChange('generate')}
-          colorScheme={mode === 'generate' ? 'brand' : 'gray'}
-          variant={mode === 'generate' ? 'solid' : 'outline'}
+          onClick={() => handleModeChange("generate")}
+          colorScheme={mode === "generate" ? "brand" : "gray"}
+          variant={mode === "generate" ? "solid" : "outline"}
         >
           Generar Nuevos
         </Button>
         <Button
           flex={1}
-          onClick={() => handleModeChange('reprint')}
-          colorScheme={mode === 'reprint' ? 'purple' : 'gray'}
-          variant={mode === 'reprint' ? 'solid' : 'outline'}
+          onClick={() => handleModeChange("reprint")}
+          colorScheme={mode === "reprint" ? "purple" : "gray"}
+          variant={mode === "reprint" ? "solid" : "outline"}
           leftIcon={<Icon as={FiRefreshCw} />}
         >
           Reimprimir Existentes
@@ -468,12 +492,15 @@ export function QRGenerator() {
       <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
         <VStack spacing={4} align="stretch">
           {/* UPS Selection — shared by both modes */}
-          <SimpleGrid columns={{ base: 1, md: mode === 'reprint' ? 2 : 1 }} spacing={4}>
+          <SimpleGrid
+            columns={{ base: 1, md: mode === "reprint" ? 2 : 1 }}
+            spacing={4}
+          >
             <FormControl isRequired>
               <FormLabel fontWeight="bold">UPS</FormLabel>
               <AutocompleteSelect
                 options={UPS_BATCH_OPTIONS}
-                value={selectedUps || ''}
+                value={selectedUps || ""}
                 onChange={(val) => handleUpsChange(val)}
                 placeholder="Seleccionar UPS"
                 size="lg"
@@ -481,17 +508,19 @@ export function QRGenerator() {
             </FormControl>
 
             {/* Size in same row for reprint */}
-            {mode === 'reprint' && (
+            {mode === "reprint" && (
               <FormControl>
                 <FormLabel fontWeight="bold">Tamaño de Etiqueta</FormLabel>
                 <ButtonGroup size="lg" isAttached variant="outline" w="full">
-                  {(['T', 'S', 'M', 'L'] as QRSize[]).map((s) => (
+                  {(["T", "S", "M", "L"] as QRSize[]).map((s) => (
                     <Button
                       key={s}
                       flex={1}
                       onClick={() => setSize(s)}
-                      colorScheme={size === s ? (s === 'T' ? 'orange' : 'brand') : 'gray'}
-                      variant={size === s ? 'solid' : 'outline'}
+                      colorScheme={
+                        size === s ? (s === "T" ? "orange" : "brand") : "gray"
+                      }
+                      variant={size === s ? "solid" : "outline"}
                     >
                       {s}
                     </Button>
@@ -502,22 +531,32 @@ export function QRGenerator() {
           </SimpleGrid>
 
           {/* Range Selector — generate mode only */}
-          {mode === 'generate' && (
+          {mode === "generate" && (
             <Box
-              bg={selectedUps ? 'blue.50' : 'gray.50'}
+              bg={selectedUps ? "blue.50" : "gray.50"}
               border="1px solid"
-              borderColor={selectedUps ? 'blue.200' : 'gray.200'}
+              borderColor={selectedUps ? "blue.200" : "gray.200"}
               borderRadius="xl"
               p={4}
             >
-              <Text fontWeight="bold" fontSize="sm" color={selectedUps ? 'blue.700' : 'gray.500'} mb={3}>
+              <Text
+                fontWeight="bold"
+                fontSize="sm"
+                color={selectedUps ? "blue.700" : "gray.500"}
+                mb={3}
+              >
                 Rango de Códigos a Generar
               </Text>
 
               <Flex align="flex-start" gap={3}>
                 {/* FROM */}
                 <VStack flex={1} spacing={1} align="stretch">
-                  <FormLabel fontSize="sm" fontWeight="semibold" color="gray.600" mb={0}>
+                  <FormLabel
+                    fontSize="sm"
+                    fontWeight="semibold"
+                    color="gray.600"
+                    mb={0}
+                  >
                     Desde (N°)
                   </FormLabel>
                   <NumberInput
@@ -538,8 +577,21 @@ export function QRGenerator() {
                     </NumberInputStepper>
                   </NumberInput>
                   {selectedUps && (
-                    <Box bg="white" border="1px solid" borderColor="blue.200" borderRadius="md" px={2} py={1} textAlign="center">
-                      <Text fontFamily="mono" fontSize="xs" fontWeight="bold" color="blue.700">
+                    <Box
+                      bg="white"
+                      border="1px solid"
+                      borderColor="blue.200"
+                      borderRadius="md"
+                      px={2}
+                      py={1}
+                      textAlign="center"
+                    >
+                      <Text
+                        fontFamily="mono"
+                        fontSize="xs"
+                        fontWeight="bold"
+                        color="blue.700"
+                      >
                         {fromBarcode}
                       </Text>
                     </Box>
@@ -548,12 +600,19 @@ export function QRGenerator() {
 
                 {/* Arrow */}
                 <Flex direction="column" align="center" pt={9}>
-                  <Text fontSize="2xl" color="blue.400" fontWeight="light">→</Text>
+                  <Text fontSize="2xl" color="blue.400" fontWeight="light">
+                    →
+                  </Text>
                 </Flex>
 
                 {/* TO */}
                 <VStack flex={1} spacing={1} align="stretch">
-                  <FormLabel fontSize="sm" fontWeight="semibold" color="gray.600" mb={0}>
+                  <FormLabel
+                    fontSize="sm"
+                    fontWeight="semibold"
+                    color="gray.600"
+                    mb={0}
+                  >
                     Hasta (N°)
                   </FormLabel>
                   <NumberInput
@@ -573,8 +632,21 @@ export function QRGenerator() {
                     </NumberInputStepper>
                   </NumberInput>
                   {selectedUps && (
-                    <Box bg="white" border="1px solid" borderColor="blue.200" borderRadius="md" px={2} py={1} textAlign="center">
-                      <Text fontFamily="mono" fontSize="xs" fontWeight="bold" color="blue.700">
+                    <Box
+                      bg="white"
+                      border="1px solid"
+                      borderColor="blue.200"
+                      borderRadius="md"
+                      px={2}
+                      py={1}
+                      textAlign="center"
+                    >
+                      <Text
+                        fontFamily="mono"
+                        fontSize="xs"
+                        fontWeight="bold"
+                        color="blue.700"
+                      >
                         {toBarcode}
                       </Text>
                     </Box>
@@ -584,7 +656,7 @@ export function QRGenerator() {
                 {/* Total pill */}
                 <Flex direction="column" align="center" pt={8}>
                   <Badge
-                    colorScheme={quantity > 0 ? 'blue' : 'gray'}
+                    colorScheme={quantity > 0 ? "blue" : "gray"}
                     fontSize="md"
                     px={3}
                     py={2}
@@ -592,14 +664,16 @@ export function QRGenerator() {
                     textAlign="center"
                     whiteSpace="nowrap"
                   >
-                    {quantity > 0 ? `${quantity} cód.` : '—'}
+                    {quantity > 0 ? `${quantity} cód.` : "—"}
                   </Badge>
                 </Flex>
               </Flex>
 
               {/* Quick-set buttons */}
               <HStack spacing={2} mt={3} flexWrap="wrap">
-                <Text fontSize="xs" color="gray.500" mr={1}>Cantidad rápida:</Text>
+                <Text fontSize="xs" color="gray.500" mr={1}>
+                  Cantidad rápida:
+                </Text>
                 {[10, 20, 40, 80].map((n) => (
                   <Button
                     key={n}
@@ -616,39 +690,39 @@ export function QRGenerator() {
           )}
 
           {/* Size selector — generate mode: full width */}
-          {mode === 'generate' && (
+          {mode === "generate" && (
             <FormControl>
               <FormLabel fontWeight="bold">Tamaño de Etiqueta</FormLabel>
               <ButtonGroup size="lg" isAttached variant="outline" w="full">
                 <Button
                   flex={1}
-                  onClick={() => setSize('T')}
-                  colorScheme={size === 'T' ? 'orange' : 'gray'}
-                  variant={size === 'T' ? 'solid' : 'outline'}
+                  onClick={() => setSize("T")}
+                  colorScheme={size === "T" ? "orange" : "gray"}
+                  variant={size === "T" ? "solid" : "outline"}
                 >
                   T - Térmica
                 </Button>
                 <Button
                   flex={1}
-                  onClick={() => setSize('S')}
-                  colorScheme={size === 'S' ? 'brand' : 'gray'}
-                  variant={size === 'S' ? 'solid' : 'outline'}
+                  onClick={() => setSize("S")}
+                  colorScheme={size === "S" ? "brand" : "gray"}
+                  variant={size === "S" ? "solid" : "outline"}
                 >
                   S - Pequeño
                 </Button>
                 <Button
                   flex={1}
-                  onClick={() => setSize('M')}
-                  colorScheme={size === 'M' ? 'brand' : 'gray'}
-                  variant={size === 'M' ? 'solid' : 'outline'}
+                  onClick={() => setSize("M")}
+                  colorScheme={size === "M" ? "brand" : "gray"}
+                  variant={size === "M" ? "solid" : "outline"}
                 >
                   M - Mediano
                 </Button>
                 <Button
                   flex={1}
-                  onClick={() => setSize('L')}
-                  colorScheme={size === 'L' ? 'brand' : 'gray'}
-                  variant={size === 'L' ? 'solid' : 'outline'}
+                  onClick={() => setSize("L")}
+                  colorScheme={size === "L" ? "brand" : "gray"}
+                  variant={size === "L" ? "solid" : "outline"}
                 >
                   L - Grande
                 </Button>
@@ -657,7 +731,7 @@ export function QRGenerator() {
           )}
 
           {/* Reprint Product List */}
-          {mode === 'reprint' && selectedUps && (
+          {mode === "reprint" && selectedUps && (
             <Box>
               {reprintProducts.length === 0 ? (
                 <Flex
@@ -682,13 +756,14 @@ export function QRGenerator() {
               ) : (
                 <VStack spacing={3} align="stretch">
                   {/* Select/Deselect All + Summary */}
-                  <Flex justify="space-between" align="center" wrap="wrap" gap={2}>
+                  <Flex
+                    justify="space-between"
+                    align="center"
+                    wrap="wrap"
+                    gap={2}
+                  >
                     <HStack spacing={2}>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={selectAll}
-                      >
+                      <Button size="sm" variant="outline" onClick={selectAll}>
                         Seleccionar Todos
                       </Button>
                       <Button
@@ -707,7 +782,8 @@ export function QRGenerator() {
                         </Text>
                       )}
                       <Badge colorScheme="purple" fontSize="sm" px={2} py={1}>
-                        {reprintSelections.size} productos, {totalReprintLabels} etiquetas
+                        {reprintSelections.size} productos, {totalReprintLabels}{" "}
+                        etiquetas
                       </Badge>
                     </HStack>
                   </Flex>
@@ -731,8 +807,8 @@ export function QRGenerator() {
                           py={2}
                           borderBottom="1px solid"
                           borderColor="gray.100"
-                          bg={isSelected ? 'purple.50' : 'white'}
-                          _hover={{ bg: isSelected ? 'purple.100' : 'gray.50' }}
+                          bg={isSelected ? "purple.50" : "white"}
+                          _hover={{ bg: isSelected ? "purple.100" : "gray.50" }}
                           gap={3}
                         >
                           <Checkbox
@@ -740,8 +816,17 @@ export function QRGenerator() {
                             onChange={() => toggleProduct(product.id)}
                             colorScheme="purple"
                           />
-                          <Box flex={1} minW={0} cursor="pointer" onClick={() => toggleProduct(product.id)}>
-                            <Text fontWeight="medium" fontSize="sm" noOfLines={1}>
+                          <Box
+                            flex={1}
+                            minW={0}
+                            cursor="pointer"
+                            onClick={() => toggleProduct(product.id)}
+                          >
+                            <Text
+                              fontWeight="medium"
+                              fontSize="sm"
+                              noOfLines={1}
+                            >
                               {product.name}
                             </Text>
                             <HStack spacing={2} fontSize="xs" color="gray.500">
@@ -758,10 +843,17 @@ export function QRGenerator() {
                                 icon={<Icon as={FiMinus} />}
                                 size="xs"
                                 variant="outline"
-                                onClick={() => setCopies(product.id, copies - 1)}
+                                onClick={() =>
+                                  setCopies(product.id, copies - 1)
+                                }
                                 isDisabled={copies <= 1}
                               />
-                              <Text fontWeight="bold" fontSize="sm" minW="24px" textAlign="center">
+                              <Text
+                                fontWeight="bold"
+                                fontSize="sm"
+                                minW="24px"
+                                textAlign="center"
+                              >
                                 {copies}
                               </Text>
                               <IconButton
@@ -769,7 +861,9 @@ export function QRGenerator() {
                                 icon={<Icon as={FiPlus} />}
                                 size="xs"
                                 variant="outline"
-                                onClick={() => setCopies(product.id, copies + 1)}
+                                onClick={() =>
+                                  setCopies(product.id, copies + 1)
+                                }
                                 isDisabled={copies >= 20}
                               />
                             </HStack>
@@ -786,16 +880,18 @@ export function QRGenerator() {
           {/* Generate/Preview Button */}
           <Button
             leftIcon={<Icon as={FiEye} />}
-            colorScheme={mode === 'reprint' ? 'purple' : 'brand'}
+            colorScheme={mode === "reprint" ? "purple" : "brand"}
             size="lg"
             onClick={handleGeneratePreview}
-            isDisabled={!selectedUps || (mode === 'reprint' && reprintSelections.size === 0)}
+            isDisabled={
+              !selectedUps ||
+              (mode === "reprint" && reprintSelections.size === 0)
+            }
           >
-            {mode === 'reprint'
+            {mode === "reprint"
               ? `Vista Previa (${totalReprintLabels} etiquetas)`
-              : 'Generar Vista Previa'}
+              : "Generar Vista Previa"}
           </Button>
-
         </VStack>
       </Box>
 
@@ -804,7 +900,8 @@ export function QRGenerator() {
         <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
           <Flex justify="space-between" align="center" mb={4}>
             <Text fontWeight="bold" fontSize="lg">
-              Vista Previa ({printCodes.length} {mode === 'reprint' ? 'etiquetas' : 'códigos'})
+              Vista Previa ({printCodes.length}{" "}
+              {mode === "reprint" ? "etiquetas" : "códigos"})
             </Text>
             <Button
               leftIcon={<Icon as={FiPrinter} />}
@@ -812,7 +909,7 @@ export function QRGenerator() {
               size="lg"
               onClick={handlePrint}
             >
-              Imprimir {mode === 'reprint' ? 'Etiquetas' : 'Todos'}
+              Imprimir {mode === "reprint" ? "Etiquetas" : "Todos"}
             </Button>
           </Flex>
 
@@ -826,8 +923,8 @@ export function QRGenerator() {
           >
             <SimpleGrid
               columns={{
-                base: size === 'T' ? 2 : size === 'S' ? 3 : 2,
-                md: size === 'T' ? 2 : size === 'S' ? 5 : size === 'M' ? 4 : 3,
+                base: size === "T" ? 2 : size === "S" ? 3 : 2,
+                md: size === "T" ? 2 : size === "S" ? 5 : size === "M" ? 4 : 3,
               }}
               spacing={3}
             >
@@ -838,7 +935,7 @@ export function QRGenerator() {
                     key={`${entry.barcode}-${idx}`}
                     p={SIZE_CONFIG[size].padding / 4}
                     border="1px dashed"
-                    borderColor={product ? 'green.300' : 'gray.300'}
+                    borderColor={product ? "green.300" : "gray.300"}
                     borderRadius="md"
                     textAlign="center"
                     bg="white"
@@ -865,7 +962,12 @@ export function QRGenerator() {
                         </Text>
                       </>
                     ) : (
-                      <Text fontSize="xs" color="gray.400" fontStyle="italic" mt={1}>
+                      <Text
+                        fontSize="xs"
+                        color="gray.400"
+                        fontStyle="italic"
+                        mt={1}
+                      >
                         Sin registrar
                       </Text>
                     )}

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from "react";
 import {
   Box,
   VStack,
@@ -35,8 +35,8 @@ import {
   NumberIncrementStepper,
   NumberDecrementStepper,
   SimpleGrid,
-} from '@chakra-ui/react';
-import { Scanner as QRScanner } from '@yudiel/react-qr-scanner';
+} from "@chakra-ui/react";
+import { Scanner as QRScanner } from "@yudiel/react-qr-scanner";
 import {
   FiShoppingCart,
   FiPlusCircle,
@@ -45,25 +45,28 @@ import {
   FiPackage,
   FiTrash2,
   FiDollarSign,
-} from 'react-icons/fi';
-import { useProductStore } from '../store/productStore';
-import { ProductForm } from '../components/products';
-import { useTransactionStore, createSaleTransaction } from '../store/transactionStore';
-import { useCustomerStore } from '../store/customerStore';
-import { Product, TransactionItem, PaymentMethod } from '../types';
-import { parseBarcode } from '../utils/barcodeGenerator';
-import { formatCurrency } from '../utils/formatters';
-import { getCategoryLabel } from '../constants/categories';
-import { CurrencyInput } from '../components/common';
-import { es } from '../i18n/es';
-import { deriveStatus } from '../utils/productHelpers';
+} from "react-icons/fi";
+import { useProductStore } from "../store/productStore";
+import { ProductForm } from "../components/products";
+import {
+  useTransactionStore,
+  createSaleTransaction,
+} from "../store/transactionStore";
+import { useCustomerStore } from "../store/customerStore";
+import { Product, TransactionItem, PaymentMethod } from "../types";
+import { parseBarcode } from "../utils/barcodeGenerator";
+import { formatCurrency } from "../utils/formatters";
+import { getCategoryLabel } from "../constants/categories";
+import { CurrencyInput } from "../components/common";
+import { es } from "../i18n/es";
+import { deriveStatus } from "../utils/productHelpers";
 
-type ScanMode = 'sell' | 'register';
+type ScanMode = "sell" | "register";
 
 interface ScanResult {
   barcode: string;
   product: Product | null;
-  status: 'found' | 'sold' | 'not_found';
+  status: "found" | "sold" | "not_found";
   message: string;
 }
 
@@ -74,30 +77,35 @@ interface CartItem extends TransactionItem {
 
 export function Scanner() {
   const toast = useToast();
-  const [mode, setMode] = useState<ScanMode>('sell');
-  const [manualBarcode, setManualBarcode] = useState('');
+  const [mode, setMode] = useState<ScanMode>("sell");
+  const [manualBarcode, setManualBarcode] = useState("");
   const [lastScan, setLastScan] = useState<ScanResult | null>(null);
-  const [cameraEnabled, setCameraEnabled] = useState(true);
+  const [cameraEnabled, setCameraEnabled] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const { products, getProductByBarcode, updateProduct, addProduct } = useProductStore();
+  const { products, getProductByBarcode, updateProduct, addProduct } =
+    useProductStore();
   const { addTransaction } = useTransactionStore();
   const { customers, addPurchase } = useCustomerStore();
 
   // --- Sell mode: cart state ---
-  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [productToAddToCart, setProductToAddToCart] = useState<Product | null>(null);
+  const [productToAddToCart, setProductToAddToCart] = useState<Product | null>(
+    null,
+  );
   const [qtyToAdd, setQtyToAdd] = useState(1);
 
   // Payment state (mirrors Sales.tsx)
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer' | 'card'>('cash');
+  const [paymentMethod, setPaymentMethod] = useState<
+    "cash" | "transfer" | "card"
+  >("cash");
   const [amountToPay, setAmountToPay] = useState(0);
   const [cashAmount, setCashAmount] = useState(0);
   const [transferAmount, setTransferAmount] = useState(0);
   const [cardAmount, setCardAmount] = useState(0);
   const [useMixedPayment, setUseMixedPayment] = useState(false);
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState("");
 
   // AddToCartModal disclosure
   const {
@@ -120,7 +128,10 @@ export function Scanner() {
     onClose: onFormClose,
   } = useDisclosure();
 
-  const [prefillData, setPrefillData] = useState<{ barcode?: string; upsBatch?: number } | null>(null);
+  const [prefillData, setPrefillData] = useState<{
+    barcode?: string;
+    upsBatch?: number;
+  } | null>(null);
 
   // --- Derived cart totals ---
   const cartTotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -143,17 +154,26 @@ export function Scanner() {
       const hasCash = cashAmount > 0;
       const hasTransfer = transferAmount > 0;
       const hasCard = cardAmount > 0;
-      const methodCount = [hasCash, hasTransfer, hasCard].filter(Boolean).length;
-      if (methodCount > 1) return 'mixed';
-      if (pendingBalance > 0) return 'credit';
-      if (hasCash) return 'cash';
-      if (hasTransfer) return 'transfer';
-      if (hasCard) return 'card';
-      return 'credit';
+      const methodCount = [hasCash, hasTransfer, hasCard].filter(
+        Boolean,
+      ).length;
+      if (methodCount > 1) return "mixed";
+      if (pendingBalance > 0) return "credit";
+      if (hasCash) return "cash";
+      if (hasTransfer) return "transfer";
+      if (hasCard) return "card";
+      return "credit";
     }
-    if (pendingBalance > 0) return 'credit';
+    if (pendingBalance > 0) return "credit";
     return paymentMethod;
-  }, [useMixedPayment, paymentMethod, cashAmount, transferAmount, cardAmount, pendingBalance]);
+  }, [
+    useMixedPayment,
+    paymentMethod,
+    cashAmount,
+    transferAmount,
+    cardAmount,
+    pendingBalance,
+  ]);
 
   const selectedCustomer = useMemo(
     () => customers.find((c) => c.id === selectedCustomerId),
@@ -167,162 +187,184 @@ export function Scanner() {
   }, [cart.length, pendingBalance, selectedCustomerId]);
 
   // --- Scan logic ---
-  const processBarcode = useCallback((barcode: string) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
+  const processBarcode = useCallback(
+    (barcode: string) => {
+      if (isProcessing) return;
+      setIsProcessing(true);
 
-    const trimmedBarcode = barcode.trim();
-    if (!trimmedBarcode) {
-      setIsProcessing(false);
-      return;
-    }
+      const trimmedBarcode = barcode.trim();
+      if (!trimmedBarcode) {
+        setIsProcessing(false);
+        return;
+      }
 
-    const product = getProductByBarcode(trimmedBarcode);
+      const product = getProductByBarcode(trimmedBarcode);
 
-    if (product) {
-      if (product.availableQty <= 0 && product.soldQty > 0) {
-        setLastScan({
-          barcode: trimmedBarcode,
-          product,
-          status: 'sold',
-          message: 'Este producto ya fue vendido',
-        });
-        toast({
-          title: 'Producto ya vendido',
-          description: `${product.name} ya fue vendido`,
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
-        });
-      } else {
-        setLastScan({
-          barcode: trimmedBarcode,
-          product,
-          status: 'found',
-          message: mode === 'sell' ? 'Listo para agregar' : 'Producto encontrado',
-        });
-
-        if (mode === 'sell') {
-          // Open AddToCartModal instead of SellProductModal
-          setProductToAddToCart(product);
-          setQtyToAdd(1);
-          onCartModalOpen();
-        } else {
+      if (product) {
+        if (product.availableQty <= 0 && product.soldQty > 0) {
+          setLastScan({
+            barcode: trimmedBarcode,
+            product,
+            status: "sold",
+            message: "Este producto ya fue vendido",
+          });
           toast({
-            title: 'Producto ya existe',
-            description: `${product.name} ya está registrado`,
-            status: 'info',
+            title: "Producto ya vendido",
+            description: `${product.name} ya fue vendido`,
+            status: "warning",
             duration: 3000,
             isClosable: true,
           });
+        } else {
+          setLastScan({
+            barcode: trimmedBarcode,
+            product,
+            status: "found",
+            message:
+              mode === "sell" ? "Listo para agregar" : "Producto encontrado",
+          });
+
+          if (mode === "sell") {
+            // Open AddToCartModal instead of SellProductModal
+            setProductToAddToCart(product);
+            setQtyToAdd(1);
+            onCartModalOpen();
+          } else {
+            toast({
+              title: "Producto ya existe",
+              description: `${product.name} ya está registrado`,
+              status: "info",
+              duration: 3000,
+              isClosable: true,
+            });
+          }
+        }
+      } else {
+        const parsed = parseBarcode(trimmedBarcode);
+        setLastScan({
+          barcode: trimmedBarcode,
+          product: null,
+          status: "not_found",
+          message:
+            mode === "sell" ? "Producto no encontrado" : "Listo para registrar",
+        });
+
+        if (mode === "sell") {
+          toast({
+            title: "No encontrado",
+            description: "No se encontró producto con este código",
+            status: "error",
+            duration: 3000,
+            isClosable: true,
+          });
+        } else {
+          const upsBatch = parsed?.dropNumber
+            ? parseInt(parsed.dropNumber, 10)
+            : undefined;
+          setPrefillData({ barcode: trimmedBarcode, upsBatch });
+          onFormOpen();
         }
       }
-    } else {
-      const parsed = parseBarcode(trimmedBarcode);
-      setLastScan({
-        barcode: trimmedBarcode,
-        product: null,
-        status: 'not_found',
-        message: mode === 'sell' ? 'Producto no encontrado' : 'Listo para registrar',
-      });
 
-      if (mode === 'sell') {
-        toast({
-          title: 'No encontrado',
-          description: 'No se encontró producto con este código',
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
-      } else {
-        const upsBatch = parsed?.dropNumber ? parseInt(parsed.dropNumber, 10) : undefined;
-        setPrefillData({ barcode: trimmedBarcode, upsBatch });
-        onFormOpen();
-      }
-    }
-
-    setCameraEnabled(false);
-    setTimeout(() => setIsProcessing(false), 1000);
-  }, [mode, isProcessing, getProductByBarcode, onCartModalOpen, onFormOpen, toast]);
+      setCameraEnabled(false);
+      setTimeout(() => setIsProcessing(false), 1000);
+    },
+    [
+      mode,
+      isProcessing,
+      getProductByBarcode,
+      onCartModalOpen,
+      onFormOpen,
+      toast,
+    ],
+  );
 
   const handleScanAgain = useCallback(() => {
     setLastScan(null);
     setCameraEnabled(true);
   }, []);
 
-  const handleScan = useCallback((result: { rawValue: string }[]) => {
-    if (result && result.length > 0 && result[0].rawValue) {
-      processBarcode(result[0].rawValue);
-    }
-  }, [processBarcode]);
+  const handleScan = useCallback(
+    (result: { rawValue: string }[]) => {
+      if (result && result.length > 0 && result[0].rawValue) {
+        processBarcode(result[0].rawValue);
+      }
+    },
+    [processBarcode],
+  );
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (manualBarcode.trim()) {
       processBarcode(manualBarcode);
-      setManualBarcode('');
+      setManualBarcode("");
     }
   };
 
   // --- Cart actions ---
-  const handleAddToCart = useCallback((qty: number) => {
-    if (!productToAddToCart) return;
+  const handleAddToCart = useCallback(
+    (qty: number) => {
+      if (!productToAddToCart) return;
 
-    const existing = cart.find((item) => item.productId === productToAddToCart.id);
-    const currentQty = existing ? existing.quantity : 0;
-    const available = productToAddToCart.availableQty - currentQty;
-
-    if (qty > available) {
-      toast({
-        title: es.errors.notEnoughStock,
-        description: `Solo hay ${available} unidades disponibles`,
-        status: 'error',
-        duration: 3000,
-      });
-      return;
-    }
-
-    if (existing) {
-      setCart(
-        cart.map((item) =>
-          item.productId === productToAddToCart.id
-            ? {
-                ...item,
-                quantity: item.quantity + qty,
-                totalPrice: (item.quantity + qty) * item.unitPrice,
-              }
-            : item,
-        ),
+      const existing = cart.find(
+        (item) => item.productId === productToAddToCart.id,
       );
-    } else {
-      const newItem: CartItem = {
-        productId: productToAddToCart.id,
-        productName: productToAddToCart.name,
-        quantity: qty,
-        unitPrice: productToAddToCart.unitPrice,
-        totalPrice: qty * productToAddToCart.unitPrice,
-        category: productToAddToCart.category,
-        brand: productToAddToCart.brand,
-        color: productToAddToCart.color,
-        size: productToAddToCart.size,
-        maxQuantity: productToAddToCart.availableQty,
-      };
-      setCart((prev) => [...prev, newItem]);
-    }
+      const currentQty = existing ? existing.quantity : 0;
+      const available = productToAddToCart.availableQty - currentQty;
 
-    toast({
-      title: 'Agregado al carrito',
-      description: `${qty}x ${productToAddToCart.name}`,
-      status: 'success',
-      duration: 2000,
-    });
+      if (qty > available) {
+        toast({
+          title: es.errors.notEnoughStock,
+          description: `Solo hay ${available} unidades disponibles`,
+          status: "error",
+          duration: 3000,
+        });
+        return;
+      }
 
-    onCartModalClose();
-    setProductToAddToCart(null);
-    // Resume camera automatically
-    setLastScan(null);
-    setCameraEnabled(true);
-  }, [cart, productToAddToCart, onCartModalClose, toast]);
+      if (existing) {
+        setCart(
+          cart.map((item) =>
+            item.productId === productToAddToCart.id
+              ? {
+                  ...item,
+                  quantity: item.quantity + qty,
+                  totalPrice: (item.quantity + qty) * item.unitPrice,
+                }
+              : item,
+          ),
+        );
+      } else {
+        const newItem: CartItem = {
+          productId: productToAddToCart.id,
+          productName: productToAddToCart.name,
+          quantity: qty,
+          unitPrice: productToAddToCart.unitPrice,
+          totalPrice: qty * productToAddToCart.unitPrice,
+          category: productToAddToCart.category,
+          brand: productToAddToCart.brand,
+          color: productToAddToCart.color,
+          size: productToAddToCart.size,
+          maxQuantity: productToAddToCart.availableQty,
+        };
+        setCart((prev) => [...prev, newItem]);
+      }
+
+      toast({
+        title: "Agregado al carrito",
+        description: `${qty}x ${productToAddToCart.name}`,
+        status: "success",
+        duration: 2000,
+      });
+
+      onCartModalClose();
+      setProductToAddToCart(null);
+      // Resume camera automatically
+      setLastScan(null);
+      setCameraEnabled(true);
+    },
+    [cart, productToAddToCart, onCartModalClose, toast],
+  );
 
   const handleRemoveFromCart = (productId: string) => {
     setCart((prev) => prev.filter((item) => item.productId !== productId));
@@ -338,12 +380,16 @@ export function Scanner() {
     if (!canCompleteSale) {
       if (pendingBalance > 0 && !selectedCustomerId) {
         toast({
-          title: 'Seleccione un cliente para registrar el saldo pendiente',
-          status: 'warning',
+          title: "Seleccione un cliente para registrar el saldo pendiente",
+          status: "warning",
           duration: 3000,
         });
       } else {
-        toast({ title: 'Agregue productos al carrito', status: 'warning', duration: 3000 });
+        toast({
+          title: "Agregue productos al carrito",
+          status: "warning",
+          duration: 3000,
+        });
       }
       return;
     }
@@ -357,9 +403,9 @@ export function Scanner() {
       finalTransfer = transferAmount;
       finalCard = cardAmount;
     } else {
-      if (paymentMethod === 'cash') finalCash = amountToPay;
-      else if (paymentMethod === 'transfer') finalTransfer = amountToPay;
-      else if (paymentMethod === 'card') finalCard = amountToPay;
+      if (paymentMethod === "cash") finalCash = amountToPay;
+      else if (paymentMethod === "transfer") finalTransfer = amountToPay;
+      else if (paymentMethod === "card") finalCard = amountToPay;
     }
 
     const customerName = selectedCustomer?.name || es.customers.walkIn;
@@ -367,17 +413,29 @@ export function Scanner() {
     try {
       const transaction = createSaleTransaction(
         { id: selectedCustomerId || undefined, name: customerName },
-        cart.map(({ productId, productName, quantity, unitPrice, totalPrice, category, brand, color, size }) => ({
-          productId,
-          productName,
-          quantity,
-          unitPrice,
-          totalPrice,
-          category,
-          brand,
-          color,
-          size,
-        })),
+        cart.map(
+          ({
+            productId,
+            productName,
+            quantity,
+            unitPrice,
+            totalPrice,
+            category,
+            brand,
+            color,
+            size,
+          }) => ({
+            productId,
+            productName,
+            quantity,
+            unitPrice,
+            totalPrice,
+            category,
+            brand,
+            color,
+            size,
+          }),
+        ),
         {
           method: effectivePaymentMethod,
           cash: finalCash,
@@ -418,29 +476,33 @@ export function Scanner() {
           ? `Venta registrada (Saldo pendiente: ${formatCurrency(pendingBalance)})`
           : es.sales.saleCompleted;
 
-      toast({ title: toastTitle, status: 'success', duration: 4000 });
+      toast({ title: toastTitle, status: "success", duration: 4000 });
 
       // Reset all state
       setCart([]);
-      setSelectedCustomerId('');
-      setPaymentMethod('cash');
+      setSelectedCustomerId("");
+      setPaymentMethod("cash");
       setAmountToPay(0);
       setUseMixedPayment(false);
       setCashAmount(0);
       setTransferAmount(0);
       setCardAmount(0);
-      setNotes('');
+      setNotes("");
       onCheckoutClose();
       handleScanAgain();
     } catch {
-      toast({ title: es.errors.saveError, status: 'error', duration: 3000 });
+      toast({ title: es.errors.saveError, status: "error", duration: 3000 });
     }
   };
 
   // --- Register mode: product registration ---
   const handleProductSubmit = (data: any) => {
-    addProduct({ ...data, status: 'available' });
-    toast({ title: es.success.productAdded, status: 'success', duration: 3000 });
+    addProduct({ ...data, status: "available" });
+    toast({
+      title: es.success.productAdded,
+      status: "success",
+      duration: 3000,
+    });
     onFormClose();
     setPrefillData(null);
     handleScanAgain();
@@ -449,17 +511,17 @@ export function Scanner() {
   return (
     <VStack spacing={{ base: 4, md: 6 }} align="stretch">
       {/* Header */}
-      <Heading size={{ base: 'lg', md: 'xl' }}>{es.nav.scanner}</Heading>
+      <Heading size={{ base: "lg", md: "xl" }}>{es.nav.scanner}</Heading>
 
       {/* Mode Tabs */}
       <Tabs
-        index={mode === 'sell' ? 0 : 1}
+        index={mode === "sell" ? 0 : 1}
         onChange={(index) => {
-          setMode(index === 0 ? 'sell' : 'register');
+          setMode(index === 0 ? "sell" : "register");
           // Clear cart when switching modes
           if (index === 1) {
             setCart([]);
-            setSelectedCustomerId('');
+            setSelectedCustomerId("");
           }
         }}
         colorScheme="brand"
@@ -472,7 +534,7 @@ export function Scanner() {
             minW="150px"
             fontSize="lg"
             fontWeight="bold"
-            _selected={{ bg: 'green.500', color: 'white' }}
+            _selected={{ bg: "green.500", color: "white" }}
           >
             <VStack spacing={1}>
               <Icon as={FiShoppingCart} boxSize={6} />
@@ -484,7 +546,7 @@ export function Scanner() {
             minW="150px"
             fontSize="lg"
             fontWeight="bold"
-            _selected={{ bg: 'blue.500', color: 'white' }}
+            _selected={{ bg: "blue.500", color: "white" }}
           >
             <VStack spacing={1}>
               <Icon as={FiPlusCircle} boxSize={6} />
@@ -495,17 +557,21 @@ export function Scanner() {
       </Tabs>
 
       {/* Mode Description */}
-      <Alert status={mode === 'sell' ? 'success' : 'info'} borderRadius="lg" justifyContent="center">
+      <Alert
+        status={mode === "sell" ? "success" : "info"}
+        borderRadius="lg"
+        justifyContent="center"
+      >
         <AlertIcon />
         <Text fontSize="md">
-          {mode === 'sell'
-            ? 'Selecciona un cliente, luego escanea para agregar al carrito'
-            : 'Escanea un producto nuevo para registrarlo'}
+          {mode === "sell"
+            ? "Selecciona un cliente, luego escanea para agregar al carrito"
+            : "Escanea un producto nuevo para registrarlo"}
         </Text>
       </Alert>
 
       {/* SELL MODE: Client Selection */}
-      {mode === 'sell' && (
+      {mode === "sell" && (
         <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
           <FormControl>
             <FormLabel fontWeight="bold" fontSize="lg">
@@ -520,7 +586,9 @@ export function Scanner() {
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
-                  {c.balance > 0 ? ` (Saldo: ${formatCurrency(c.balance)})` : ''}
+                  {c.balance > 0
+                    ? ` (Saldo: ${formatCurrency(c.balance)})`
+                    : ""}
                 </option>
               ))}
             </Select>
@@ -535,11 +603,11 @@ export function Scanner() {
           <Button
             leftIcon={<Icon as={FiCamera} />}
             onClick={() => setCameraEnabled(!cameraEnabled)}
-            colorScheme={cameraEnabled ? 'green' : 'gray'}
+            colorScheme={cameraEnabled ? "green" : "gray"}
             size="lg"
             w="full"
           >
-            {cameraEnabled ? 'Cámara Activa' : 'Activar Cámara'}
+            {cameraEnabled ? "Cámara Activa" : "Activar Cámara"}
           </Button>
 
           {/* Camera Preview */}
@@ -551,15 +619,15 @@ export function Scanner() {
               borderRadius="lg"
               overflow="hidden"
               border="3px solid"
-              borderColor={mode === 'sell' ? 'green.400' : 'blue.400'}
+              borderColor={mode === "sell" ? "green.400" : "blue.400"}
             >
               <QRScanner
                 onScan={handleScan}
-                onError={(error) => console.error('Scanner error:', error)}
-                constraints={{ facingMode: 'environment' }}
+                onError={(error) => console.error("Scanner error:", error)}
+                constraints={{ facingMode: "environment" }}
                 styles={{
-                  container: { width: '100%' },
-                  video: { width: '100%' },
+                  container: { width: "100%" },
+                  video: { width: "100%" },
                 }}
               />
             </Box>
@@ -588,7 +656,7 @@ export function Scanner() {
                   />
                   <Button
                     type="submit"
-                    colorScheme={mode === 'sell' ? 'green' : 'blue'}
+                    colorScheme={mode === "sell" ? "green" : "blue"}
                     size="lg"
                     minW="120px"
                   >
@@ -610,11 +678,11 @@ export function Scanner() {
           boxShadow="sm"
           border="2px solid"
           borderColor={
-            lastScan.status === 'found'
-              ? 'green.400'
-              : lastScan.status === 'sold'
-              ? 'orange.400'
-              : 'red.400'
+            lastScan.status === "found"
+              ? "green.400"
+              : lastScan.status === "sold"
+                ? "orange.400"
+                : "red.400"
           }
         >
           <VStack align="stretch" spacing={3}>
@@ -624,11 +692,11 @@ export function Scanner() {
               </Text>
               <Badge
                 colorScheme={
-                  lastScan.status === 'found'
-                    ? 'green'
-                    : lastScan.status === 'sold'
-                    ? 'orange'
-                    : 'red'
+                  lastScan.status === "found"
+                    ? "green"
+                    : lastScan.status === "sold"
+                      ? "orange"
+                      : "red"
                 }
                 fontSize="md"
                 px={3}
@@ -639,7 +707,9 @@ export function Scanner() {
             </Flex>
 
             <HStack spacing={2}>
-              <Text fontWeight="medium" color="gray.500">Código:</Text>
+              <Text fontWeight="medium" color="gray.500">
+                Código:
+              </Text>
               <Text fontFamily="mono" fontSize="lg" fontWeight="bold">
                 {lastScan.barcode}
               </Text>
@@ -658,22 +728,36 @@ export function Scanner() {
                   </HStack>
 
                   <HStack spacing={2} flexWrap="wrap">
-                    <Badge colorScheme="blue">UPS {lastScan.product.upsBatch}</Badge>
+                    <Badge colorScheme="blue">
+                      UPS {lastScan.product.upsBatch}
+                    </Badge>
                     <Badge colorScheme="purple">
                       {getCategoryLabel(lastScan.product.category)}
                     </Badge>
-                    <Badge colorScheme={lastScan.product.status === 'available' ? 'green' : 'gray'}>
-                      {lastScan.product.status === 'available'
+                    <Badge
+                      colorScheme={
+                        lastScan.product.status === "available"
+                          ? "green"
+                          : "gray"
+                      }
+                    >
+                      {lastScan.product.status === "available"
                         ? es.products.available
                         : es.products.sold}
                     </Badge>
                   </HStack>
 
-                  {(lastScan.product.brand || lastScan.product.color || lastScan.product.size) && (
+                  {(lastScan.product.brand ||
+                    lastScan.product.color ||
+                    lastScan.product.size) && (
                     <Text fontSize="sm" color="gray.600">
-                      {[lastScan.product.brand, lastScan.product.color, lastScan.product.size]
+                      {[
+                        lastScan.product.brand,
+                        lastScan.product.color,
+                        lastScan.product.size,
+                      ]
                         .filter(Boolean)
-                        .join(' • ')}
+                        .join(" • ")}
                     </Text>
                   )}
 
@@ -682,7 +766,7 @@ export function Scanner() {
                   </Text>
 
                   {/* In sell mode, show "Add to cart" button in last scan result too */}
-                  {lastScan.product.availableQty > 0 && mode === 'sell' && (
+                  {lastScan.product.availableQty > 0 && mode === "sell" && (
                     <Button
                       colorScheme="green"
                       size="lg"
@@ -705,11 +789,11 @@ export function Scanner() {
                   <Icon as={FiPackage} boxSize={8} color="gray.400" />
                   <VStack align="start" spacing={0}>
                     <Text color="gray.500">
-                      {mode === 'sell'
-                        ? 'No se encontró producto con este código'
-                        : 'Producto no registrado'}
+                      {mode === "sell"
+                        ? "No se encontró producto con este código"
+                        : "Producto no registrado"}
                     </Text>
-                    {mode === 'register' && (
+                    {mode === "register" && (
                       <Button
                         colorScheme="blue"
                         size="sm"
@@ -750,12 +834,12 @@ export function Scanner() {
       )}
 
       {/* SELL MODE: Cart */}
-      {mode === 'sell' && cart.length > 0 && (
+      {mode === "sell" && cart.length > 0 && (
         <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
-          <Heading size={{ base: 'sm', md: 'md' }} mb={4}>
+          <Heading size={{ base: "sm", md: "md" }} mb={4}>
             Carrito
             <Badge ml={2} colorScheme="green">
-              {cart.length} {cart.length === 1 ? 'producto' : 'productos'}
+              {cart.length} {cart.length === 1 ? "producto" : "productos"}
             </Badge>
           </Heading>
 
@@ -796,7 +880,9 @@ export function Scanner() {
           <Divider mb={4} />
 
           <Flex justify="space-between" align="center" mb={4}>
-            <Text fontSize="xl" fontWeight="bold">Total:</Text>
+            <Text fontSize="xl" fontWeight="bold">
+              Total:
+            </Text>
             <Text fontSize="xl" fontWeight="bold" color="green.500">
               {formatCurrency(cartTotal)}
             </Text>
@@ -840,12 +926,19 @@ export function Scanner() {
                     {productToAddToCart.name}
                   </Text>
                   <HStack spacing={2} mt={1} flexWrap="wrap">
-                    <Badge colorScheme="blue">UPS {productToAddToCart.upsBatch}</Badge>
+                    <Badge colorScheme="blue">
+                      UPS {productToAddToCart.upsBatch}
+                    </Badge>
                     <Badge colorScheme="purple">
                       {getCategoryLabel(productToAddToCart.category)}
                     </Badge>
                   </HStack>
-                  <Text fontWeight="bold" fontSize="xl" color="green.500" mt={2}>
+                  <Text
+                    fontWeight="bold"
+                    fontSize="xl"
+                    color="green.500"
+                    mt={2}
+                  >
                     {formatCurrency(productToAddToCart.unitPrice)} c/u
                   </Text>
                   <Text fontSize="sm" color="gray.500">
@@ -870,7 +963,13 @@ export function Scanner() {
                   </NumberInput>
                 </FormControl>
 
-                <Flex justify="space-between" align="center" p={3} bg="green.50" borderRadius="lg">
+                <Flex
+                  justify="space-between"
+                  align="center"
+                  p={3}
+                  bg="green.50"
+                  borderRadius="lg"
+                >
                   <Text fontWeight="semibold">Total:</Text>
                   <Text fontWeight="bold" fontSize="xl" color="green.600">
                     {formatCurrency(qtyToAdd * productToAddToCart.unitPrice)}
@@ -904,7 +1003,12 @@ export function Scanner() {
       </Modal>
 
       {/* Checkout Modal */}
-      <Modal isOpen={isCheckoutOpen} onClose={onCheckoutClose} isCentered size="lg">
+      <Modal
+        isOpen={isCheckoutOpen}
+        onClose={onCheckoutClose}
+        isCentered
+        size="lg"
+      >
         <ModalOverlay />
         <ModalContent mx={4}>
           <ModalHeader>Confirmar Venta</ModalHeader>
@@ -933,7 +1037,9 @@ export function Scanner() {
               <Divider />
 
               <Flex justify="space-between">
-                <Text fontWeight="bold" fontSize="lg">Total:</Text>
+                <Text fontWeight="bold" fontSize="lg">
+                  Total:
+                </Text>
                 <Text fontWeight="bold" fontSize="lg" color="green.500">
                   {formatCurrency(cartTotal)}
                 </Text>
@@ -941,7 +1047,9 @@ export function Scanner() {
 
               {/* Client (read-only display) */}
               <Box p={3} bg="gray.50" borderRadius="md">
-                <Text fontSize="sm" color="gray.500">Cliente</Text>
+                <Text fontSize="sm" color="gray.500">
+                  Cliente
+                </Text>
                 <Text fontWeight="medium">
                   {selectedCustomer?.name || es.customers.walkIn}
                 </Text>
@@ -953,7 +1061,7 @@ export function Scanner() {
                   <AlertIcon />
                   <Box>
                     <Text fontSize="sm" fontWeight="bold">
-                      {selectedCustomer.name} tiene saldo pendiente:{' '}
+                      {selectedCustomer.name} tiene saldo pendiente:{" "}
                       {formatCurrency(selectedCustomer.balance)}
                     </Text>
                   </Box>
@@ -962,33 +1070,56 @@ export function Scanner() {
 
               {/* Payment Method */}
               <FormControl>
-                <FormLabel fontWeight="semibold">{es.sales.paymentMethod}</FormLabel>
+                <FormLabel fontWeight="semibold">
+                  {es.sales.paymentMethod}
+                </FormLabel>
                 <SimpleGrid columns={3} spacing={2} mb={2}>
                   <Button
-                    variant={!useMixedPayment && paymentMethod === 'cash' ? 'solid' : 'outline'}
+                    variant={
+                      !useMixedPayment && paymentMethod === "cash"
+                        ? "solid"
+                        : "outline"
+                    }
                     colorScheme="green"
-                    onClick={() => { setPaymentMethod('cash'); setUseMixedPayment(false); }}
+                    onClick={() => {
+                      setPaymentMethod("cash");
+                      setUseMixedPayment(false);
+                    }}
                   >
                     {es.sales.cash}
                   </Button>
                   <Button
-                    variant={!useMixedPayment && paymentMethod === 'transfer' ? 'solid' : 'outline'}
+                    variant={
+                      !useMixedPayment && paymentMethod === "transfer"
+                        ? "solid"
+                        : "outline"
+                    }
                     colorScheme="blue"
-                    onClick={() => { setPaymentMethod('transfer'); setUseMixedPayment(false); }}
+                    onClick={() => {
+                      setPaymentMethod("transfer");
+                      setUseMixedPayment(false);
+                    }}
                   >
                     {es.sales.transfer}
                   </Button>
                   <Button
-                    variant={!useMixedPayment && paymentMethod === 'card' ? 'solid' : 'outline'}
+                    variant={
+                      !useMixedPayment && paymentMethod === "card"
+                        ? "solid"
+                        : "outline"
+                    }
                     colorScheme="purple"
-                    onClick={() => { setPaymentMethod('card'); setUseMixedPayment(false); }}
+                    onClick={() => {
+                      setPaymentMethod("card");
+                      setUseMixedPayment(false);
+                    }}
                   >
                     {es.sales.card}
                   </Button>
                 </SimpleGrid>
                 <Button
                   size="sm"
-                  variant={useMixedPayment ? 'solid' : 'outline'}
+                  variant={useMixedPayment ? "solid" : "outline"}
                   colorScheme="orange"
                   onClick={() => setUseMixedPayment(!useMixedPayment)}
                   w="full"
@@ -1002,20 +1133,33 @@ export function Scanner() {
                 <FormControl>
                   <FormLabel fontWeight="semibold">Monto a cobrar</FormLabel>
                   {!useMixedPayment ? (
-                    <CurrencyInput value={amountToPay} onChange={setAmountToPay} size="lg" />
+                    <CurrencyInput
+                      value={amountToPay}
+                      onChange={setAmountToPay}
+                      size="lg"
+                    />
                   ) : (
                     <VStack spacing={3} align="stretch">
                       <FormControl>
                         <FormLabel fontSize="sm">{es.sales.cash}</FormLabel>
-                        <CurrencyInput value={cashAmount} onChange={setCashAmount} />
+                        <CurrencyInput
+                          value={cashAmount}
+                          onChange={setCashAmount}
+                        />
                       </FormControl>
                       <FormControl>
                         <FormLabel fontSize="sm">{es.sales.transfer}</FormLabel>
-                        <CurrencyInput value={transferAmount} onChange={setTransferAmount} />
+                        <CurrencyInput
+                          value={transferAmount}
+                          onChange={setTransferAmount}
+                        />
                       </FormControl>
                       <FormControl>
                         <FormLabel fontSize="sm">{es.sales.card}</FormLabel>
-                        <CurrencyInput value={cardAmount} onChange={setCardAmount} />
+                        <CurrencyInput
+                          value={cardAmount}
+                          onChange={setCardAmount}
+                        />
                       </FormControl>
                       <Divider />
                       <HStack justify="space-between">
@@ -1027,13 +1171,22 @@ export function Scanner() {
                     </VStack>
                   )}
                   <Text fontSize="xs" color="gray.500" mt={1}>
-                    Si cobra menos del total, la diferencia queda como saldo pendiente
+                    Si cobra menos del total, la diferencia queda como saldo
+                    pendiente
                   </Text>
                 </FormControl>
 
                 {pendingBalance > 0 && (
-                  <HStack justify="space-between" mt={3} p={3} bg="orange.100" borderRadius="md">
-                    <Text fontWeight="semibold" color="orange.700">Saldo Pendiente:</Text>
+                  <HStack
+                    justify="space-between"
+                    mt={3}
+                    p={3}
+                    bg="orange.100"
+                    borderRadius="md"
+                  >
+                    <Text fontWeight="semibold" color="orange.700">
+                      Saldo Pendiente:
+                    </Text>
                     <Text fontWeight="bold" color="orange.700" fontSize="lg">
                       {formatCurrency(pendingBalance)}
                     </Text>
@@ -1074,7 +1227,7 @@ export function Scanner() {
             >
               {pendingBalance > 0
                 ? `Registrar (Debe ${formatCurrency(pendingBalance)})`
-                : 'Confirmar Venta'}
+                : "Confirmar Venta"}
             </Button>
           </ModalFooter>
         </ModalContent>

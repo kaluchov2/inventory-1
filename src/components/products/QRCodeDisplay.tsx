@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef } from "react";
 import {
   Modal,
   ModalOverlay,
@@ -15,12 +15,12 @@ import {
   Icon,
   Badge,
   Divider,
-} from '@chakra-ui/react';
-import { QRCodeSVG } from 'qrcode.react';
-import { FiPrinter, FiDownload } from 'react-icons/fi';
-import { Product } from '../../types';
-import { formatCurrency } from '../../utils/formatters';
-import { getCategoryLabel } from '../../constants/categories';
+} from "@chakra-ui/react";
+import { QRCodeSVG } from "qrcode.react";
+import { FiPrinter, FiDownload } from "react-icons/fi";
+import { Product } from "../../types";
+import { formatCurrency } from "../../utils/formatters";
+import { getCategoryLabel } from "../../constants/categories";
 
 interface QRCodeDisplayProps {
   isOpen: boolean;
@@ -28,7 +28,11 @@ interface QRCodeDisplayProps {
   product: Product | null;
 }
 
-export function QRCodeDisplay({ isOpen, onClose, product }: QRCodeDisplayProps) {
+export function QRCodeDisplay({
+  isOpen,
+  onClose,
+  product,
+}: QRCodeDisplayProps) {
   const printRef = useRef<HTMLDivElement>(null);
 
   if (!product) return null;
@@ -37,7 +41,7 @@ export function QRCodeDisplay({ isOpen, onClose, product }: QRCodeDisplayProps) 
     const printContent = printRef.current;
     if (!printContent) return;
 
-    const printWindow = window.open('', '_blank');
+    const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
     printWindow.document.write(`
@@ -89,7 +93,7 @@ export function QRCodeDisplay({ isOpen, onClose, product }: QRCodeDisplayProps) 
             }
             .barcode-text {
               font-family: monospace;
-              font-size: 16px;
+              font-size: 24px;
               font-weight: bold;
               letter-spacing: 2px;
               margin-top: 10px;
@@ -113,12 +117,12 @@ export function QRCodeDisplay({ isOpen, onClose, product }: QRCodeDisplayProps) 
             <div class="product-price">${formatCurrency(product.unitPrice)}</div>
             <div class="product-details">
               UPS ${product.upsBatch} | ${getCategoryLabel(product.category)}
-              ${product.brand ? ` | ${product.brand}` : ''}
+              ${product.brand ? ` | ${product.brand}` : ""}
             </div>
             <div class="qr-code">
-              ${printContent.querySelector('svg')?.outerHTML || ''}
+              ${printContent.querySelector("svg")?.outerHTML || ""}
             </div>
-            <div class="barcode-text">${product.barcode || '-'}</div>
+            <div class="barcode-text">${product.barcode || "-"}</div>
           </div>
           <script>
             window.onload = function() {
@@ -136,14 +140,16 @@ export function QRCodeDisplay({ isOpen, onClose, product }: QRCodeDisplayProps) 
   };
 
   const handleDownload = () => {
-    const svg = printRef.current?.querySelector('svg');
+    const svg = printRef.current?.querySelector("svg");
     if (!svg) return;
 
     const svgData = new XMLSerializer().serializeToString(svg);
-    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const svgBlob = new Blob([svgData], {
+      type: "image/svg+xml;charset=utf-8",
+    });
     const svgUrl = URL.createObjectURL(svgBlob);
 
-    const downloadLink = document.createElement('a');
+    const downloadLink = document.createElement("a");
     downloadLink.href = svgUrl;
     downloadLink.download = `QR-${product.barcode || product.name}.svg`;
     document.body.appendChild(downloadLink);
@@ -171,7 +177,9 @@ export function QRCodeDisplay({ isOpen, onClose, product }: QRCodeDisplayProps) 
               </Text>
               <HStack spacing={2} justify="center" mt={2}>
                 <Badge colorScheme="blue">UPS {product.upsBatch}</Badge>
-                <Badge colorScheme="purple">{getCategoryLabel(product.category)}</Badge>
+                <Badge colorScheme="purple">
+                  {getCategoryLabel(product.category)}
+                </Badge>
               </HStack>
             </Box>
 
@@ -203,7 +211,7 @@ export function QRCodeDisplay({ isOpen, onClose, product }: QRCodeDisplayProps) 
                   py={2}
                   borderRadius="md"
                 >
-                  {product.barcode || '-'}
+                  {product.barcode || "-"}
                 </Text>
               </VStack>
             </Box>
@@ -211,7 +219,9 @@ export function QRCodeDisplay({ isOpen, onClose, product }: QRCodeDisplayProps) 
             {/* Additional Details */}
             {(product.brand || product.color || product.size) && (
               <Text fontSize="sm" color="gray.500">
-                {[product.brand, product.color, product.size].filter(Boolean).join(' • ')}
+                {[product.brand, product.color, product.size]
+                  .filter(Boolean)
+                  .join(" • ")}
               </Text>
             )}
           </VStack>

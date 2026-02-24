@@ -56,8 +56,10 @@ const SIZE_CONFIG: Record<
 export function QRGenerator() {
   const toast = useToast();
   const [selectedUps, setSelectedUps] = useState<number | "">("");
-  const [fromSeq, setFromSeq] = useState(1);
-  const [toSeq, setToSeq] = useState(40);
+  const [fromInput, setFromInput] = useState("1");
+  const [toInput, setToInput] = useState("40");
+  const fromSeq = Math.max(1, parseInt(fromInput) || 1);
+  const toSeq = Math.max(fromSeq, parseInt(toInput) || fromSeq);
   const [size, setSize] = useState<QRSize>("M");
   const [showPreview, setShowPreview] = useState(false);
   const [mode, setMode] = useState<Mode>("generate");
@@ -177,8 +179,8 @@ export function QRGenerator() {
     setSelectedUps(val ? Number(val) : "");
     setShowPreview(false);
     setReprintSelections(new Map());
-    setFromSeq(1);
-    setToSeq(40);
+    setFromInput("1");
+    setToInput("40");
   }, []);
 
   const toggleProduct = useCallback((productId: string) => {
@@ -560,14 +562,16 @@ export function QRGenerator() {
                     Desde (N°)
                   </FormLabel>
                   <NumberInput
-                    value={fromSeq}
-                    onChange={(_, val) => {
-                      const v = val || 1;
-                      setFromSeq(v);
-                      if (v > toSeq) setToSeq(v);
+                    value={fromInput}
+                    onChange={(valueStr) => setFromInput(valueStr)}
+                    onBlur={() => {
+                      const v = Math.max(1, parseInt(fromInput) || 1);
+                      setFromInput(String(v));
+                      if (v > toSeq) setToInput(String(v));
                     }}
                     min={1}
                     max={9999}
+                    clampValueOnBlur={false}
                     size="lg"
                   >
                     <NumberInputField fontFamily="mono" fontWeight="bold" />
@@ -616,13 +620,15 @@ export function QRGenerator() {
                     Hasta (N°)
                   </FormLabel>
                   <NumberInput
-                    value={toSeq}
-                    onChange={(_, val) => {
-                      const v = val || fromSeq;
-                      setToSeq(Math.max(fromSeq, v));
+                    value={toInput}
+                    onChange={(valueStr) => setToInput(valueStr)}
+                    onBlur={() => {
+                      const v = Math.max(fromSeq, parseInt(toInput) || fromSeq);
+                      setToInput(String(v));
                     }}
                     min={fromSeq}
                     max={9999}
+                    clampValueOnBlur={false}
                     size="lg"
                   >
                     <NumberInputField fontFamily="mono" fontWeight="bold" />
@@ -680,7 +686,7 @@ export function QRGenerator() {
                     size="xs"
                     variant="outline"
                     colorScheme="blue"
-                    onClick={() => setToSeq(fromSeq + n - 1)}
+                    onClick={() => setToInput(String(fromSeq + n - 1))}
                   >
                     {n}
                   </Button>

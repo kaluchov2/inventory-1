@@ -74,11 +74,67 @@ export const useTransactionStore = create<TransactionStore>()(
         }));
 
         if (supabase) {
-          syncManager.queueOperation({
-            type: 'transactions',
-            action: 'create',
-            data: newTransaction,
-          });
+          try {
+            syncManager.queueOperation({
+              type: 'transactions',
+              action: 'create',
+              data: newTransaction,
+            });
+          } catch (queueError) {
+            console.warn('[Store] Transaction queue failed, attempting direct sync:', queueError);
+            const { items, ...txBody } = newTransaction;
+            const dbTransaction = {
+              id: txBody.id,
+              customer_id: txBody.customerId || null,
+              customer_name: txBody.customerName,
+              subtotal: txBody.subtotal,
+              discount: txBody.discount,
+              discount_note: txBody.discountNote || null,
+              total: txBody.total,
+              payment_method: txBody.paymentMethod,
+              cash_amount: txBody.cashAmount,
+              transfer_amount: txBody.transferAmount,
+              card_amount: txBody.cardAmount,
+              actual_card_amount: txBody.actualCardAmount || null,
+              is_installment: txBody.isInstallment,
+              installment_amount: txBody.installmentAmount || null,
+              remaining_balance: txBody.remainingBalance || null,
+              ups_batch: txBody.upsBatch || null,
+              notes: txBody.notes || null,
+              date: txBody.date,
+              payment_date: txBody.paymentDate || null,
+              type: txBody.type,
+              created_at: txBody.createdAt,
+              is_deleted: false,
+            };
+            supabase
+              .from('transactions')
+              .upsert(dbTransaction, { onConflict: 'id' })
+              .then(async ({ error }) => {
+                if (error) {
+                  console.error('[Store] Direct transaction sync failed:', error);
+                  return;
+                }
+                if (items && items.length > 0) {
+                  const itemsData = items.map((item) => ({
+                    transaction_id: txBody.id,
+                    product_id: item.productId,
+                    product_name: item.productName,
+                    quantity: item.quantity,
+                    unit_price: item.unitPrice,
+                    total_price: item.totalPrice,
+                    category: item.category,
+                    brand: item.brand,
+                    color: item.color,
+                    size: item.size,
+                  }));
+                  const { error: itemsError } = await supabase
+                    .from('transaction_items')
+                    .insert(itemsData);
+                  if (itemsError) console.error('[Store] Direct transaction items sync failed:', itemsError);
+                }
+              });
+          }
         }
 
         return newTransaction;

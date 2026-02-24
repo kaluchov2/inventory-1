@@ -14,6 +14,7 @@ import { QRGenerator } from './pages/QRGenerator';
 import { useAuthStore } from './store/authStore';
 import { SyncInitializer } from './components/common/SyncInitializer';
 import { InstallPrompt } from './components/common/InstallPrompt';
+import { PwaUpdatePrompt } from './components/common/PwaUpdatePrompt';
 
 // Protected route wrapper
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -52,6 +53,7 @@ function App() {
     <BrowserRouter>
       {/* Sync initializer - loads data and subscribes to real-time updates */}
       <SyncInitializer />
+      <PwaUpdatePrompt />
       <InstallPrompt />
 
       <Routes>

@@ -57,7 +57,9 @@ class SyncQueue {
     this.deadLetter.push(operation);
     try {
       localStorage.setItem(this.DEAD_LETTER_KEY, JSON.stringify(this.deadLetter));
-    } catch { /* best effort */ }
+    } catch (error) {
+      console.error('[SyncQueue] Failed to persist dead-letter queue to localStorage — operation may be lost on next reload:', error);
+    }
   }
 
   public getDeadLetter(): SyncOperation[] {
@@ -73,7 +75,9 @@ class SyncQueue {
     this.deadLetter = [];
     try {
       localStorage.removeItem(this.DEAD_LETTER_KEY);
-    } catch { /* best effort */ }
+    } catch (error) {
+      console.error('[SyncQueue] Failed to clear dead-letter queue from localStorage during retry:', error);
+    }
     // Re-enqueue all dead letter operations
     for (const op of ops) {
       this.enqueue({ type: op.type, action: op.action, data: op.data });
@@ -84,7 +88,9 @@ class SyncQueue {
     this.deadLetter = [];
     try {
       localStorage.removeItem(this.DEAD_LETTER_KEY);
-    } catch { /* best effort */ }
+    } catch (error) {
+      console.error('[SyncQueue] Failed to clear dead-letter queue from localStorage:', error);
+    }
   }
 
   private saveQueue() {

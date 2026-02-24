@@ -64,9 +64,8 @@ export function SyncInitializer() {
     const handleVisibility = () => {
       if (!document.hidden && isAuthenticated && !isOfflineMode) {
         console.log('[Sync] App returned to foreground, flushing queue and reloading...');
-        syncManager.syncPendingOperations().then(() => {
-          Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
-        });
+        syncManager.syncPendingOperations()
+          .then(() => Promise.all([loadProducts(), loadCustomers(), loadTransactions()]));
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);

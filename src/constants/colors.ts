@@ -42,6 +42,11 @@ export const UPS_BATCH_OPTIONS = UPS_BATCHES.map((batch) => ({
   label: `UPS ${batch}`,
 }));
 
+export const UPS_FILTER_OPTIONS = [
+  { value: 0, label: 'UPS 0 - Sin registrar' },
+  ...UPS_BATCH_OPTIONS,
+];
+
 // Common brands (will be extended from data)
 export const DEFAULT_BRANDS = [
   "Nike",

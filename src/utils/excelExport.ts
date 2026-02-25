@@ -95,6 +95,7 @@ export function exportTransactionsToExcel(transactions: Transaction[]): void {
   transactions.forEach(t => {
     t.items.forEach(item => {
       data.push({
+        'UPS': item.upsBatch ?? '',
         'Cliente': t.customerName,
         'Fecha': formatDate(t.date),
         'Cantidad': item.quantity,
@@ -127,6 +128,7 @@ export function exportTransactionsToExcel(transactions: Transaction[]): void {
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Pagos');
 
   worksheet['!cols'] = [
+    { wch: 6 },  // UPS
     { wch: 25 }, // Cliente
     { wch: 12 }, // Fecha
     { wch: 10 }, // Cantidad
@@ -205,6 +207,7 @@ export function exportAllToExcel(
     } else {
       t.items.forEach(item => {
         transactionsData.push({
+          'UPS': item.upsBatch ?? '',
           'Cliente': t.customerName,
           'Fecha': formatDate(t.date),
           'Cantidad': item.quantity,

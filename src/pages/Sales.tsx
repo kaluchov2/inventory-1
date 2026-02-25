@@ -47,7 +47,8 @@ import {
   useTransactionStore,
   createSaleTransaction,
 } from "../store/transactionStore";
-import { TransactionItem, PaymentMethod, Product } from "../types";
+import { TransactionItem, PaymentMethod, Product, CategoryCode } from "../types";
+import { CATEGORY_OPTIONS } from "../constants/categories";
 import { formatCurrency } from "../utils/formatters";
 import { es } from "../i18n/es";
 import { deriveStatus } from "../utils/productHelpers";
@@ -55,6 +56,7 @@ import { deriveStatus } from "../utils/productHelpers";
 interface CartItem extends TransactionItem {
   productId: string;
   maxQuantity: number;
+  isUnregistered?: boolean;
 }
 
 export function Sales() {
@@ -73,6 +75,18 @@ export function Sales() {
   const [selectedProductForQuantity, setSelectedProductForQuantity] =
     useState<Product | null>(null);
   const [quantityToAdd, setQuantityToAdd] = useState(1);
+
+  // Unregistered product modal state
+  const {
+    isOpen: isUnregisteredModalOpen,
+    onOpen: onUnregisteredModalOpen,
+    onClose: onUnregisteredModalClose,
+  } = useDisclosure();
+  const [unregName, setUnregName] = useState('');
+  const [unregPrice, setUnregPrice] = useState(0);
+  const [unregQty, setUnregQty] = useState(1);
+  const [unregCategory, setUnregCategory] = useState<CategoryCode | ''>('');
+  const [unregBrand, setUnregBrand] = useState('');
 
   // Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -182,6 +196,35 @@ export function Sales() {
       setSelectedProductForQuantity(null);
       setQuantityToAdd(1);
     }
+  };
+
+  // Add unregistered (UPS 0) item to cart
+  const handleAddUnregisteredItem = () => {
+    if (!unregName.trim() || unregPrice <= 0 || unregQty < 1) return;
+
+    const tempId = `unregistered-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const newItem: CartItem = {
+      productId: tempId,
+      productName: unregName.trim(),
+      quantity: unregQty,
+      unitPrice: unregPrice,
+      totalPrice: unregQty * unregPrice,
+      upsBatch: 0,
+      category: unregCategory || undefined,
+      brand: unregBrand.trim() || undefined,
+      maxQuantity: Infinity,
+      isUnregistered: true,
+    };
+    setCart([...cart, newItem]);
+
+    toast({ title: 'Producto sin registrar agregado', status: 'success', duration: 2000 });
+
+    setUnregName('');
+    setUnregPrice(0);
+    setUnregQty(1);
+    setUnregCategory('');
+    setUnregBrand('');
+    onUnregisteredModalClose();
   };
 
   // Add product to cart
@@ -295,20 +338,23 @@ export function Sales() {
       cart.map(
         ({
           productId,
+          isUnregistered,
           productName,
           quantity,
           unitPrice,
           totalPrice,
+          upsBatch,
           category,
           brand,
           color,
           size,
         }) => ({
-          productId,
+          productId: isUnregistered ? '' : productId,
           productName,
           quantity,
           unitPrice,
           totalPrice,
+          upsBatch,
           category,
           brand,
           color,
@@ -333,6 +379,7 @@ export function Sales() {
 
     // Update product qty fields
     cart.forEach((item) => {
+      if (item.isUnregistered) return;
       const product = products.find((p) => p.id === item.productId);
       if (product) {
         const updates: Partial<Product> = {
@@ -510,6 +557,18 @@ export function Sales() {
                   onSelectProduct={handleSelectProduct}
                   onAddMultiple={handleAddMultiple}
                 />
+
+                {/* Add unregistered product button */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  colorScheme="orange"
+                  leftIcon={<Icon as={FiPlus} />}
+                  onClick={onUnregisteredModalOpen}
+                  w="full"
+                >
+                  Agregar producto sin registrar (UPS 0)
+                </Button>
               </VStack>
 
               {/* Right Column - Cart and Payment */}
@@ -559,6 +618,9 @@ export function Sales() {
                             >
                               {item.productName}
                             </Text>
+                            {item.isUnregistered && (
+                              <Badge colorScheme="orange" fontSize="xs">UPS 0</Badge>
+                            )}
                             <Text fontSize="sm" color="gray.500">
                               {item.quantity} x {formatCurrency(item.unitPrice)}
                             </Text>
@@ -1052,6 +1114,102 @@ export function Sales() {
           </TabPanel>
         </TabPanels>
       </Tabs>
+
+      {/* Unregistered Product Modal */}
+      <Modal
+        isOpen={isUnregisteredModalOpen}
+        onClose={onUnregisteredModalClose}
+        isCentered
+      >
+        <ModalOverlay />
+        <ModalContent mx={4}>
+          <ModalHeader>Agregar producto sin registrar (UPS 0)</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack spacing={4} align="stretch">
+              <FormControl isRequired>
+                <FormLabel>Nombre del producto</FormLabel>
+                <Input
+                  value={unregName}
+                  onChange={(e) => setUnregName(e.target.value)}
+                  placeholder="Ej: Zapatos tenis blancos"
+                  autoFocus
+                />
+              </FormControl>
+
+              <FormControl isRequired>
+                <FormLabel>Precio unitario</FormLabel>
+                <CurrencyInput
+                  value={unregPrice}
+                  onChange={setUnregPrice}
+                  size="md"
+                />
+              </FormControl>
+
+              <FormControl isRequired>
+                <FormLabel>Cantidad</FormLabel>
+                <NumberInput
+                  min={1}
+                  value={unregQty}
+                  onChange={(_, val) => setUnregQty(val || 1)}
+                >
+                  <NumberInputField />
+                  <NumberInputStepper>
+                    <NumberIncrementStepper />
+                    <NumberDecrementStepper />
+                  </NumberInputStepper>
+                </NumberInput>
+              </FormControl>
+
+              <FormControl>
+                <FormLabel>Categoría (opcional)</FormLabel>
+                <Select
+                  value={unregCategory}
+                  onChange={(e) => setUnregCategory(e.target.value as CategoryCode | '')}
+                  placeholder="Sin categoría"
+                >
+                  {CATEGORY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl>
+                <FormLabel>Marca (opcional)</FormLabel>
+                <Input
+                  value={unregBrand}
+                  onChange={(e) => setUnregBrand(e.target.value)}
+                  placeholder="Ej: Nike"
+                />
+              </FormControl>
+
+              {unregPrice > 0 && unregQty > 0 && (
+                <HStack justify="space-between" p={3} bg="orange.50" borderRadius="md">
+                  <Text fontWeight="medium">Total:</Text>
+                  <Text fontWeight="bold" color="orange.600">
+                    {formatCurrency(unregQty * unregPrice)}
+                  </Text>
+                </HStack>
+              )}
+            </VStack>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={onUnregisteredModalClose}>
+              Cancelar
+            </Button>
+            <Button
+              colorScheme="orange"
+              onClick={handleAddUnregisteredItem}
+              leftIcon={<Icon as={FiPlus} />}
+              isDisabled={!unregName.trim() || unregPrice <= 0 || unregQty < 1}
+            >
+              Agregar al carrito
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       {/* Quantity Modal */}
       <Modal

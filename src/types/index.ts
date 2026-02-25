@@ -137,6 +137,7 @@ export interface TransactionItem {
   quantity: number;            // Cantidad
   unitPrice: number;           // Precio Unitario
   totalPrice: number;          // Precio Total
+  upsBatch?: number;           // 0 for unregistered items (UPS 0)
   category?: CategoryCode;
   brand?: string;
   color?: string;

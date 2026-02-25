@@ -59,7 +59,7 @@ import type { ResolveData } from "../components/products/ResolveReviewModal";
 import type { RefundData } from "../components/products/RefundModal";
 import { Product, CategoryCode, ProductStatus, Transaction } from "../types";
 import { CATEGORY_OPTIONS, getCategoryLabel } from "../constants/categories";
-import { UPS_BATCH_OPTIONS } from "../constants/colors";
+import { UPS_FILTER_OPTIONS } from "../constants/colors";
 import { formatCurrency, formatDate } from "../utils/formatters";
 import { es } from "../i18n/es";
 import { useProductStore } from "../store/productStore";
@@ -910,7 +910,7 @@ export function Products() {
               />
 
               <AutocompleteSelect
-                options={UPS_BATCH_OPTIONS}
+                options={UPS_FILTER_OPTIONS}
                 value={filters.upsBatch || ""}
                 onChange={(val) => handleSetFilters({ upsBatch: val ? Number(val) : "" })}
                 placeholder="Seleccionar UPS"

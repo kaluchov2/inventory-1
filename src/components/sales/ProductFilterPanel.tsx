@@ -16,7 +16,7 @@ import { SelectableProductCard } from './SelectableProductCard';
 import { useProductStore } from '../../store/productStore';
 import { Product, CategoryCode } from '../../types';
 import { CATEGORY_OPTIONS, getCategoryLabel } from '../../constants/categories';
-import { UPS_BATCH_OPTIONS } from '../../constants/colors';
+import { UPS_FILTER_OPTIONS } from '../../constants/colors';
 
 interface ProductFilterPanelProps {
   onSelectProduct: (product: Product) => void;
@@ -43,10 +43,12 @@ export function ProductFilterPanel({
     [products]
   );
 
-  // Get unique UPS batches from available products
+  // Get unique UPS batches from available products, always including UPS 0
   const availableUpsOptions = useMemo(() => {
     const upsBatches = new Set(availableProducts.map((p) => Number(p.upsBatch)));
-    return UPS_BATCH_OPTIONS.filter((opt) => upsBatches.has(Number(opt.value)));
+    return UPS_FILTER_OPTIONS.filter(
+      (opt) => opt.value === 0 || upsBatches.has(Number(opt.value))
+    );
   }, [availableProducts]);
 
   // Get categories available for the selected UPS
@@ -190,7 +192,9 @@ export function ProductFilterPanel({
           <Box py={8} textAlign="center">
             <Text color="gray.500">
               {hasFilters
-                ? 'No se encontraron productos con los filtros seleccionados'
+                ? selectedUps === 0
+                  ? 'UPS 0 no tiene productos registrados. Use "Agregar sin registrar" abajo.'
+                  : 'No se encontraron productos con los filtros seleccionados'
                 : 'Seleccione un UPS para ver los productos disponibles'}
             </Text>
           </Box>

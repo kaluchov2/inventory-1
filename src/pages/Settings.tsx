@@ -72,11 +72,18 @@ export function Settings() {
   const [syncResult, setSyncResult] = useState<ImportSyncResult | null>(null);
   const [queueInfo, setQueueInfo] = useState<{count: number; sizeKB: string; oldestOperation?: string} | null>(null);
   const [exportUps, setExportUps] = useState<number | null>(null);
+  const [importMode, setImportMode] = useState<'full' | 'by_ups'>('full');
+  const [importUpsScope, setImportUpsScope] = useState<string | null>(null);
 
   const filteredByUpsCount = useMemo(() => {
     if (!exportUps) return 0;
     return products.filter(p => Number(p.upsBatch) === exportUps).length;
   }, [products, exportUps]);
+
+  const importUpsScopeCount = useMemo(() => {
+    if (!importUpsScope || !importResult) return 0;
+    return importResult.products.filter(p => p.dropNumber === importUpsScope).length;
+  }, [importResult, importUpsScope]);
 
   const handleExportByUps = () => {
     if (!exportUps) return;
@@ -178,10 +185,14 @@ export function Settings() {
     }
 
     // Import products: use 'replace' for first import (no existing products),
-    // use 'sync' for updates (avoids thousands of individual API calls)
+    // use 'sync' or 'sync_by_ups' for updates
     if (importResult.products.length > 0) {
-      const importMode = products.length > 0 ? 'sync' : 'replace';
-      result = await importProducts(importResult.products, importMode);
+      if (importMode === 'by_ups' && importUpsScope) {
+        result = await importProducts(importResult.products, 'sync_by_ups', importUpsScope);
+      } else {
+        const mode = products.length > 0 ? 'sync' : 'replace';
+        result = await importProducts(importResult.products, mode);
+      }
       setSyncResult(result);
     }
 
@@ -192,10 +203,17 @@ export function Settings() {
       importTransactions(importResult.transactions);
     }
 
+    // Reset import mode state
+    const usedUpsScope = importMode === 'by_ups' ? importUpsScope : null;
+    setImportMode('full');
+    setImportUpsScope(null);
+
     // Show detailed sync result
     if (result) {
       toast({
-        title: 'Sincronización completada',
+        title: usedUpsScope
+          ? `Sincronización UPS ${usedUpsScope} completada`
+          : 'Sincronización completada',
         description: `Creados: ${result.created}, Actualizados: ${result.updated}, Eliminados: ${result.deleted}, Sin cambios: ${result.unchanged}`,
         status: 'success',
         duration: 5000,
@@ -217,6 +235,8 @@ export function Settings() {
     setImportResult(null);
     setImportProgress(0);
     setSyncResult(null);
+    setImportMode('full');
+    setImportUpsScope(null);
   };
 
   // Clear sync queue
@@ -309,8 +329,11 @@ export function Settings() {
                 leftIcon={<Icon as={FiCheck} />}
                 size={{ base: 'md', md: 'md' }}
                 onClick={handleConfirmImport}
+                isDisabled={importMode === 'by_ups' && !importUpsScope}
               >
-                Confirmar
+                {importMode === 'by_ups' && importUpsScope
+                  ? `Confirmar UPS ${importUpsScope}`
+                  : 'Confirmar'}
               </Button>
             </HStack>
           </VStack>
@@ -343,6 +366,51 @@ export function Settings() {
               <Text color="gray.600">Personal</Text>
             </Box>
           </SimpleGrid>
+
+          {/* Import mode selector — only shown when DB has existing products */}
+          {importResult.products.length > 0 && products.length > 0 && (
+            <Box w="full" p={4} bg="white" borderRadius="lg">
+              <Text fontWeight="bold" mb={2}>Modo de Importación</Text>
+              <HStack spacing={2} mb={importMode === 'by_ups' ? 3 : 0}>
+                <Button
+                  size="sm"
+                  colorScheme={importMode === 'full' ? 'blue' : 'gray'}
+                  variant={importMode === 'full' ? 'solid' : 'outline'}
+                  onClick={() => { setImportMode('full'); setImportUpsScope(null); }}
+                >
+                  Sincronización Completa
+                </Button>
+                <Button
+                  size="sm"
+                  colorScheme={importMode === 'by_ups' ? 'teal' : 'gray'}
+                  variant={importMode === 'by_ups' ? 'solid' : 'outline'}
+                  onClick={() => setImportMode('by_ups')}
+                >
+                  Subir por UPS
+                </Button>
+              </HStack>
+              {importMode === 'by_ups' && (
+                <VStack align="stretch" spacing={2}>
+                  <Box maxW="300px">
+                    <AutocompleteSelect
+                      options={UPS_BATCH_OPTIONS.map(o => ({ value: String(o.value), label: o.label }))}
+                      value={importUpsScope || ''}
+                      onChange={(val) => setImportUpsScope(val ? String(val) : null)}
+                      placeholder="Seleccionar UPS..."
+                    />
+                  </Box>
+                  {importUpsScope && (
+                    <Text fontSize="sm" color="gray.600">
+                      {importUpsScopeCount} productos del Excel coinciden con UPS {importUpsScope}
+                    </Text>
+                  )}
+                  <Text fontSize="xs" color="gray.500">
+                    Solo se crearán/actualizarán productos del UPS seleccionado. No se eliminará nada.
+                  </Text>
+                </VStack>
+              )}
+            </Box>
+          )}
 
           {importResult.errors.length > 0 && (
             <Box w="full">

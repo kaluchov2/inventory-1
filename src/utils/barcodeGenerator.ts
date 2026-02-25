@@ -74,6 +74,17 @@ export function generateBarcodeFromParsed(
 }
 
 /**
+ * Generate a barcode in legacy format regardless of parsed identifier type
+ * Always produces "D{drop}-{sequence}" format for consistency
+ * @param dropNumber - The drop number
+ * @param sequence - Sequential number within the drop
+ * @returns Barcode string in legacy format (e.g., "D23-0064")
+ */
+export function generateLegacyBarcode(dropNumber: string, sequence: number): string {
+  return generateBarcode('legacy', dropNumber, undefined, sequence);
+}
+
+/**
  * Parse a barcode back to its components
  * @param barcode - Barcode string (e.g., "D15-0042" or "0523-20")
  * @returns Object with type, dropNumber, productNumber/sequence

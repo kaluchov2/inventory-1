@@ -10,7 +10,7 @@ import { syncManager } from "../lib/syncManager";
 import { productService } from "../services/productService";
 import { supabase, getSupabaseClient } from "../lib/supabase";
 import { parseUPS } from "../utils/upsParser";
-import { generateBarcode, generateBarcodeFromParsed, parseBarcode } from "../utils/barcodeGenerator";
+import { generateBarcode, generateLegacyBarcode, parseBarcode } from "../utils/barcodeGenerator";
 import { getProductMatchKey } from "../utils/excelImport";
 import { deriveStatus } from "../utils/productHelpers";
 import { syncQueue } from "../lib/syncQueue";
@@ -28,8 +28,29 @@ function normalizeForComparison(value: string | undefined | null): string {
   return str;
 }
 
+/**
+ * Detect which fields changed between an existing product and a new (Excel) product.
+ * Returns hasChanges flag and a list of field names that differ.
+ */
+function detectProductChanges(
+  existing: Product,
+  incoming: Product,
+): { hasChanges: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+
+  if (existing.quantity !== incoming.quantity) reasons.push('quantity');
+  if (existing.unitPrice !== incoming.unitPrice) reasons.push('unitPrice');
+  if (existing.status !== incoming.status) reasons.push('status');
+  if (normalizeForComparison(existing.brand) !== normalizeForComparison(incoming.brand)) reasons.push('brand');
+  if (normalizeForComparison(existing.color) !== normalizeForComparison(incoming.color)) reasons.push('color');
+  if (normalizeForComparison(existing.size) !== normalizeForComparison(incoming.size)) reasons.push('size');
+  if (normalizeForComparison(existing.description) !== normalizeForComparison(incoming.description)) reasons.push('description');
+
+  return { hasChanges: reasons.length > 0, reasons };
+}
+
 // Import mode types
-export type ImportMode = "replace" | "sync";
+export type ImportMode = "replace" | "sync" | "sync_by_ups";
 
 // Result of sync import operation
 export interface ImportSyncResult {
@@ -66,6 +87,7 @@ interface ProductStore {
   importProducts: (
     products: Product[],
     mode?: ImportMode,
+    upsScope?: string,
   ) => Promise<ImportSyncResult>;
 
   // Sync actions
@@ -122,10 +144,10 @@ export const useProductStore = create<ProductStore>()(
           productData.dropSequence ??
           get().getNextDropSequence(parsed.dropNumber);
 
-        // Generate barcode if not provided
+        // Generate barcode in legacy format (D{drop}-{sequence})
         const barcode =
           productData.barcode ||
-          generateBarcodeFromParsed(parsed, dropSequence);
+          generateLegacyBarcode(parsed.dropNumber, dropSequence);
 
         const newProduct: Product = {
           ...productData,
@@ -207,6 +229,16 @@ export const useProductStore = create<ProductStore>()(
       updateProduct: (id, updates) => {
         const product = get().products.find((p) => p.id === id);
         if (!product) return;
+
+        // If UPS changed, regenerate barcode in legacy format
+        if (updates.upsBatch !== undefined || updates.upsRaw !== undefined) {
+          const newUpsRaw = updates.upsRaw || String(updates.upsBatch || product.upsBatch || '');
+          const newParsed = parseUPS(newUpsRaw);
+          const seq = updates.dropSequence ?? product.dropSequence ?? get().getNextDropSequence(newParsed.dropNumber);
+          updates.barcode = generateLegacyBarcode(newParsed.dropNumber, seq);
+          updates.dropNumber = newParsed.dropNumber;
+          updates.identifierType = 'legacy';
+        }
 
         const updatedProduct = {
           ...product,
@@ -313,7 +345,7 @@ export const useProductStore = create<ProductStore>()(
         set({ filters: defaultFilters });
       },
 
-      importProducts: async (newProducts, mode = "replace") => {
+      importProducts: async (newProducts, mode = "replace", upsScope?) => {
         const result: ImportSyncResult = {
           created: 0,
           updated: 0,
@@ -442,6 +474,108 @@ export const useProductStore = create<ProductStore>()(
           return result;
         }
 
+        if (mode === "sync_by_ups") {
+          // UPS-scoped sync: only affect products matching upsScope
+          if (!upsScope) {
+            console.warn('[Import Sync UPS] No upsScope provided, returning empty result');
+            return result;
+          }
+
+          const existing = get().products;
+          const scopedExisting = existing.filter(p => p.dropNumber === upsScope);
+          const scopedExistingMap = new Map(
+            scopedExisting.map(p => [getProductMatchKey(p), p]),
+          );
+          const scopedNewProducts = newProducts.filter(p => p.dropNumber === upsScope);
+
+          console.log(`[Import Sync UPS] Scope: UPS ${upsScope}`);
+          console.log(`[Import Sync UPS] Existing in scope: ${scopedExisting.length}, Excel in scope: ${scopedNewProducts.length}, Total existing: ${existing.length}`);
+
+          const toCreate: Product[] = [];
+          const toUpdate: Product[] = [];
+          const scopedFinal: Product[] = [];
+          const matchedKeys = new Set<string>();
+
+          for (const newProduct of scopedNewProducts) {
+            const key = getProductMatchKey(newProduct);
+            const existingProduct = scopedExistingMap.get(key);
+
+            if (existingProduct) {
+              matchedKeys.add(key);
+              const { hasChanges, reasons } = detectProductChanges(existingProduct, newProduct);
+
+              if (hasChanges) {
+                const updatedProduct: Product = {
+                  ...newProduct,
+                  id: existingProduct.id,
+                  sku: existingProduct.sku,
+                  barcode: existingProduct.barcode,
+                  dropSequence: existingProduct.dropSequence,
+                  createdAt: existingProduct.createdAt,
+                  updatedAt: getCurrentISODate(),
+                };
+                scopedFinal.push(updatedProduct);
+                toUpdate.push(updatedProduct);
+                result.updated++;
+
+                if (result.updated <= 5) {
+                  console.log(`[Import Sync UPS] Update: "${existingProduct.name}", changed: ${reasons.join(', ')}`);
+                }
+              } else {
+                scopedFinal.push(existingProduct);
+                result.unchanged++;
+              }
+            } else {
+              scopedFinal.push(newProduct);
+              toCreate.push(newProduct);
+              result.created++;
+            }
+          }
+
+          // Keep scoped existing products that weren't in Excel (no deletions)
+          for (const [key, product] of scopedExistingMap) {
+            if (!matchedKeys.has(key)) {
+              // Check if this key was seen in scopedNewProducts (could be new product with same key)
+              const wasProcessed = scopedNewProducts.some(p => getProductMatchKey(p) === key);
+              if (!wasProcessed) {
+                scopedFinal.push(product);
+                result.unchanged++;
+              }
+            }
+          }
+
+          // Final products = untouched outside-scope + scoped results
+          const outsideScope = existing.filter(p => p.dropNumber !== upsScope);
+          const finalProducts = [...outsideScope, ...scopedFinal];
+
+          console.log(`[Import Sync UPS] Results: created=${result.created}, updated=${result.updated}, unchanged=${result.unchanged}, deleted=${result.deleted}`);
+          console.log(`[Import Sync UPS] Final: ${finalProducts.length} products (${outsideScope.length} outside scope + ${scopedFinal.length} in scope)`);
+
+          // Queue Supabase sync (creates + updates only, no deletes)
+          if (supabase) {
+            const BATCH_SIZE = 50;
+
+            for (let i = 0; i < toCreate.length; i += BATCH_SIZE) {
+              syncManager.queueOperation({
+                type: "products",
+                action: "batch_create",
+                data: toCreate.slice(i, i + BATCH_SIZE),
+              });
+            }
+
+            for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
+              syncManager.queueOperation({
+                type: "products",
+                action: "batch_update",
+                data: toUpdate.slice(i, i + BATCH_SIZE),
+              });
+            }
+          }
+
+          set({ products: finalProducts });
+          return result;
+        }
+
         // Sync mode - Excel is source of truth
         // Update existing, add new, delete products not in Excel
         const existing = get().products;
@@ -494,40 +628,19 @@ export const useProductStore = create<ProductStore>()(
 
           const existingProduct = existingMap.get(key);
           if (existingProduct) {
-            // Check if product actually changed
-            // Use normalizeForComparison for string fields to handle case/whitespace/unicode differences
-            const quantityChanged = existingProduct.quantity !== newProduct.quantity;
-            const priceChanged = existingProduct.unitPrice !== newProduct.unitPrice;
-            const statusChanged = existingProduct.status !== newProduct.status;
-            const brandChanged = normalizeForComparison(existingProduct.brand) !== normalizeForComparison(newProduct.brand);
-            const colorChanged = normalizeForComparison(existingProduct.color) !== normalizeForComparison(newProduct.color);
-            const sizeChanged = normalizeForComparison(existingProduct.size) !== normalizeForComparison(newProduct.size);
-            const descChanged = normalizeForComparison(existingProduct.description) !== normalizeForComparison(newProduct.description);
-
-            const hasChanges = quantityChanged || priceChanged || statusChanged || brandChanged || colorChanged || sizeChanged || descChanged;
+            // Check if product actually changed using shared helper
+            const { hasChanges, reasons } = detectProductChanges(existingProduct, newProduct);
 
             // Track change reasons
-            if (quantityChanged) changeReasons.set('quantity', (changeReasons.get('quantity') || 0) + 1);
-            if (priceChanged) changeReasons.set('unitPrice', (changeReasons.get('unitPrice') || 0) + 1);
-            if (statusChanged) changeReasons.set('status', (changeReasons.get('status') || 0) + 1);
-            if (brandChanged) changeReasons.set('brand', (changeReasons.get('brand') || 0) + 1);
-            if (colorChanged) changeReasons.set('color', (changeReasons.get('color') || 0) + 1);
-            if (sizeChanged) changeReasons.set('size', (changeReasons.get('size') || 0) + 1);
-            if (descChanged) changeReasons.set('description', (changeReasons.get('description') || 0) + 1);
+            for (const reason of reasons) {
+              changeReasons.set(reason, (changeReasons.get(reason) || 0) + 1);
+            }
 
             if (hasChanges) {
               // DEBUG: Log first 5 updates with field details
               if (result.updated < 5) {
                 console.log(`[Import Sync] Update #${result.updated + 1}: "${existingProduct.name}" (ID: ${existingProduct.id})`);
-                console.log(`    Match Key: "${key}"`);
-                if (quantityChanged) console.log(`    quantity: DB=${existingProduct.quantity} (type: ${typeof existingProduct.quantity}) → Excel=${newProduct.quantity} (type: ${typeof newProduct.quantity})`);
-                if (priceChanged) console.log(`    unitPrice: DB=${existingProduct.unitPrice} (type: ${typeof existingProduct.unitPrice}) → Excel=${newProduct.unitPrice} (type: ${typeof newProduct.unitPrice})`);
-                if (statusChanged) console.log(`    status: DB="${existingProduct.status}" → Excel="${newProduct.status}"`);
-                if (brandChanged) console.log(`    brand: DB="${existingProduct.brand}" (norm: "${normalizeForComparison(existingProduct.brand)}") → Excel="${newProduct.brand}" (norm: "${normalizeForComparison(newProduct.brand)}")`);
-                if (colorChanged) console.log(`    color: DB="${existingProduct.color}" (norm: "${normalizeForComparison(existingProduct.color)}") → Excel="${newProduct.color}" (norm: "${normalizeForComparison(newProduct.color)}")`);
-                if (sizeChanged) console.log(`    size: DB="${existingProduct.size}" (norm: "${normalizeForComparison(existingProduct.size)}") → Excel="${newProduct.size}" (norm: "${normalizeForComparison(newProduct.size)}")`);
-                if (descChanged) console.log(`    description: DB="${existingProduct.description?.substring(0, 50)}..." → Excel="${newProduct.description?.substring(0, 50)}..."`);
-                // Log raw product data for deeper analysis
+                console.log(`    Match Key: "${key}", Changed fields: ${reasons.join(', ')}`);
                 console.log(`    [RAW DB] quantity=${existingProduct.quantity}, unitPrice=${existingProduct.unitPrice}, upsBatch=${existingProduct.upsBatch}`);
                 console.log(`    [RAW Excel] quantity=${newProduct.quantity}, unitPrice=${newProduct.unitPrice}, upsBatch=${newProduct.upsBatch}`);
               }
@@ -916,7 +1029,20 @@ export const useProductStore = create<ProductStore>()(
         const maxSequence = Math.max(
           ...products.map((p) => p.dropSequence || 0),
         );
-        return maxSequence + 1;
+
+        // Walk forward from maxSequence+1 until we find a sequence whose
+        // generated barcode isn't already taken locally. This prevents duplicate
+        // barcodes when two devices add products to the same drop before the
+        // realtime sync event arrives (both would otherwise compute the same
+        // next-sequence from stale local state).
+        const existingBarcodes = new Set(
+          get().products.map((p) => p.barcode).filter(Boolean),
+        );
+        let candidate = maxSequence + 1;
+        while (existingBarcodes.has(generateLegacyBarcode(dropNumber, candidate))) {
+          candidate++;
+        }
+        return candidate;
       },
     }),
     {

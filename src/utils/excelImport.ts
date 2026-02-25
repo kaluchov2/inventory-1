@@ -3,7 +3,7 @@ import { Product, Customer, Transaction, CategoryCode, TransactionItem, Drop, St
 import { normalizeCategory } from '../constants/categories';
 import { generateId, getCurrentISODate } from './formatters';
 import { parseUPS, toUpsBatch } from './upsParser';
-import { generateBarcodeFromParsed } from './barcodeGenerator';
+import { generateLegacyBarcode } from './barcodeGenerator';
 
 /**
  * V2 Excel Import
@@ -214,8 +214,8 @@ function processInventarioSheet(
       // Get sequence for this drop
       const dropSequence = getNextSequence(parsed.dropNumber);
 
-      // Generate V2 barcode
-      const barcode = generateBarcodeFromParsed(parsed, dropSequence);
+      // Generate barcode in legacy format (D{drop}-{sequence})
+      const barcode = generateLegacyBarcode(parsed.dropNumber, dropSequence);
 
       // Observaciones column — used for status detection only
       const observaciones = String(row['Observaciones'] || '').trim();
@@ -338,8 +338,8 @@ function processElectronicsSheet(
       // Get sequence for this drop
       const dropSequence = getNextSequence(parsed.dropNumber);
 
-      // Generate V2 barcode
-      const barcode = generateBarcodeFromParsed(parsed, dropSequence);
+      // Generate barcode in legacy format (D{drop}-{sequence})
+      const barcode = generateLegacyBarcode(parsed.dropNumber, dropSequence);
 
       // Observaciones column — used for status detection only
       const observaciones = String(row['Observaciones'] || '').trim();

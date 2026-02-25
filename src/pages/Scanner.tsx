@@ -582,6 +582,7 @@ export function Scanner() {
               onChange={(e) => setSelectedCustomerId(e.target.value)}
               placeholder={es.customers.walkIn}
               size="lg"
+              height={"90px"}
             >
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>

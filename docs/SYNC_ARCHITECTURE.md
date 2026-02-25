@@ -121,7 +121,7 @@ productReloadTimer.current = setTimeout(() => { ... }, 500);
 
 | Scenario | Behavior | Risk |
 |---|---|---|
-| Two users add products to same UPS batch | Both succeed (different IDs) | None |
+| Two users add products to same UPS batch | Both succeed (different IDs); barcode collision guard walks to next free sequence | Low |
 | Two users edit different products | Both succeed independently | None |
 | Two users edit the **same** product simultaneously | Last writer wins, first edit lost silently | Medium |
 | User A deletes, User B edits the same product | `is_deleted=true` may be overwritten back by B's update | Medium |
@@ -450,3 +450,90 @@ Users simultaneously online × 3 channels = total connections
 Connections over the limit are rejected. The Supabase JS client reconnects automatically when
 throughput drops back below the limit, but affected users will miss realtime events in the
 interim and will only recover after their next full reload.
+
+---
+
+## Duplicate Barcode — Applied Fix (Fix 1) and Planned Fix (Fix 2)
+
+### Background
+
+Migration `003_fix_barcode_constraint.sql` intentionally dropped the DB-level `UNIQUE` constraint
+on `barcode` to fix 409 errors during Excel re-imports (same product, different UUIDs). This left
+the system with no guard against two devices generating the same barcode in the same sync window.
+
+**Root cause:** `getNextDropSequence()` reads the local Zustand store, not the DB. Two devices
+with stale local state (before the realtime event arrives) both compute `maxSequence + 1` and
+produce identical barcodes like `D1-0006`.
+
+---
+
+### Fix 1 — Applied (local collision walk-forward) ✅
+
+**File:** `src/store/productStore.ts` — `getNextDropSequence()`
+
+After computing `maxSequence + 1`, the function now checks whether the candidate barcode is
+already present in the full local product list (across all drops, not just the current one). If it
+is, it increments until it finds a barcode that is not taken.
+
+```ts
+const existingBarcodes = new Set(
+  get().products.map((p) => p.barcode).filter(Boolean),
+);
+let candidate = maxSequence + 1;
+while (existingBarcodes.has(generateLegacyBarcode(dropNumber, candidate))) {
+  candidate++;
+}
+return candidate;
+```
+
+**What this solves:** If Device A's collision has already synced down to Device B's store, Device B
+will skip that sequence and use the next free one. This eliminates the duplicate entirely in the
+common case (the race window is ~3–65 s; most add-product flows take longer than that).
+
+**Remaining gap:** If both devices are mid-race (neither has seen the other's barcode yet), they
+can still collide on the same sequence in the same sync window. Fix 1 prevents *most* duplicates
+but not a perfectly simultaneous race. Fix 2 is required for a hard guarantee.
+
+---
+
+### Fix 2 — Planned (DB-level unique constraint with server-side sequence) 🔲
+
+This is the correct long-term solution. It requires a Supabase migration and changes to the
+upsert logic.
+
+#### Step 1 — Add barcode unique constraint back
+
+```sql
+-- supabase/migrations/00X_barcode_unique_constraint.sql
+ALTER TABLE public.products
+  ADD CONSTRAINT products_barcode_unique UNIQUE (barcode);
+```
+
+#### Step 2 — Handle 409 conflicts in syncManager
+
+When an upsert hits a unique-constraint violation on `barcode` (Postgres error code `23505`), the
+sync manager should:
+1. Fetch the current max sequence for that `dropNumber` from the DB (one extra SELECT).
+2. Re-generate the barcode using `maxSequence + 1`.
+3. Update the product in the local store with the new barcode + sequence.
+4. Retry the upsert.
+
+This is the only path that is immune to the simultaneous-race case.
+
+#### Step 3 — Fix re-import 409s (why the constraint was removed)
+
+The original problem was Excel re-import: the same product arrives as a *new* UUID because the
+match-key logic falls through. The correct fix is to ensure `syncExcelProducts()` always routes
+matched products through `updateProduct()` (preserving the existing barcode) rather than
+`addProduct()` (generating a new one). If the existing barcode is already on the upserted row,
+the unique constraint is satisfied.
+
+#### Why Fix 2 is deferred
+
+- Requires a Supabase migration (cannot be rolled back easily on free tier).
+- Requires testing all Excel import paths to confirm no new 409 regressions.
+- Fix 1 reduces the real-world duplicate rate to near-zero for normal use without touching the DB.
+
+**Pre-condition before running Fix 2:** Audit the DB for any existing duplicate barcodes and
+resolve them first. Two products with the same barcode will prevent the `ADD CONSTRAINT` from
+succeeding until the duplicates are cleaned up.

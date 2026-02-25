@@ -81,7 +81,7 @@ export const useTransactionStore = create<TransactionStore>()(
               data: newTransaction,
             });
           } catch (queueError) {
-            console.warn('[Store] Transaction queue failed, attempting direct sync:', queueError);
+            console.warn('[Store] Transaction queue failed (localStorage quota?), attempting direct sync:', queueError);
             const { items, ...txBody } = newTransaction;
             const dbTransaction = {
               id: txBody.id,
@@ -107,33 +107,38 @@ export const useTransactionStore = create<TransactionStore>()(
               created_at: txBody.createdAt,
               is_deleted: false,
             };
-            supabase
-              .from('transactions')
-              .upsert(dbTransaction, { onConflict: 'id' })
-              .then(async ({ error }) => {
-                if (error) {
-                  console.error('[Store] Direct transaction sync failed:', error);
-                  return;
+            // Await the fallback so failures are visible — not fire-and-forget
+            (async () => {
+              const { error } = await supabase!
+                .from('transactions')
+                .upsert(dbTransaction, { onConflict: 'id' });
+              if (error) {
+                console.error('[Store] Direct transaction sync failed — recording in dead-letter:', error);
+                syncManager.addToDeadLetter({ type: 'transactions', action: 'create', data: newTransaction });
+                return;
+              }
+              if (items && items.length > 0) {
+                const itemsData = items.map((item) => ({
+                  transaction_id: txBody.id,
+                  product_id: item.productId,
+                  product_name: item.productName,
+                  quantity: item.quantity,
+                  unit_price: item.unitPrice,
+                  total_price: item.totalPrice,
+                  category: item.category,
+                  brand: item.brand,
+                  color: item.color,
+                  size: item.size,
+                }));
+                const { error: itemsError } = await supabase!
+                  .from('transaction_items')
+                  .insert(itemsData);
+                if (itemsError) {
+                  console.error('[Store] Direct transaction items sync failed — recording in dead-letter:', itemsError);
+                  syncManager.addToDeadLetter({ type: 'transactions', action: 'create', data: newTransaction });
                 }
-                if (items && items.length > 0) {
-                  const itemsData = items.map((item) => ({
-                    transaction_id: txBody.id,
-                    product_id: item.productId,
-                    product_name: item.productName,
-                    quantity: item.quantity,
-                    unit_price: item.unitPrice,
-                    total_price: item.totalPrice,
-                    category: item.category,
-                    brand: item.brand,
-                    color: item.color,
-                    size: item.size,
-                  }));
-                  const { error: itemsError } = await supabase
-                    .from('transaction_items')
-                    .insert(itemsData);
-                  if (itemsError) console.error('[Store] Direct transaction items sync failed:', itemsError);
-                }
-              });
+              }
+            })();
           }
         }
 

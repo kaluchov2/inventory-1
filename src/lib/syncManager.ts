@@ -583,6 +583,31 @@ class SyncManager {
   }
 
   /**
+   * Record a failed operation directly into the dead-letter queue without going
+   * through the normal retry cycle. Used by stores when the localStorage queue is
+   * full and a direct-Supabase fallback also fails — ensures the orange warning
+   * badge appears instead of the failure being swallowed silently.
+   */
+  public addToDeadLetter(operation: Omit<SyncOperation, 'id' | 'timestamp' | 'retryCount'>) {
+    const deadOp: SyncOperation = {
+      id: `${operation.type}_${operation.action}_${Date.now()}_direct`,
+      ...operation,
+      timestamp: new Date().toISOString(),
+      retryCount: this.MAX_RETRIES,
+    };
+    try {
+      syncQueue.moveToDeadLetter(deadOp);
+    } catch (e) {
+      console.error('[SyncManager] Could not persist to dead-letter (localStorage full):', e);
+    }
+    const count = syncQueue.getDeadLetterCount();
+    this.updateStatus({
+      deadLetterCount: count,
+      error: `${count} operación(es) fallaron. Datos guardados localmente.`,
+    });
+  }
+
+  /**
    * Re-enqueue all dead-letter operations and attempt sync.
    * Called when the user clicks "Retry" on failed operations.
    */

@@ -183,43 +183,49 @@ export const useProductStore = create<ProductStore>()(
               data: newProduct,
             });
           } catch (queueError) {
-            console.warn('[Store] Queue failed, attempting direct sync:', queueError);
-            getSupabaseClient()
-              .from('products')
-              .upsert({
-                id: newProduct.id,
-                name: newProduct.name,
-                sku: newProduct.sku,
-                ups_raw: newProduct.upsRaw || null,
-                identifier_type: newProduct.identifierType || null,
-                drop_number: newProduct.dropNumber || null,
-                product_number: newProduct.productNumber || null,
-                drop_sequence: newProduct.dropSequence || null,
-                ups_batch: newProduct.upsBatch,
-                quantity: newProduct.quantity,
-                unit_price: newProduct.unitPrice,
-                original_price: newProduct.originalPrice || null,
-                category: newProduct.category,
-                brand: newProduct.brand || null,
-                color: newProduct.color || null,
-                size: newProduct.size || null,
-                description: newProduct.description || null,
-                notes: newProduct.notes || null,
-                available_qty: newProduct.availableQty || 0,
-                sold_qty: newProduct.soldQty || 0,
-                donated_qty: newProduct.donatedQty || 0,
-                lost_qty: newProduct.lostQty || 0,
-                expired_qty: newProduct.expiredQty || 0,
-                status: newProduct.status,
-                sold_by: newProduct.soldBy || null,
-                sold_to: newProduct.soldTo || null,
-                sold_at: newProduct.soldAt || null,
-                barcode: newProduct.barcode || null,
-                created_at: newProduct.createdAt,
-                updated_at: newProduct.updatedAt,
-                is_deleted: false,
-              }, { onConflict: 'id' })
-              .then(({ error }) => { if (error) console.error('[Store] Direct sync failed:', error); });
+            console.warn('[Store] Product queue failed (localStorage quota?), attempting direct sync:', queueError);
+            // Await the fallback so failures are visible — not fire-and-forget
+            (async () => {
+              const { error } = await getSupabaseClient()
+                .from('products')
+                .upsert({
+                  id: newProduct.id,
+                  name: newProduct.name,
+                  sku: newProduct.sku,
+                  ups_raw: newProduct.upsRaw || null,
+                  identifier_type: newProduct.identifierType || null,
+                  drop_number: newProduct.dropNumber || null,
+                  product_number: newProduct.productNumber || null,
+                  drop_sequence: newProduct.dropSequence || null,
+                  ups_batch: newProduct.upsBatch,
+                  quantity: newProduct.quantity,
+                  unit_price: newProduct.unitPrice,
+                  original_price: newProduct.originalPrice || null,
+                  category: newProduct.category,
+                  brand: newProduct.brand || null,
+                  color: newProduct.color || null,
+                  size: newProduct.size || null,
+                  description: newProduct.description || null,
+                  notes: newProduct.notes || null,
+                  available_qty: newProduct.availableQty || 0,
+                  sold_qty: newProduct.soldQty || 0,
+                  donated_qty: newProduct.donatedQty || 0,
+                  lost_qty: newProduct.lostQty || 0,
+                  expired_qty: newProduct.expiredQty || 0,
+                  status: newProduct.status,
+                  sold_by: newProduct.soldBy || null,
+                  sold_to: newProduct.soldTo || null,
+                  sold_at: newProduct.soldAt || null,
+                  barcode: newProduct.barcode || null,
+                  created_at: newProduct.createdAt,
+                  updated_at: newProduct.updatedAt,
+                  is_deleted: false,
+                }, { onConflict: 'id' });
+              if (error) {
+                console.error('[Store] Direct product create sync failed — recording in dead-letter:', error);
+                syncManager.addToDeadLetter({ type: 'products', action: 'create', data: newProduct });
+              }
+            })();
           }
         }
 
@@ -261,43 +267,49 @@ export const useProductStore = create<ProductStore>()(
               data: updatedProduct,
             });
           } catch (queueError) {
-            console.warn('[Store] Queue failed, attempting direct sync:', queueError);
-            getSupabaseClient()
-              .from('products')
-              .upsert({
-                id: updatedProduct.id,
-                name: updatedProduct.name,
-                sku: updatedProduct.sku,
-                ups_raw: updatedProduct.upsRaw || null,
-                identifier_type: updatedProduct.identifierType || null,
-                drop_number: updatedProduct.dropNumber || null,
-                product_number: updatedProduct.productNumber || null,
-                drop_sequence: updatedProduct.dropSequence || null,
-                ups_batch: updatedProduct.upsBatch,
-                quantity: updatedProduct.quantity,
-                unit_price: updatedProduct.unitPrice,
-                original_price: updatedProduct.originalPrice || null,
-                category: updatedProduct.category,
-                brand: updatedProduct.brand || null,
-                color: updatedProduct.color || null,
-                size: updatedProduct.size || null,
-                description: updatedProduct.description || null,
-                notes: updatedProduct.notes || null,
-                available_qty: updatedProduct.availableQty || 0,
-                sold_qty: updatedProduct.soldQty || 0,
-                donated_qty: updatedProduct.donatedQty || 0,
-                lost_qty: updatedProduct.lostQty || 0,
-                expired_qty: updatedProduct.expiredQty || 0,
-                status: updatedProduct.status,
-                sold_by: updatedProduct.soldBy || null,
-                sold_to: updatedProduct.soldTo || null,
-                sold_at: updatedProduct.soldAt || null,
-                barcode: updatedProduct.barcode || null,
-                created_at: updatedProduct.createdAt,
-                updated_at: updatedProduct.updatedAt,
-                is_deleted: false,
-              }, { onConflict: 'id' })
-              .then(({ error }) => { if (error) console.error('[Store] Direct sync failed:', error); });
+            console.warn('[Store] Product queue failed (localStorage quota?), attempting direct sync:', queueError);
+            // Await the fallback so failures are visible — not fire-and-forget
+            (async () => {
+              const { error } = await getSupabaseClient()
+                .from('products')
+                .upsert({
+                  id: updatedProduct.id,
+                  name: updatedProduct.name,
+                  sku: updatedProduct.sku,
+                  ups_raw: updatedProduct.upsRaw || null,
+                  identifier_type: updatedProduct.identifierType || null,
+                  drop_number: updatedProduct.dropNumber || null,
+                  product_number: updatedProduct.productNumber || null,
+                  drop_sequence: updatedProduct.dropSequence || null,
+                  ups_batch: updatedProduct.upsBatch,
+                  quantity: updatedProduct.quantity,
+                  unit_price: updatedProduct.unitPrice,
+                  original_price: updatedProduct.originalPrice || null,
+                  category: updatedProduct.category,
+                  brand: updatedProduct.brand || null,
+                  color: updatedProduct.color || null,
+                  size: updatedProduct.size || null,
+                  description: updatedProduct.description || null,
+                  notes: updatedProduct.notes || null,
+                  available_qty: updatedProduct.availableQty || 0,
+                  sold_qty: updatedProduct.soldQty || 0,
+                  donated_qty: updatedProduct.donatedQty || 0,
+                  lost_qty: updatedProduct.lostQty || 0,
+                  expired_qty: updatedProduct.expiredQty || 0,
+                  status: updatedProduct.status,
+                  sold_by: updatedProduct.soldBy || null,
+                  sold_to: updatedProduct.soldTo || null,
+                  sold_at: updatedProduct.soldAt || null,
+                  barcode: updatedProduct.barcode || null,
+                  created_at: updatedProduct.createdAt,
+                  updated_at: updatedProduct.updatedAt,
+                  is_deleted: false,
+                }, { onConflict: 'id' });
+              if (error) {
+                console.error('[Store] Direct product update sync failed — recording in dead-letter:', error);
+                syncManager.addToDeadLetter({ type: 'products', action: 'update', data: updatedProduct });
+              }
+            })();
           }
         }
       },

@@ -123,8 +123,8 @@ export function QRGenerator() {
       .filter((p) => !!p.barcode)
       .sort(
         (a, b) =>
-          (a.productNumber ?? a.dropSequence ?? 0) -
-          (b.productNumber ?? b.dropSequence ?? 0),
+          (b.productNumber ?? b.dropSequence ?? 0) -
+          (a.productNumber ?? a.dropSequence ?? 0),
       );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUps, products]);

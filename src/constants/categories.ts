@@ -14,7 +14,7 @@ export const CATEGORY_LABELS: Record<CategoryCode, string> = {
   EL: 'Electrónica',
   BLLZ: 'Belleza',
   ACC: 'Accesorios',
-  BLS: 'Blusas',
+  BLS: 'Bolsas',
   DEP: 'Deportes',
   REL: 'Relojes',
   FERR: 'Ferretería',
@@ -103,9 +103,9 @@ export const CATEGORY_ALIASES: Record<string, CategoryCode> = {
   'ACCESORIO': 'ACC',
   'ACCS': 'ACC',
 
-  // Blusas
-  'BLUSAS': 'BLS',
-  'BLUSA': 'BLS',
+  // Bolsas
+  'BOLSAS': 'BLS',
+  'BOLSA': 'BLS',
 
   // Deportes
   'DEPORTES': 'DEP',
@@ -321,8 +321,8 @@ export const isValidCategory = (code: string): code is CategoryCode => {
  * Get all categories grouped by type (for UI organization)
  */
 export const CATEGORY_GROUPS: Record<string, CategoryCode[]> = {
-  'Ropa': ['DAM', 'CAB', 'BLS', 'RI', 'N'],
-  'Calzado y Accesorios': ['ZPT', 'ACC', 'MOCH', 'REL', 'JY', 'LT'],
+  'Ropa': ['DAM', 'CAB', 'RI', 'N'],
+  'Calzado y Accesorios': ['ZPT', 'ACC', 'BLS', 'MOCH', 'REL', 'JY', 'LT'],
   'Tecnología': ['EL', 'CEL', 'COMP'],
   'Hogar': ['HG', 'COC', 'JAR', 'DEC', 'MUE', 'BL'],
   'Salud y Belleza': ['BLLZ', 'SAL', 'DOC'],

@@ -80,6 +80,8 @@ interface ProductStore {
     product: Omit<Product, "id" | "sku" | "createdAt" | "updatedAt">,
   ) => Product;
   updateProduct: (id: string, updates: Partial<Product>) => void;
+  /** Atomically decrement stock for a completed sale. Uses RPC on Supabase to avoid race conditions. */
+  updateProductFromSale: (id: string, qtySold: number, otherUpdates: Partial<Product>) => void;
   deleteProduct: (id: string) => void;
   markAsSold: (id: string, soldBy?: string, soldTo?: string) => void;
   setFilters: (filters: Partial<ProductFilters>) => void;
@@ -308,6 +310,54 @@ export const useProductStore = create<ProductStore>()(
               if (error) {
                 console.error('[Store] Direct product update sync failed — recording in dead-letter:', error);
                 syncManager.addToDeadLetter({ type: 'products', action: 'update', data: updatedProduct });
+              }
+            })();
+          }
+        }
+      },
+
+      updateProductFromSale: (id, qtySold, otherUpdates) => {
+        // Optimistically update local state
+        const product = get().products.find((p) => p.id === id);
+        if (!product) return;
+
+        const updates: Partial<Product> = {
+          ...otherUpdates,
+          availableQty: Math.max(0, product.availableQty - qtySold),
+          soldQty: product.soldQty + qtySold,
+        };
+        const updatedProduct = {
+          ...product,
+          ...updates,
+          updatedAt: getCurrentISODate(),
+        };
+        updatedProduct.status = deriveStatus(updatedProduct);
+
+        set((state) => ({
+          products: state.products.map((p) =>
+            p.id === id ? updatedProduct : p,
+          ),
+        }));
+
+        // Queue atomic RPC decrement — race-condition-safe for multi-device sales
+        if (supabase) {
+          try {
+            syncManager.queueOperation({
+              type: "products",
+              action: "sale_update",
+              data: { id, qty: qtySold },
+            });
+          } catch (queueError) {
+            console.warn('[Store] Sale queue failed (localStorage quota?), attempting direct RPC:', queueError);
+            (async () => {
+              // Cast needed until decrement_stock is added to Supabase generated types
+              const { error } = await (getSupabaseClient() as any).rpc('decrement_stock', {
+                product_id: id,
+                qty: qtySold,
+              });
+              if (error) {
+                console.error('[Store] Direct RPC decrement_stock failed — recording in dead-letter:', error);
+                syncManager.addToDeadLetter({ type: 'products', action: 'sale_update', data: { id, qty: qtySold } });
               }
             })();
           }

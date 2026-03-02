@@ -1,7 +1,7 @@
 import { CategoryCode } from '../types';
 
 /**
- * V2 Categories - 34 total (27 original + 7 new)
+ * V2 Categories - 35 total (27 original + 7 new + CAM)
  */
 
 // Category labels in Spanish
@@ -42,6 +42,7 @@ export const CATEGORY_LABELS: Record<CategoryCode, string> = {
   PAP: 'Papelería',
   MUS: 'Música',
   TOOL: 'Herramientas',
+  CAM: 'Cámaras',
 };
 
 // All category codes for dropdowns

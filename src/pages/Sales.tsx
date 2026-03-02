@@ -51,7 +51,6 @@ import { TransactionItem, PaymentMethod, Product, CategoryCode } from "../types"
 import { CATEGORY_OPTIONS } from "../constants/categories";
 import { formatCurrency } from "../utils/formatters";
 import { es } from "../i18n/es";
-import { deriveStatus } from "../utils/productHelpers";
 
 interface CartItem extends TransactionItem {
   productId: string;
@@ -62,7 +61,7 @@ interface CartItem extends TransactionItem {
 export function Sales() {
   const toast = useToast();
 
-  const { products, updateProduct } = useProductStore();
+  const { products, updateProductFromSale } = useProductStore();
   const { customers, addPurchase, receivePayment } = useCustomerStore();
   const { addTransaction } = useTransactionStore();
 
@@ -377,20 +376,15 @@ export function Sales() {
 
     addTransaction(transaction);
 
-    // Update product qty fields
+    // Update product qty fields (atomic RPC — race-condition-safe for multi-device sales)
     cart.forEach((item) => {
       if (item.isUnregistered) return;
       const product = products.find((p) => p.id === item.productId);
       if (product) {
-        const updates: Partial<Product> = {
-          availableQty: product.availableQty - item.quantity,
-          soldQty: product.soldQty + item.quantity,
+        updateProductFromSale(product.id, item.quantity, {
           soldTo: selectedCustomerId || undefined,
           soldAt: new Date().toISOString(),
-        };
-        const updatedProduct = { ...product, ...updates };
-        updates.status = deriveStatus(updatedProduct as Product);
-        updateProduct(product.id, updates);
+        });
       }
     });
 

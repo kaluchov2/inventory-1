@@ -5,14 +5,15 @@
 // Identifier type for UPS formats
 export type IdentifierType = 'legacy' | 'numbered';
 
-// Category codes used in the inventory system (34 total)
+// Category codes used in the inventory system (35 total)
 export type CategoryCode =
   | 'HG' | 'DAM' | 'CAB' | 'ZPT' | 'EL' | 'BLLZ' | 'ACC'
   | 'BLS' | 'DEP' | 'REL' | 'FERR' | 'RI' | 'JY' | 'BB'
   | 'JUG' | 'SAL' | 'N' | 'MOCH' | 'VIB' | 'LD' | 'LT'
   | 'MASC' | 'CEL' | 'COMP' | 'AUTO' | 'BL' | 'DOC'
   // New V2 categories (7 additional)
-  | 'COC' | 'JAR' | 'DEC' | 'MUE' | 'PAP' | 'MUS' | 'TOOL';
+  | 'COC' | 'JAR' | 'DEC' | 'MUE' | 'PAP' | 'MUS' | 'TOOL'
+  | 'CAM';
 
 // Product status (8 values in V2)
 export type ProductStatus = 'available' | 'sold' | 'reserved' | 'promotional' | 'donated' | 'review' | 'expired' | 'lost';

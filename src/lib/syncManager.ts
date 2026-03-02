@@ -256,6 +256,20 @@ class SyncManager {
         if (batchUpsertError) throw batchUpsertError;
         break;
 
+      case 'sale_update': {
+        // Atomic stock decrement via RPC — avoids race condition when two devices sell the same product.
+        // The DB function: UPDATE products SET available_qty = available_qty - qty, sold_qty = sold_qty + qty
+        //                  WHERE id = product_id AND available_qty >= qty
+        // data shape: { id: string, qty: number }
+        // Cast needed until decrement_stock is added to Supabase generated types
+        const { error: rpcError } = await (client as any).rpc('decrement_stock', {
+          product_id: data.id,
+          qty: data.qty,
+        });
+        if (rpcError) throw rpcError;
+        break;
+      }
+
       case 'delete':
         // Single delete (soft delete)
         const { error: deleteError } = await client

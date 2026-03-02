@@ -60,6 +60,38 @@ export function exportProductsToExcel(products: Product[], filename?: string): v
   XLSX.writeFile(workbook, filename || `inventario_${date}.xlsx`);
 }
 
+// Export products by UPS batch — slim 8-column layout for pre/post-sale stock checks
+export function exportProductsByUps(products: Product[], filename?: string): void {
+  const data = products.map(p => ({
+    'Artículo': p.name,
+    'Categoría': getCategoryLabel(p.category),
+    'Marca': p.brand || '',
+    'Color': p.color || '',
+    'Talla': p.size || '',
+    'Disponible': p.availableQty,
+    'Precio Unitario': p.unitPrice,
+    'Estado': getStatusLabel(deriveStatus(p)),
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario');
+
+  worksheet['!cols'] = [
+    { wch: 40 }, // Artículo
+    { wch: 15 }, // Categoría
+    { wch: 15 }, // Marca
+    { wch: 12 }, // Color
+    { wch: 10 }, // Talla
+    { wch: 12 }, // Disponible
+    { wch: 15 }, // Precio Unitario
+    { wch: 12 }, // Estado
+  ];
+
+  const date = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(workbook, filename || `inventario_ups_${date}.xlsx`);
+}
+
 // Export customers to Excel
 export function exportCustomersToExcel(customers: Customer[]): void {
   const data = customers.map(c => ({

@@ -59,7 +59,6 @@ import { formatCurrency } from "../utils/formatters";
 import { getCategoryLabel } from "../constants/categories";
 import { CurrencyInput } from "../components/common";
 import { es } from "../i18n/es";
-import { deriveStatus } from "../utils/productHelpers";
 
 type ScanMode = "sell" | "register";
 
@@ -83,7 +82,7 @@ export function Scanner() {
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const { products, getProductByBarcode, updateProduct, addProduct } =
+  const { products, getProductByBarcode, updateProductFromSale, addProduct } =
     useProductStore();
   const { addTransaction } = useTransactionStore();
   const { customers, addPurchase } = useCustomerStore();
@@ -450,19 +449,14 @@ export function Scanner() {
 
       addTransaction(transaction);
 
-      // Update product quantities
+      // Update product quantities (atomic RPC — race-condition-safe for multi-device sales)
       cart.forEach((item) => {
         const product = products.find((p) => p.id === item.productId);
         if (product) {
-          const updates: Partial<Product> = {
-            availableQty: product.availableQty - item.quantity,
-            soldQty: product.soldQty + item.quantity,
+          updateProductFromSale(product.id, item.quantity, {
             soldTo: selectedCustomerId || undefined,
             soldAt: new Date().toISOString(),
-          };
-          const updatedProduct = { ...product, ...updates };
-          updates.status = deriveStatus(updatedProduct as Product);
-          updateProduct(product.id, updates);
+          });
         }
       });
 

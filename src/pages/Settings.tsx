@@ -44,6 +44,7 @@ import { useStaffStore } from '../store/staffStore';
 import { importExcelFile, ImportResult } from '../utils/excelImport';
 import {
   exportProductsToExcel,
+  exportProductsByUps,
   exportCustomersToExcel,
   exportTransactionsToExcel,
   exportAllToExcel,
@@ -89,7 +90,7 @@ export function Settings() {
     if (!exportUps) return;
     const filtered = products.filter(p => Number(p.upsBatch) === exportUps);
     const date = new Date().toISOString().split('T')[0];
-    exportProductsToExcel(filtered, `inventario_UPS${exportUps}_${date}.xlsx`);
+    exportProductsByUps(filtered, `inventario_UPS${exportUps}_${date}.xlsx`);
   };
 
   // Update queue info on mount and when sync status changes

@@ -498,6 +498,13 @@ export function Products() {
           duration: 3000,
           isClosable: true,
         });
+        toast({
+          title: "La data se está sincronizando",
+          description: "Espere un momento para que se refleje en otras páginas",
+          status: "info",
+          duration: 5000,
+          isClosable: true,
+        });
       } else {
         addProduct({
           ...data,
@@ -508,6 +515,13 @@ export function Products() {
           title: es.success.productAdded,
           status: "success",
           duration: 3000,
+          isClosable: true,
+        });
+        toast({
+          title: "La data se está sincronizando",
+          description: "Espere un momento para que se refleje en otras páginas",
+          status: "info",
+          duration: 5000,
           isClosable: true,
         });
       }

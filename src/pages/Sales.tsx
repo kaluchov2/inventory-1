@@ -399,6 +399,13 @@ export function Sales() {
         : es.sales.saleCompleted;
 
     toast({ title: toastTitle, status: "success", duration: 3000 });
+    toast({
+      title: "La data se está sincronizando",
+      description: "Espere un momento para que se refleje en otras páginas",
+      status: "info",
+      duration: 5000,
+      isClosable: true,
+    });
 
     // Reset form
     setCart([]);

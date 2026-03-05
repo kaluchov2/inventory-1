@@ -214,6 +214,12 @@ export const useTransactionStore = create<TransactionStore>()(
       },
 
       handleRealtimeUpdate: (dbTransaction) => {
+        if (dbTransaction.is_deleted) {
+          set((state) => ({
+            transactions: state.transactions.filter((t) => t.id !== dbTransaction.id),
+          }));
+          return;
+        }
         const converted = convertDbTransaction(dbTransaction);
         const local = get().transactions.find(t => t.id === converted.id);
 

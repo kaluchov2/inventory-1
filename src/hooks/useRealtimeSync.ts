@@ -12,10 +12,10 @@ import { useAuthStore } from '../store/authStore';
  *   Supabase broadcasts the change to all connected clients on the same channel.
  *
  * ## What happens on receipt?
- * The callback passed to useRealtimeProducts / useRealtimeCustomers /
- * useRealtimeTransactions is called immediately. SyncInitializer wraps these
- * callbacks in a 2-second debounce before calling loadFromSupabase(), so
- * rapid back-to-back events don't cause multiple concurrent reloads.
+ * The per-event callbacks (onInsert / onUpdate / onDelete) are called immediately
+ * with the changed record. SyncInitializer routes these directly to the store's
+ * incremental handlers (handleRealtimeUpdate / handleRealtimeDelete), so only
+ * the affected record is updated in local state — no full reload needed.
  *
  * ## Channel lifecycle
  * The channel is created on mount and removed on unmount (React cleanup).
@@ -94,29 +94,20 @@ export function useRealtimeSync({
   }, [table, onInsert, onUpdate, onDelete, isAuthenticated, isOfflineMode]);
 }
 
-export function useRealtimeProducts(onUpdate: () => void) {
-  useRealtimeSync({
-    table: 'products',
-    onInsert: onUpdate,
-    onUpdate: onUpdate,
-    onDelete: onUpdate,
-  });
+type RealtimeCallbacks = {
+  onInsert?: (record: any) => void;
+  onUpdate?: (record: any) => void;
+  onDelete?: (record: any) => void;
+};
+
+export function useRealtimeProducts(callbacks: RealtimeCallbacks) {
+  useRealtimeSync({ table: 'products', ...callbacks });
 }
 
-export function useRealtimeCustomers(onUpdate: () => void) {
-  useRealtimeSync({
-    table: 'customers',
-    onInsert: onUpdate,
-    onUpdate: onUpdate,
-    onDelete: onUpdate,
-  });
+export function useRealtimeCustomers(callbacks: RealtimeCallbacks) {
+  useRealtimeSync({ table: 'customers', ...callbacks });
 }
 
-export function useRealtimeTransactions(onUpdate: () => void) {
-  useRealtimeSync({
-    table: 'transactions',
-    onInsert: onUpdate,
-    onUpdate: onUpdate,
-    onDelete: onUpdate,
-  });
+export function useRealtimeTransactions(callbacks: RealtimeCallbacks) {
+  useRealtimeSync({ table: 'transactions', ...callbacks });
 }

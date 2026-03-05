@@ -931,6 +931,13 @@ export const useProductStore = create<ProductStore>()(
       },
 
       handleRealtimeUpdate: (dbProduct) => {
+        // Soft delete arrives as UPDATE with is_deleted=true
+        if (dbProduct.is_deleted) {
+          set((state) => ({
+            products: state.products.filter((p) => p.id !== dbProduct.id),
+          }));
+          return;
+        }
         const converted = convertDbProduct(dbProduct);
         const local = get().products.find((p) => p.id === converted.id);
 

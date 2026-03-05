@@ -156,6 +156,12 @@ export const useCustomerStore = create<CustomerStore>()(
       },
 
       handleRealtimeUpdate: (dbCustomer) => {
+        if (dbCustomer.is_deleted) {
+          set((state) => ({
+            customers: state.customers.filter((c) => c.id !== dbCustomer.id),
+          }));
+          return;
+        }
         const converted = convertDbCustomer(dbCustomer);
         const local = get().customers.find(c => c.id === converted.id);
 

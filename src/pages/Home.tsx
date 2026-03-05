@@ -14,7 +14,9 @@ import {
   Th,
   Td,
   Badge,
+  Select,
 } from '@chakra-ui/react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FiShoppingCart,
@@ -31,17 +33,26 @@ import { useTransactionStore } from '../store/transactionStore';
 import { formatCurrency, formatDateTime } from '../utils/formatters';
 import { es } from '../i18n/es';
 import { getReviewQty } from '../utils/productHelpers';
+import { UPS_BATCH_OPTIONS } from '../constants/colors';
 
 export function Home() {
   const navigate = useNavigate();
+  const [selectedUps, setSelectedUps] = useState<number | ''>('');
 
   const { products, getTotalInventoryValue } = useProductStore();
   const { getTotalOutstandingBalance } = useCustomerStore();
   const { transactions, getTodaySales } = useTransactionStore();
 
-  const totalProducts = products.filter(p => p.availableQty > 0).length;
-  const inventoryValue = getTotalInventoryValue();
-  const reviewProducts = products.filter(p => getReviewQty(p) > 0);
+  const filteredProducts = selectedUps
+    ? products.filter(p => Number(p.upsBatch) === selectedUps)
+    : products;
+
+  const totalProducts = filteredProducts.filter(p => p.availableQty > 0).length;
+  const inventoryValue = selectedUps
+    ? filteredProducts.filter(p => p.availableQty > 0)
+        .reduce((sum, p) => sum + p.availableQty * p.unitPrice, 0)
+    : getTotalInventoryValue();
+  const reviewProducts = filteredProducts.filter(p => getReviewQty(p) > 0);
   const todaySales = getTodaySales();
   const outstandingBalance = getTotalOutstandingBalance();
 
@@ -84,6 +95,28 @@ export function Home() {
         {es.dashboard.title}
       </Heading>
 
+      {/* UPS Filter */}
+      <HStack spacing={3} flexWrap="wrap">
+        <Text fontWeight="medium" color="gray.600" whiteSpace="nowrap">Filtrar por UPS:</Text>
+        <Select
+          size="sm"
+          w="160px"
+          value={selectedUps}
+          onChange={e => setSelectedUps(e.target.value ? Number(e.target.value) : '')}
+          borderRadius="md"
+        >
+          <option value="">Todos</option>
+          {UPS_BATCH_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </Select>
+        {selectedUps !== '' && (
+          <Button size="sm" variant="ghost" colorScheme="gray" onClick={() => setSelectedUps('')}>
+            ✕ Limpiar
+          </Button>
+        )}
+      </HStack>
+
       {/* Summary Stats */}
       <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={6}>
         <StatCard
@@ -105,7 +138,7 @@ export function Home() {
           colorScheme={reviewProducts.length > 0 ? 'warning' : 'brand'}
         />
         <StatCard
-          title={es.dashboard.outstandingBalance}
+          title={es.dashboard.outstandingBalance + (selectedUps !== '' ? ' (global)' : '')}
           value={formatCurrency(outstandingBalance)}
           icon={FiUsers}
           colorScheme={outstandingBalance > 0 ? 'danger' : 'success'}
@@ -244,7 +277,7 @@ export function Home() {
           <HStack spacing={3} mb={4} flexWrap="wrap">
             <Icon as={FiAlertCircle} boxSize={{ base: 5, md: 6 }} color="yellow.600" />
             <Heading size={{ base: 'md', md: 'lg' }} color="yellow.700">
-              Productos por Revisar ({reviewProducts.length})
+              Productos por Revisar ({reviewProducts.length}){selectedUps !== '' ? ` — UPS ${selectedUps}` : ''}
             </Heading>
           </HStack>
           <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={3}>

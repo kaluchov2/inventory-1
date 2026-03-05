@@ -60,9 +60,9 @@ export function exportProductsToExcel(products: Product[], filename?: string): v
   XLSX.writeFile(workbook, filename || `inventario_${date}.xlsx`);
 }
 
-// Export products by UPS batch — slim 8-column layout for pre/post-sale stock checks
+// Export products by UPS batch — slim 9-column layout for pre/post-sale stock checks
 export function exportProductsByUps(products: Product[], filename?: string): void {
-  const data = products.map(p => ({
+  const data: any[] = products.map(p => ({
     'Artículo': p.name,
     'Categoría': getCategoryLabel(p.category),
     'Marca': p.brand || '',
@@ -71,7 +71,25 @@ export function exportProductsByUps(products: Product[], filename?: string): voi
     'Disponible': p.availableQty,
     'Precio Unitario': p.unitPrice,
     'Estado': getStatusLabel(deriveStatus(p)),
+    'Valor Total': p.availableQty * p.unitPrice,
   }));
+
+  const totalValue = products
+    .filter(p => p.availableQty > 0)
+    .reduce((sum, p) => sum + p.availableQty * p.unitPrice, 0);
+  const totalUnits = products.reduce((sum, p) => sum + p.availableQty, 0);
+
+  data.push({
+    'Artículo': 'TOTAL VALOR INVENTARIO',
+    'Categoría': '',
+    'Marca': '',
+    'Color': '',
+    'Talla': '',
+    'Disponible': totalUnits,
+    'Precio Unitario': '',
+    'Estado': '',
+    'Valor Total': totalValue,
+  });
 
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
@@ -86,6 +104,7 @@ export function exportProductsByUps(products: Product[], filename?: string): voi
     { wch: 12 }, // Disponible
     { wch: 15 }, // Precio Unitario
     { wch: 12 }, // Estado
+    { wch: 15 }, // Valor Total
   ];
 
   const date = new Date().toISOString().split('T')[0];
@@ -153,6 +172,35 @@ export function exportTransactionsToExcel(transactions: Transaction[]): void {
         'Observaciones': t.notes || '',
       });
     });
+  });
+
+  const totalSales = transactions
+    .filter(t => t.type === 'sale')
+    .reduce((sum, t) => sum + t.total, 0);
+  const totalCash = transactions.reduce((sum, t) => sum + t.cashAmount, 0);
+  const totalTransfer = transactions.reduce((sum, t) => sum + t.transferAmount, 0);
+  const totalCard = transactions.reduce((sum, t) => sum + t.cardAmount, 0);
+
+  data.push({
+    'UPS': '',
+    'Cliente': 'TOTAL',
+    'Fecha': '',
+    'Cantidad': '',
+    'Artículo': '',
+    'Categoría': '',
+    'Marca': '',
+    'Color': '',
+    'Talla': '',
+    'Precio Unitario': '',
+    'Precio Total': '',
+    'Descuento': '',
+    'Total Venta': totalSales,
+    'Pagos en Efectivo': totalCash,
+    'Pagos Transferencia': totalTransfer,
+    'Pago Tarjeta': totalCard,
+    'Método de Pago': '',
+    'Tipo': '',
+    'Observaciones': '',
   });
 
   const worksheet = XLSX.utils.json_to_sheet(data);

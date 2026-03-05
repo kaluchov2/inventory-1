@@ -662,17 +662,30 @@ export function Settings() {
 
         {queueInfo && queueInfo.count > 0 && (
           <>
-            <Button
-              leftIcon={<Icon as={FiTrash2} />}
-              colorScheme="red"
-              variant="outline"
-              size={{ base: 'sm', md: 'lg' }}
-              fontSize={{ base: 'xs', md: 'md' }}
-              onClick={handleClearQueue}
-              w={{ base: 'full', md: 'auto' }}
-            >
-              Limpiar Cola de Sincronización
-            </Button>
+            <HStack spacing={2} flexWrap="wrap">
+              <Button
+                leftIcon={<Icon as={FiRefreshCw} />}
+                colorScheme="blue"
+                variant="outline"
+                size={{ base: 'sm', md: 'lg' }}
+                fontSize={{ base: 'xs', md: 'md' }}
+                onClick={() => syncManager.forceSync()}
+                w={{ base: 'full', md: 'auto' }}
+              >
+                Forzar Sincronización
+              </Button>
+              <Button
+                leftIcon={<Icon as={FiTrash2} />}
+                colorScheme="red"
+                variant="outline"
+                size={{ base: 'sm', md: 'lg' }}
+                fontSize={{ base: 'xs', md: 'md' }}
+                onClick={handleClearQueue}
+                w={{ base: 'full', md: 'auto' }}
+              >
+                Limpiar Cola
+              </Button>
+            </HStack>
 
             {(queueInfo.count > 100 || parseFloat(queueInfo.sizeKB) > 1000) && (
               <Alert status="warning" mt={4} borderRadius="lg">

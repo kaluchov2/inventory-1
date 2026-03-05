@@ -1282,12 +1282,15 @@ function mergeProducts(local: Product[], remote: Product[]): Product[] {
 
   // Remove local-only records that aren't pending in the sync queue
   // These are ghost records from localStorage that were deleted on the server
-  const pendingIds = new Set(
-    syncQueue.getAll()
-      .filter((op: any) => op.type === 'products' && (op.action === 'create' || op.action === 'update'))
-      .map((op: any) => op.data?.id)
-      .filter(Boolean)
-  );
+  // Include dead-letter IDs so products whose sync failed 3x aren't ghost-deleted
+  const pendingIds = new Set([
+    ...syncQueue.getAll()
+      .filter((op: any) => op.type === 'products' && ['create', 'update'].includes(op.action))
+      .map((op: any) => op.data?.id),
+    ...syncQueue.getDeadLetter()
+      .filter((op: any) => op.type === 'products' && ['create', 'update'].includes(op.action))
+      .map((op: any) => op.data?.id),
+  ].filter(Boolean));
 
   for (const [id] of merged) {
     if (!remoteMap.has(id) && !pendingIds.has(id)) {

@@ -36,6 +36,7 @@ import { connectionStatus } from './connectionStatus';
  */
 class SyncManager {
   private isSyncing = false;
+  private syncStartTime: number | null = null;
   private readonly MAX_RETRIES = 3;
   private syncListeners: Set<(status: SyncStatus) => void> = new Set();
   private currentStatus: SyncStatus = {
@@ -69,6 +70,17 @@ class SyncManager {
         this.syncPendingOperations();
       }
     }, 10000); // Flush queue to Supabase every 10 seconds when online
+
+    // Watchdog: if sync has been stuck for >2 minutes, force-reset and retry
+    setInterval(() => {
+      if (this.isSyncing && this.syncStartTime && Date.now() - this.syncStartTime > 120_000) {
+        console.warn('[SyncManager] Sync stuck >2min, force-resetting');
+        this.isSyncing = false;
+        this.syncStartTime = null;
+        this.updateStatus({ isSyncing: false, error: 'Sync timeout — reintentando...' });
+        this.syncPendingOperations();
+      }
+    }, 30_000);
   }
 
   /**
@@ -92,6 +104,7 @@ class SyncManager {
     }
 
     this.isSyncing = true;
+    this.syncStartTime = Date.now();
     this.updateStatus({ isSyncing: true, error: null });
 
     console.log('[SyncManager] Starting sync, queue size:', syncQueue.size());
@@ -117,7 +130,7 @@ class SyncManager {
         console.log(`[SyncManager] Processing operation ${processed + 1}/${syncQueue.size()}:`, operation.type, operation.action);
 
         try {
-          await this.executeOperation(operation);
+          await this.withTimeout(this.executeOperation(operation), 30_000);
 
           try {
             syncQueue.remove(operation.id);
@@ -190,6 +203,7 @@ class SyncManager {
       });
     } finally {
       this.isSyncing = false;
+      this.syncStartTime = null;
       console.log('[SyncManager] Finally block - ensuring UI status updated');
 
       // CRITICAL: Always ensure UI status is updated
@@ -199,6 +213,13 @@ class SyncManager {
         deadLetterCount: syncQueue.getDeadLetterCount(),
       });
     }
+  }
+
+  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    const timeout = new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Sync operation timed out after ${ms}ms`)), ms)
+    );
+    return Promise.race([promise, timeout]);
   }
 
   private async executeOperation(operation: SyncOperation) {
@@ -619,6 +640,16 @@ class SyncManager {
       deadLetterCount: count,
       error: `${count} operación(es) fallaron. Datos guardados localmente.`,
     });
+  }
+
+  /**
+   * Force-reset the sync lock and immediately re-attempt sync.
+   * Use when sync appears stuck (e.g. a fetch hung indefinitely).
+   */
+  public forceSync() {
+    this.isSyncing = false;
+    this.syncStartTime = null;
+    this.syncPendingOperations();
   }
 
   /**

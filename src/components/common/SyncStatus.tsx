@@ -59,8 +59,17 @@ export function SyncStatus() {
 
   if (syncStatus.isSyncing) {
     return (
-      <Tooltip label="Sincronizando cambios...">
-        <Badge colorScheme="blue" display="flex" alignItems="center" gap={2} px={3} py={1}>
+      <Tooltip label="Toca para forzar sincronización">
+        <Badge
+          colorScheme="blue"
+          display="flex"
+          alignItems="center"
+          gap={2}
+          px={3}
+          py={1}
+          cursor="pointer"
+          onClick={() => syncManager.forceSync()}
+        >
           <Spinner size="xs" />
           <Text fontSize="sm">Sincronizando...</Text>
         </Badge>
@@ -101,8 +110,17 @@ export function SyncStatus() {
 
   if (syncStatus.pendingCount > 0) {
     return (
-      <Tooltip label={`${syncStatus.pendingCount} cambios pendientes de sincronizar`}>
-        <Badge colorScheme="yellow" display="flex" alignItems="center" gap={2} px={3} py={1}>
+      <Tooltip label={`${syncStatus.pendingCount} cambios pendientes — toca para sincronizar ahora`}>
+        <Badge
+          colorScheme="yellow"
+          display="flex"
+          alignItems="center"
+          gap={2}
+          px={3}
+          py={1}
+          cursor="pointer"
+          onClick={() => syncManager.forceSync()}
+        >
           <Icon as={FiCloud} />
           <Text fontSize="sm">{syncStatus.pendingCount} pendiente(s)</Text>
         </Badge>

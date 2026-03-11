@@ -47,7 +47,12 @@ import {
   useTransactionStore,
   createSaleTransaction,
 } from "../store/transactionStore";
-import { TransactionItem, PaymentMethod, Product, CategoryCode } from "../types";
+import {
+  TransactionItem,
+  PaymentMethod,
+  Product,
+  CategoryCode,
+} from "../types";
 import { CATEGORY_OPTIONS } from "../constants/categories";
 import { formatCurrency } from "../utils/formatters";
 import { es } from "../i18n/es";
@@ -63,7 +68,7 @@ export function Sales() {
 
   const { products, updateProductFromSale } = useProductStore();
   const { customers, addPurchase, receivePayment } = useCustomerStore();
-  const { addTransaction } = useTransactionStore();
+  const { addTransaction, queueSaleSync } = useTransactionStore();
 
   // Quantity modal state
   const {
@@ -81,11 +86,11 @@ export function Sales() {
     onOpen: onUnregisteredModalOpen,
     onClose: onUnregisteredModalClose,
   } = useDisclosure();
-  const [unregName, setUnregName] = useState('');
+  const [unregName, setUnregName] = useState("");
   const [unregPrice, setUnregPrice] = useState(0);
   const [unregQty, setUnregQty] = useState(1);
-  const [unregCategory, setUnregCategory] = useState<CategoryCode | ''>('');
-  const [unregBrand, setUnregBrand] = useState('');
+  const [unregCategory, setUnregCategory] = useState<CategoryCode | "">("");
+  const [unregBrand, setUnregBrand] = useState("");
 
   // Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -216,13 +221,17 @@ export function Sales() {
     };
     setCart([...cart, newItem]);
 
-    toast({ title: 'Producto sin registrar agregado', status: 'success', duration: 2000 });
+    toast({
+      title: "Producto sin registrar agregado",
+      status: "success",
+      duration: 2000,
+    });
 
-    setUnregName('');
+    setUnregName("");
     setUnregPrice(0);
     setUnregQty(1);
-    setUnregCategory('');
-    setUnregBrand('');
+    setUnregCategory("");
+    setUnregBrand("");
     onUnregisteredModalClose();
   };
 
@@ -348,7 +357,7 @@ export function Sales() {
           color,
           size,
         }) => ({
-          productId: isUnregistered ? '' : productId,
+          productId: isUnregistered ? "" : productId,
           productName,
           quantity,
           unitPrice,
@@ -374,24 +383,45 @@ export function Sales() {
       },
     );
 
-    addTransaction(transaction);
+    const soldAt = new Date().toISOString();
+    const savedTransaction = addTransaction(transaction, { skipSync: true });
 
-    // Update product qty fields (atomic RPC — race-condition-safe for multi-device sales)
-    cart.forEach((item) => {
-      if (item.isUnregistered) return;
+    const productUpdates = cart.flatMap((item) => {
+      if (item.isUnregistered) return [];
       const product = products.find((p) => p.id === item.productId);
       if (product) {
-        updateProductFromSale(product.id, item.quantity, {
-          soldTo: selectedCustomerId || undefined,
-          soldAt: new Date().toISOString(),
-        });
+        const snapshot = updateProductFromSale(
+          product.id,
+          item.quantity,
+          {
+            soldTo: selectedCustomerId || undefined,
+            soldAt,
+          },
+          { skipSync: true },
+        );
+        if (snapshot) {
+          return [{ id: product.id, qty: item.quantity, snapshot }];
+        }
       }
+      return [];
     });
 
-    // Update customer balance if there's pending amount
-    if (pendingBalance > 0 && selectedCustomerId) {
-      addPurchase(selectedCustomerId, pendingBalance);
-    }
+    const customerSnapshot =
+      pendingBalance > 0 && selectedCustomerId
+        ? addPurchase(selectedCustomerId, pendingBalance, { skipSync: true })
+        : undefined;
+
+    queueSaleSync({
+      transaction: savedTransaction,
+      products: productUpdates,
+      customer: customerSnapshot
+        ? {
+            snapshot: customerSnapshot,
+            balanceDelta: pendingBalance,
+            purchaseDelta: pendingBalance,
+          }
+        : undefined,
+    });
 
     const toastTitle =
       pendingBalance > 0
@@ -620,7 +650,9 @@ export function Sales() {
                               {item.productName}
                             </Text>
                             {item.isUnregistered && (
-                              <Badge colorScheme="orange" fontSize="xs">UPS 0</Badge>
+                              <Badge colorScheme="orange" fontSize="xs">
+                                UPS 0
+                              </Badge>
                             )}
                             <Text fontSize="sm" color="gray.500">
                               {item.quantity} x {formatCurrency(item.unitPrice)}
@@ -1166,8 +1198,11 @@ export function Sales() {
                 <FormLabel>Categoría (opcional)</FormLabel>
                 <Select
                   value={unregCategory}
-                  onChange={(e) => setUnregCategory(e.target.value as CategoryCode | '')}
+                  onChange={(e) =>
+                    setUnregCategory(e.target.value as CategoryCode | "")
+                  }
                   placeholder="Sin categoría"
+                  height={"90px"}
                 >
                   {CATEGORY_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -1187,7 +1222,12 @@ export function Sales() {
               </FormControl>
 
               {unregPrice > 0 && unregQty > 0 && (
-                <HStack justify="space-between" p={3} bg="orange.50" borderRadius="md">
+                <HStack
+                  justify="space-between"
+                  p={3}
+                  bg="orange.50"
+                  borderRadius="md"
+                >
                   <Text fontWeight="medium">Total:</Text>
                   <Text fontWeight="bold" color="orange.600">
                     {formatCurrency(unregQty * unregPrice)}

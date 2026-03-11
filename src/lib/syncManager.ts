@@ -1,6 +1,7 @@
 import { supabase, getSupabaseClient } from './supabase';
 import { syncQueue, SyncOperation } from './syncQueue';
 import { connectionStatus } from './connectionStatus';
+import { isMissingDatabaseFunction, syncRecordedSale } from './saleSync';
 
 /**
  * Sync Manager
@@ -287,7 +288,30 @@ class SyncManager {
           product_id: data.id,
           qty: data.qty,
         });
-        if (rpcError) throw rpcError;
+        if (rpcError) {
+          if (!data.snapshot || !isMissingDatabaseFunction(rpcError, 'decrement_stock')) {
+            throw rpcError;
+          }
+
+          const { error: fallbackError } = await client
+            .from('products')
+            .upsert(this.convertToDbFormat(data.snapshot, 'product'), { onConflict: 'id' });
+          if (fallbackError) throw fallbackError;
+          break;
+        }
+
+        if (data.snapshot) {
+          const { error: metadataError } = await client
+            .from('products')
+            .update({
+              sold_to: data.snapshot.soldTo || null,
+              sold_at: data.snapshot.soldAt || null,
+              status: data.snapshot.status,
+              updated_at: data.snapshot.updatedAt,
+            })
+            .eq('id', data.id);
+          if (metadataError) throw metadataError;
+        }
         break;
       }
 
@@ -389,6 +413,10 @@ class SyncManager {
           .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .eq('id', data.id);
         if (deleteError) throw deleteError;
+        break;
+
+      case 'record_sale':
+        await syncRecordedSale(data);
         break;
 
       default:

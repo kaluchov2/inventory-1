@@ -15,11 +15,11 @@ interface CustomerStore {
 
   // Actions
   addCustomer: (customer: Omit<Customer, 'id' | 'balance' | 'totalPurchases' | 'createdAt' | 'updatedAt'>) => Customer;
-  updateCustomer: (id: string, updates: Partial<Customer>) => void;
+  updateCustomer: (id: string, updates: Partial<Customer>, options?: { skipSync?: boolean }) => Customer | undefined;
   deleteCustomer: (id: string) => void;
   updateBalance: (id: string, amount: number) => void;
-  addPurchase: (id: string, amount: number) => void;
-  receivePayment: (id: string, amount: number) => void;
+  addPurchase: (id: string, amount: number, options?: { skipSync?: boolean }) => Customer | undefined;
+  receivePayment: (id: string, amount: number, options?: { skipSync?: boolean }) => Customer | undefined;
   setSearchQuery: (query: string) => void;
   importCustomers: (customers: Customer[]) => void;
 
@@ -70,7 +70,7 @@ export const useCustomerStore = create<CustomerStore>()(
         return newCustomer;
       },
 
-      updateCustomer: (id, updates) => {
+      updateCustomer: (id, updates, options) => {
         const customer = get().customers.find(c => c.id === id);
         if (!customer) return;
 
@@ -82,13 +82,15 @@ export const useCustomerStore = create<CustomerStore>()(
           ),
         }));
 
-        if (supabase) {
+        if (supabase && !options?.skipSync) {
           syncManager.queueOperation({
             type: 'customers',
             action: 'update',
             data: updated,
           });
         }
+
+        return updated;
       },
 
       deleteCustomer: (id) => {
@@ -112,23 +114,23 @@ export const useCustomerStore = create<CustomerStore>()(
         get().updateCustomer(id, { balance: (get().customers.find(c => c.id === id)?.balance || 0) + amount });
       },
 
-      addPurchase: (id, amount) => {
+      addPurchase: (id, amount, options) => {
         const customer = get().customers.find(c => c.id === id);
         if (!customer) return;
 
-        get().updateCustomer(id, {
+        return get().updateCustomer(id, {
           balance: customer.balance + amount,
           totalPurchases: customer.totalPurchases + amount,
-        });
+        }, options);
       },
 
-      receivePayment: (id, amount) => {
+      receivePayment: (id, amount, options) => {
         const customer = get().customers.find(c => c.id === id);
         if (!customer) return;
 
-        get().updateCustomer(id, {
+        return get().updateCustomer(id, {
           balance: Math.max(0, customer.balance - amount),
-        });
+        }, options);
       },
 
       setSearchQuery: (query) => {

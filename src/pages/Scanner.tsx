@@ -84,7 +84,7 @@ export function Scanner() {
 
   const { products, getProductByBarcode, updateProductFromSale, addProduct } =
     useProductStore();
-  const { addTransaction } = useTransactionStore();
+  const { addTransaction, queueSaleSync } = useTransactionStore();
   const { customers, addPurchase } = useCustomerStore();
 
   // --- Sell mode: cart state ---
@@ -447,23 +447,44 @@ export function Scanner() {
         },
       );
 
-      addTransaction(transaction);
+      const soldAt = new Date().toISOString();
+      const savedTransaction = addTransaction(transaction, { skipSync: true });
 
-      // Update product quantities (atomic RPC — race-condition-safe for multi-device sales)
-      cart.forEach((item) => {
+      const productUpdates = cart.flatMap((item) => {
         const product = products.find((p) => p.id === item.productId);
         if (product) {
-          updateProductFromSale(product.id, item.quantity, {
-            soldTo: selectedCustomerId || undefined,
-            soldAt: new Date().toISOString(),
-          });
+          const snapshot = updateProductFromSale(
+            product.id,
+            item.quantity,
+            {
+              soldTo: selectedCustomerId || undefined,
+              soldAt,
+            },
+            { skipSync: true },
+          );
+          if (snapshot) {
+            return [{ id: product.id, qty: item.quantity, snapshot }];
+          }
         }
+        return [];
       });
 
-      // Credit balance
-      if (pendingBalance > 0 && selectedCustomerId) {
-        addPurchase(selectedCustomerId, pendingBalance);
-      }
+      const customerSnapshot =
+        pendingBalance > 0 && selectedCustomerId
+          ? addPurchase(selectedCustomerId, pendingBalance, { skipSync: true })
+          : undefined;
+
+      queueSaleSync({
+        transaction: savedTransaction,
+        products: productUpdates,
+        customer: customerSnapshot
+          ? {
+              snapshot: customerSnapshot,
+              balanceDelta: pendingBalance,
+              purchaseDelta: pendingBalance,
+            }
+          : undefined,
+      });
 
       const toastTitle =
         pendingBalance > 0

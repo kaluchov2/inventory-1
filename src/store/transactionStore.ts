@@ -6,6 +6,7 @@ import { syncManager } from '../lib/syncManager';
 import { transactionService } from '../services/transactionService';
 import { supabase } from '../lib/supabase';
 import { syncQueue } from '../lib/syncQueue';
+import { SaleSyncPayload, syncRecordedSale } from '../lib/saleSync';
 
 interface TransactionFilters {
   dateFrom: string;
@@ -22,7 +23,11 @@ interface TransactionStore {
   lastSync: Date | null;
 
   // Actions
-  addTransaction: (transaction: Omit<Transaction, 'id' | 'createdAt'>) => Transaction;
+  addTransaction: (
+    transaction: Omit<Transaction, 'id' | 'createdAt'>,
+    options?: { skipSync?: boolean; presetId?: string; presetCreatedAt?: string },
+  ) => Transaction;
+  queueSaleSync: (payload: SaleSyncPayload) => void;
   updateTransaction: (id: string, updates: Partial<Transaction>) => void;
   deleteTransaction: (id: string) => void;
   setFilters: (filters: Partial<TransactionFilters>) => void;
@@ -61,11 +66,11 @@ export const useTransactionStore = create<TransactionStore>()(
       isLoading: false,
       lastSync: null,
 
-      addTransaction: (transactionData) => {
-        const now = getCurrentISODate();
+      addTransaction: (transactionData, options) => {
+        const now = options?.presetCreatedAt || getCurrentISODate();
         const newTransaction: Transaction = {
           ...transactionData,
-          id: generateId(),
+          id: options?.presetId || generateId(),
           createdAt: now,
         };
 
@@ -73,7 +78,7 @@ export const useTransactionStore = create<TransactionStore>()(
           transactions: [...state.transactions, newTransaction],
         }));
 
-        if (supabase) {
+        if (supabase && !options?.skipSync) {
           try {
             syncManager.queueOperation({
               type: 'transactions',
@@ -143,6 +148,32 @@ export const useTransactionStore = create<TransactionStore>()(
         }
 
         return newTransaction;
+      },
+
+      queueSaleSync: (payload) => {
+        if (!supabase) return;
+
+        try {
+          syncManager.queueOperation({
+            type: 'transactions',
+            action: 'record_sale',
+            data: payload,
+          });
+        } catch (queueError) {
+          console.warn('[Store] Sale queue failed (localStorage quota?), attempting direct sale sync:', queueError);
+          (async () => {
+            try {
+              await syncRecordedSale(payload);
+            } catch (error) {
+              console.error('[Store] Direct sale sync failed — recording in dead-letter:', error);
+              syncManager.addToDeadLetter({
+                type: 'transactions',
+                action: 'record_sale',
+                data: payload,
+              });
+            }
+          })();
+        }
       },
 
       updateTransaction: (id, updates) => {
@@ -431,8 +462,8 @@ function mergeTransactions(local: Transaction[], remote: Transaction[]): Transac
   // These are ghost records from localStorage that were deleted on the server
   const pendingIds = new Set(
     syncQueue.getAll()
-      .filter((op: any) => op.type === 'transactions' && (op.action === 'create' || op.action === 'update'))
-      .map((op: any) => op.data?.id)
+      .filter((op: any) => op.type === 'transactions' && (op.action === 'create' || op.action === 'update' || op.action === 'record_sale'))
+      .map((op: any) => op.action === 'record_sale' ? op.data?.transaction?.id : op.data?.id)
       .filter(Boolean)
   );
 

@@ -6,7 +6,7 @@
 export type SyncAction =
   | 'create' | 'update' | 'delete'
   | 'batch_create' | 'batch_update' | 'batch_delete'
-  | 'sale_update';
+  | 'sale_update' | 'record_sale';
 
 export type SyncOperation = {
   id: string;

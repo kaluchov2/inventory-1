@@ -14,6 +14,7 @@ import { generateBarcode, generateLegacyBarcode, parseBarcode } from "../utils/b
 import { getProductMatchKey } from "../utils/excelImport";
 import { deriveStatus } from "../utils/productHelpers";
 import { syncQueue } from "../lib/syncQueue";
+import { isMissingDatabaseFunction } from "../lib/saleSync";
 
 /**
  * Normalize a string value for comparison during sync.
@@ -81,7 +82,12 @@ interface ProductStore {
   ) => Product;
   updateProduct: (id: string, updates: Partial<Product>) => void;
   /** Atomically decrement stock for a completed sale. Uses RPC on Supabase to avoid race conditions. */
-  updateProductFromSale: (id: string, qtySold: number, otherUpdates: Partial<Product>) => void;
+  updateProductFromSale: (
+    id: string,
+    qtySold: number,
+    otherUpdates: Partial<Product>,
+    options?: { skipSync?: boolean },
+  ) => Product | undefined;
   deleteProduct: (id: string) => void;
   markAsSold: (id: string, soldBy?: string, soldTo?: string) => void;
   setFilters: (filters: Partial<ProductFilters>) => void;
@@ -316,7 +322,7 @@ export const useProductStore = create<ProductStore>()(
         }
       },
 
-      updateProductFromSale: (id, qtySold, otherUpdates) => {
+      updateProductFromSale: (id, qtySold, otherUpdates, options) => {
         // Optimistically update local state
         const product = get().products.find((p) => p.id === id);
         if (!product) return;
@@ -339,13 +345,13 @@ export const useProductStore = create<ProductStore>()(
           ),
         }));
 
-        // Queue atomic RPC decrement — race-condition-safe for multi-device sales
-        if (supabase) {
+        // Queue atomic RPC decrement - race-condition-safe for multi-device sales
+        if (supabase && !options?.skipSync) {
           try {
             syncManager.queueOperation({
               type: "products",
               action: "sale_update",
-              data: { id, qty: qtySold },
+              data: { id, qty: qtySold, snapshot: updatedProduct },
             });
           } catch (queueError) {
             console.warn('[Store] Sale queue failed (localStorage quota?), attempting direct RPC:', queueError);
@@ -356,14 +362,61 @@ export const useProductStore = create<ProductStore>()(
                 qty: qtySold,
               });
               if (error) {
-                console.error('[Store] Direct RPC decrement_stock failed — recording in dead-letter:', error);
-                syncManager.addToDeadLetter({ type: 'products', action: 'sale_update', data: { id, qty: qtySold } });
+                if (isMissingDatabaseFunction(error, 'decrement_stock')) {
+                  const { error: fallbackError } = await getSupabaseClient()
+                    .from('products')
+                    .upsert({
+                      id: updatedProduct.id,
+                      name: updatedProduct.name,
+                      sku: updatedProduct.sku,
+                      ups_raw: updatedProduct.upsRaw || null,
+                      identifier_type: updatedProduct.identifierType || null,
+                      drop_number: updatedProduct.dropNumber || null,
+                      product_number: updatedProduct.productNumber || null,
+                      drop_sequence: updatedProduct.dropSequence || null,
+                      ups_batch: updatedProduct.upsBatch,
+                      quantity: updatedProduct.quantity,
+                      unit_price: updatedProduct.unitPrice,
+                      original_price: updatedProduct.originalPrice || null,
+                      category: updatedProduct.category,
+                      brand: updatedProduct.brand || null,
+                      color: updatedProduct.color || null,
+                      size: updatedProduct.size || null,
+                      description: updatedProduct.description || null,
+                      notes: updatedProduct.notes || null,
+                      available_qty: updatedProduct.availableQty || 0,
+                      sold_qty: updatedProduct.soldQty || 0,
+                      donated_qty: updatedProduct.donatedQty || 0,
+                      lost_qty: updatedProduct.lostQty || 0,
+                      expired_qty: updatedProduct.expiredQty || 0,
+                      status: updatedProduct.status,
+                      sold_by: updatedProduct.soldBy || null,
+                      sold_to: updatedProduct.soldTo || null,
+                      sold_at: updatedProduct.soldAt || null,
+                      barcode: updatedProduct.barcode || null,
+                      created_at: updatedProduct.createdAt,
+                      updated_at: updatedProduct.updatedAt,
+                      is_deleted: false,
+                    }, { onConflict: 'id' });
+                  if (!fallbackError) {
+                    return;
+                  }
+                  console.error('[Store] Direct sale fallback upsert failed - recording in dead-letter:', fallbackError);
+                } else {
+                  console.error('[Store] Direct RPC decrement_stock failed - recording in dead-letter:', error);
+                }
+                syncManager.addToDeadLetter({
+                  type: 'products',
+                  action: 'sale_update',
+                  data: { id, qty: qtySold, snapshot: updatedProduct },
+                });
               }
             })();
           }
         }
-      },
 
+        return updatedProduct;
+      },
       deleteProduct: (id) => {
         const product = get().products.find((p) => p.id === id);
         if (!product) return;

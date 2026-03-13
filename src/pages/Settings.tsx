@@ -77,6 +77,7 @@ export function Settings() {
     count: number;
     sizeKB: string;
     oldestOperation?: string;
+    deadLetterCount: number;
   } | null>(null);
   const [exportUps, setExportUps] = useState<number | null>(null);
   const [exportCustomerId, setExportCustomerId] = useState<string | null>(null);
@@ -127,7 +128,10 @@ export function Settings() {
       const remoteTransactions = await Promise.race([
         transactionService.getSalesForCustomer(exportCustomerId, customer.name),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("transaction_fetch_timeout")), 15000),
+          setTimeout(
+            () => reject(new Error("transaction_fetch_timeout")),
+            15000,
+          ),
         ),
       ]);
       if (remoteTransactions.length > 0) {
@@ -195,7 +199,10 @@ export function Settings() {
     const updateQueueInfo = () => {
       try {
         const info = syncQueue.getQueueInfo();
-        setQueueInfo(info);
+        setQueueInfo({
+          ...info,
+          deadLetterCount: syncQueue.getDeadLetterCount(),
+        });
       } catch (error) {
         console.error("Failed to get queue info:", error);
       }
@@ -356,7 +363,10 @@ export function Settings() {
     ) {
       try {
         syncQueue.clearQueue();
-        setQueueInfo(syncQueue.getQueueInfo());
+        setQueueInfo({
+          ...syncQueue.getQueueInfo(),
+          deadLetterCount: syncQueue.getDeadLetterCount(),
+        });
         toast({
           title: "Cola de sincronización limpiada",
           description:
@@ -367,6 +377,58 @@ export function Settings() {
       } catch (error) {
         toast({
           title: "Error al limpiar la cola",
+          description: String(error),
+          status: "error",
+          duration: 5000,
+        });
+      }
+    }
+  };
+
+  const handleRetryDeadLetter = () => {
+    try {
+      syncManager.retryDeadLetter();
+      setQueueInfo({
+        ...syncQueue.getQueueInfo(),
+        deadLetterCount: syncQueue.getDeadLetterCount(),
+      });
+      toast({
+        title: "Reintento iniciado",
+        description:
+          "Las operaciones fallidas volvieron a la cola para sincronizarse.",
+        status: "success",
+        duration: 4000,
+      });
+    } catch (error) {
+      toast({
+        title: "Error al reintentar operaciones fallidas",
+        description: String(error),
+        status: "error",
+        duration: 5000,
+      });
+    }
+  };
+
+  const handleClearDeadLetter = () => {
+    if (
+      window.confirm(
+        "Â¿Eliminar operaciones fallidas? Esta acciÃ³n no se puede deshacer.",
+      )
+    ) {
+      try {
+        syncQueue.clearDeadLetter();
+        setQueueInfo({
+          ...syncQueue.getQueueInfo(),
+          deadLetterCount: syncQueue.getDeadLetterCount(),
+        });
+        toast({
+          title: "Operaciones fallidas eliminadas",
+          status: "success",
+          duration: 4000,
+        });
+      } catch (error) {
+        toast({
+          title: "Error al limpiar operaciones fallidas",
           description: String(error),
           status: "error",
           duration: 5000,
@@ -843,7 +905,7 @@ export function Settings() {
         </Text>
 
         {queueInfo && (
-          <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={4}>
+          <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4} mb={4}>
             <Stat size="sm" p={4} bg="gray.50" borderRadius="lg">
               <StatLabel>Operaciones Pendientes</StatLabel>
               <StatNumber
@@ -878,6 +940,16 @@ export function Settings() {
                       },
                     )
                   : "N/A"}
+              </StatNumber>
+            </Stat>
+            <Stat size="sm" p={4} bg="gray.50" borderRadius="lg">
+              <StatLabel>Operaciones Fallidas</StatLabel>
+              <StatNumber
+                color={
+                  queueInfo.deadLetterCount > 0 ? "orange.600" : "green.600"
+                }
+              >
+                {queueInfo.deadLetterCount}
               </StatNumber>
             </Stat>
           </SimpleGrid>
@@ -928,19 +1000,54 @@ export function Settings() {
           </>
         )}
 
-        {queueInfo && queueInfo.count === 0 && (
-          <Alert status="success" borderRadius="lg">
+        {queueInfo && queueInfo.deadLetterCount > 0 && (
+          <Alert status="warning" mt={4} borderRadius="lg">
             <AlertIcon />
-            <Box>
+            <Box w="full">
               <AlertTitle fontSize={{ base: "sm", md: "md" }}>
-                Cola Vacía
+                Hay operaciones fallidas
               </AlertTitle>
-              <AlertDescription fontSize={{ base: "sm", md: "md" }}>
-                No hay operaciones de sincronización pendientes.
+              <AlertDescription fontSize={{ base: "sm", md: "md" }} mb={3}>
+                {queueInfo.deadLetterCount} operaciÃ³n(es) llegaron al lÃ­mite
+                de reintentos.
               </AlertDescription>
+              <HStack spacing={2} flexWrap="wrap">
+                <Button
+                  size="sm"
+                  colorScheme="orange"
+                  variant="outline"
+                  onClick={handleRetryDeadLetter}
+                >
+                  Reintentar Fallidas
+                </Button>
+                <Button
+                  size="sm"
+                  colorScheme="red"
+                  variant="outline"
+                  onClick={handleClearDeadLetter}
+                >
+                  Limpiar Fallidas
+                </Button>
+              </HStack>
             </Box>
           </Alert>
         )}
+
+        {queueInfo &&
+          queueInfo.count === 0 &&
+          queueInfo.deadLetterCount === 0 && (
+            <Alert status="success" borderRadius="lg">
+              <AlertIcon />
+              <Box>
+                <AlertTitle fontSize={{ base: "sm", md: "md" }}>
+                  Cola Vacía
+                </AlertTitle>
+                <AlertDescription fontSize={{ base: "sm", md: "md" }}>
+                  No hay operaciones de sincronización pendientes.
+                </AlertDescription>
+              </Box>
+            </Alert>
+          )}
       </Box>
 
       {/* Backup & Restore */}

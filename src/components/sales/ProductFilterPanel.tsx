@@ -23,7 +23,7 @@ interface ProductFilterPanelProps {
   onAddMultiple?: (product: Product) => void;
 }
 
-const PRODUCTS_PER_PAGE = 24;
+const PRODUCTS_PER_PAGE = 8;
 
 export function ProductFilterPanel({
   onSelectProduct,
@@ -56,7 +56,7 @@ export function ProductFilterPanel({
     let productsToCheck = availableProducts;
 
     // Filter by UPS if selected
-    if (selectedUps) {
+    if (selectedUps !== '') {
       productsToCheck = productsToCheck.filter((p) => Number(p.upsBatch) === Number(selectedUps));
     }
 
@@ -69,10 +69,8 @@ export function ProductFilterPanel({
     let filtered = availableProducts;
 
     // Filter by UPS (required first for cascading)
-    if (selectedUps) {
-      const sample = availableProducts.slice(0, 3);
+    if (selectedUps !== '') {
       const filterUps = Number(selectedUps);
-      console.log(`[ProductFilterPanel] selectedUps=${selectedUps} (type: ${typeof selectedUps}), sample upsBatch types: [${sample.map(p => typeof p.upsBatch).join(', ')}], sample values: [${sample.map(p => p.upsBatch).join(', ')}], total=${availableProducts.length}, matched=${filtered.filter((p) => Number(p.upsBatch) === filterUps).length}`);
       filtered = filtered.filter((p) => Number(p.upsBatch) === filterUps);
     }
 
@@ -107,7 +105,7 @@ export function ProductFilterPanel({
 
   // Reset page when filters change
   const handleUpsChange = (value: string | number | '') => {
-    setSelectedUps(value ? Number(value) : '');
+    setSelectedUps(value === '' ? '' : Number(value));
     setSelectedCategory(''); // Reset category when UPS changes
     setCurrentPage(1);
   };
@@ -129,7 +127,9 @@ export function ProductFilterPanel({
     setCurrentPage(1);
   };
 
-  const hasFilters = selectedUps || selectedCategory || searchQuery;
+  const hasFilters =
+    selectedUps !== '' || selectedCategory !== '' || searchQuery.trim().length > 0;
+  const shouldShowResults = hasFilters;
 
   return (
     <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
@@ -164,14 +164,17 @@ export function ProductFilterPanel({
             value={searchQuery}
             onChange={handleSearchChange}
             placeholder="Buscar producto..."
+            size="md"
           />
         </SimpleGrid>
 
         {/* Filter Summary and Clear */}
         <HStack justify="space-between" flexWrap="wrap">
           <Text fontSize="sm" color="gray.500">
-            {filteredProducts.length} productos encontrados
-            {selectedUps && ` en UPS ${selectedUps}`}
+            {shouldShowResults
+              ? `${filteredProducts.length} productos encontrados`
+              : 'Aplica filtros para ver productos'}
+            {selectedUps !== '' && ` en UPS ${selectedUps}`}
             {selectedCategory && ` - ${getCategoryLabel(selectedCategory)}`}
           </Text>
 
@@ -188,7 +191,13 @@ export function ProductFilterPanel({
         </HStack>
 
         {/* Product Grid */}
-        {filteredProducts.length === 0 ? (
+        {!shouldShowResults ? (
+          <Box py={6} textAlign="center" bg="gray.50" borderRadius="lg">
+            <Text color="gray.500">
+              Selecciona un UPS o usa la busqueda para mostrar productos
+            </Text>
+          </Box>
+        ) : filteredProducts.length === 0 ? (
           <Box py={8} textAlign="center">
             <Text color="gray.500">
               {hasFilters
@@ -200,16 +209,18 @@ export function ProductFilterPanel({
           </Box>
         ) : (
           <>
-            <SimpleGrid columns={{ base: 2, md: 3, lg: 4 }} spacing={3}>
-              {paginatedProducts.map((product) => (
-                <SelectableProductCard
-                  key={product.id}
-                  product={product}
-                  onSelect={onSelectProduct}
-                  onAddMultiple={onAddMultiple}
-                />
-              ))}
-            </SimpleGrid>
+            <Box maxH={{ base: '380px', md: '430px' }} overflowY="auto" pr={1}>
+              <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={2}>
+                {paginatedProducts.map((product) => (
+                  <SelectableProductCard
+                    key={product.id}
+                    product={product}
+                    onSelect={onSelectProduct}
+                    onAddMultiple={onAddMultiple}
+                  />
+                ))}
+              </SimpleGrid>
+            </Box>
 
             {/* Pagination */}
             {totalPages > 1 && (

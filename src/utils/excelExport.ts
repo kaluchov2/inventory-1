@@ -258,8 +258,32 @@ export function exportTransactionsByCustomer(
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   const data: any[] = [];
+  const salesWithoutItems = filteredSales.filter((t) => !t.items || t.items.length === 0).length;
+
+  const getPaymentMethodLabel = (paymentMethod: Transaction['paymentMethod']) =>
+    paymentMethod === 'cash' ? 'Efectivo' :
+    paymentMethod === 'transfer' ? 'Transferencia' :
+    paymentMethod === 'card' ? 'Tarjeta' :
+    paymentMethod === 'mixed' ? 'Mixto' : 'Credito';
 
   filteredSales.forEach((t) => {
+    if (!t.items || t.items.length === 0) {
+      data.push({
+        'Fecha Transaccion': formatDate(t.date),
+        'Articulo Vendido': 'Venta sin detalle de articulos',
+        'Cliente': t.customerName || customerName,
+        'UPS': t.upsBatch ?? '',
+        'Articulo Registrado': 'No',
+        'Cantidad': '',
+        'Precio Unitario': '',
+        'Total Linea': t.total,
+        'Total Transaccion': t.total,
+        'Metodo de Pago': getPaymentMethodLabel(t.paymentMethod),
+        'Notas': t.notes || 'No se encontraron renglones en transaction_items',
+      });
+      return;
+    }
+
     t.items.forEach((item) => {
       const isRegisteredItem = !!(item.productId && item.productId.trim() !== '');
       data.push({
@@ -272,10 +296,7 @@ export function exportTransactionsByCustomer(
         'Precio Unitario': item.unitPrice,
         'Total Linea': item.totalPrice,
         'Total Transaccion': t.total,
-        'Metodo de Pago': t.paymentMethod === 'cash' ? 'Efectivo' :
-                         t.paymentMethod === 'transfer' ? 'Transferencia' :
-                         t.paymentMethod === 'card' ? 'Tarjeta' :
-                         t.paymentMethod === 'mixed' ? 'Mixto' : 'Credito',
+        'Metodo de Pago': getPaymentMethodLabel(t.paymentMethod),
         'Notas': t.notes || '',
       });
     });
@@ -295,7 +316,7 @@ export function exportTransactionsByCustomer(
     'Total Linea': '',
     'Total Transaccion': totalSales,
     'Metodo de Pago': '',
-    'Notas': '',
+    'Notas': salesWithoutItems > 0 ? `Ventas sin detalle: ${salesWithoutItems}` : '',
   });
 
   const worksheet = XLSX.utils.json_to_sheet(data);

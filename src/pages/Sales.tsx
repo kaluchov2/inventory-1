@@ -39,7 +39,7 @@ import {
   AlertIcon,
 } from "@chakra-ui/react";
 import { FiPlus, FiTrash2, FiShoppingCart, FiDollarSign } from "react-icons/fi";
-import { CurrencyInput } from "../components/common";
+import { AutocompleteSelect, CurrencyInput } from "../components/common";
 import { ProductFilterPanel } from "../components/sales";
 import { useProductStore } from "../store/productStore";
 import { useCustomerStore } from "../store/customerStore";
@@ -131,6 +131,17 @@ export function Sales() {
     () => customers.find((c) => c.id === selectedCustomerId),
     [customers, selectedCustomerId],
   );
+  const customerOptions = useMemo(
+    () =>
+      customers.map((c) => ({
+        value: c.id,
+        label:
+          c.balance > 0
+            ? `${c.name} (Saldo: ${formatCurrency(c.balance)})`
+            : c.name,
+      })),
+    [customers],
+  );
 
   // Cart totals
   const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -151,6 +162,18 @@ export function Sales() {
 
   // Calculate pending balance
   const pendingBalance = Math.max(0, total - paidAmount);
+  const sharedSelectProps = {
+    size: "md" as const,
+    bg: "white",
+    color: "gray.800",
+    sx: {
+      option: {
+        color: "gray.800",
+        fontSize: "16px",
+        background: "white",
+      },
+    },
+  };
 
   // Determine effective payment method
   const effectivePaymentMethod: PaymentMethod = useMemo(() => {
@@ -553,66 +576,101 @@ export function Sales() {
             <SimpleGrid
               columns={{ base: 1, lg: 2 }}
               spacing={{ base: 4, md: 6 }}
+              alignItems="start"
             >
-              {/* Left Column - Product Selection */}
+              {/* Left Column - Setup and Product Selection */}
               <VStack spacing={{ base: 4, md: 6 }} align="stretch">
-                {/* Customer Selection */}
                 <Box
                   bg="white"
                   p={{ base: 4, md: 6 }}
                   borderRadius="xl"
                   boxShadow="sm"
                 >
-                  <FormControl>
-                    <FormLabel>{es.sales.selectCustomer}</FormLabel>
-                    <Select
-                      value={selectedCustomerId}
-                      onChange={(e) => setSelectedCustomerId(e.target.value)}
-                      placeholder={es.customers.walkIn}
-                      height={"20"}
+                  <VStack align="stretch" spacing={4}>
+                    <Box>
+                      <Text
+                        fontSize="sm"
+                        fontWeight="bold"
+                        color="brand.600"
+                        mb={1}
+                      >
+                        Paso 1
+                      </Text>
+                      <Heading size={{ base: "sm", md: "md" }}>
+                        Cliente y venta especial
+                      </Heading>
+                      <Text fontSize="sm" color="gray.500" mt={1}>
+                        Seleccione cliente y, si aplica, agregue producto UPS 0.
+                      </Text>
+                    </Box>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      colorScheme="orange"
+                      leftIcon={<Icon as={FiPlus} />}
+                      onClick={onUnregisteredModalOpen}
+                      w="full"
                     >
-                      {customers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}{" "}
-                          {c.balance > 0
-                            ? `(Saldo: ${formatCurrency(c.balance)})`
-                            : ""}
-                        </option>
-                      ))}
-                    </Select>
-                  </FormControl>
+                      Agregar producto sin registrar (UPS 0)
+                    </Button>
+
+                    <FormControl>
+                      <FormLabel>{es.sales.selectCustomer}</FormLabel>
+                      <AutocompleteSelect
+                        options={customerOptions}
+                        value={selectedCustomerId}
+                        onChange={(value) =>
+                          setSelectedCustomerId(value === "" ? "" : String(value))
+                        }
+                        placeholder={es.customers.walkIn}
+                        size="md"
+                      />
+                    </FormControl>
+                  </VStack>
                 </Box>
 
-                {/* Product Filter Panel */}
-                <ProductFilterPanel
-                  onSelectProduct={handleSelectProduct}
-                  onAddMultiple={handleAddMultiple}
-                />
-
-                {/* Add unregistered product button */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  colorScheme="orange"
-                  leftIcon={<Icon as={FiPlus} />}
-                  onClick={onUnregisteredModalOpen}
-                  w="full"
-                >
-                  Agregar producto sin registrar (UPS 0)
-                </Button>
+                <Box>
+                  <Text
+                    fontSize="sm"
+                    fontWeight="bold"
+                    color="brand.600"
+                    mb={1}
+                    px={1}
+                  >
+                    Paso 2
+                  </Text>
+                  <Heading size={{ base: "sm", md: "md" }} px={1} mb={1}>
+                    Filtrar y agregar productos
+                  </Heading>
+                  <Text fontSize="sm" color="gray.500" px={1} mb={3}>
+                    Use filtros para mantener la lista corta y encontrar rapido.
+                  </Text>
+                  <ProductFilterPanel
+                    onSelectProduct={handleSelectProduct}
+                    onAddMultiple={handleAddMultiple}
+                  />
+                </Box>
               </VStack>
 
               {/* Right Column - Cart and Payment */}
               <VStack spacing={{ base: 4, md: 6 }} align="stretch">
-                {/* Cart */}
                 <Box
                   bg="white"
                   p={{ base: 4, md: 6 }}
                   borderRadius="xl"
                   boxShadow="sm"
                 >
+                  <Text
+                    fontSize="sm"
+                    fontWeight="bold"
+                    color="brand.600"
+                    mb={1}
+                  >
+                    Paso 3
+                  </Text>
                   <Heading size={{ base: "sm", md: "md" }} mb={4}>
-                    Carrito
+                    Revisar carrito
                     {cart.length > 0 && (
                       <Badge ml={2} colorScheme="green">
                         {cart.length} productos
@@ -622,38 +680,40 @@ export function Sales() {
 
                   {cart.length === 0 ? (
                     <Text color="gray.500" textAlign="center" py={4}>
-                      El carrito está vacío
+                      El carrito esta vacio
                     </Text>
                   ) : (
                     <VStack
                       spacing={2}
                       align="stretch"
-                      maxH="300px"
+                      maxH={{ base: "240px", md: "280px" }}
                       overflowY="auto"
                     >
                       {cart.map((item) => (
                         <Flex
                           key={item.productId}
-                          p={3}
+                          p={2}
                           bg="gray.50"
-                          borderRadius="lg"
+                          borderRadius="md"
                           justify="space-between"
                           align="center"
                           gap={2}
                         >
                           <Box flex={1} minW={0}>
-                            <Text
-                              fontWeight="medium"
-                              noOfLines={1}
-                              fontSize={{ base: "sm", md: "md" }}
-                            >
-                              {item.productName}
-                            </Text>
-                            {item.isUnregistered && (
-                              <Badge colorScheme="orange" fontSize="xs">
-                                UPS 0
-                              </Badge>
-                            )}
+                            <HStack spacing={2} align="center">
+                              <Text
+                                fontWeight="medium"
+                                noOfLines={1}
+                                fontSize={{ base: "sm", md: "md" }}
+                              >
+                                {item.productName}
+                              </Text>
+                              {item.isUnregistered && (
+                                <Badge colorScheme="orange" fontSize="xs">
+                                  UPS 0
+                                </Badge>
+                              )}
+                            </HStack>
                             <Text fontSize="sm" color="gray.500">
                               {item.quantity} x {formatCurrency(item.unitPrice)}
                             </Text>
@@ -679,15 +739,22 @@ export function Sales() {
                   )}
                 </Box>
 
-                {/* Payment */}
                 <Box
                   bg="white"
                   p={{ base: 4, md: 6 }}
                   borderRadius="xl"
                   boxShadow="sm"
                 >
+                  <Text
+                    fontSize="sm"
+                    fontWeight="bold"
+                    color="brand.600"
+                    mb={1}
+                  >
+                    Paso 4
+                  </Text>
                   <Heading size={{ base: "sm", md: "md" }} mb={4}>
-                    Pago
+                    Cobro y confirmacion
                   </Heading>
 
                   {/* Totals */}
@@ -763,7 +830,7 @@ export function Sales() {
                         </Text>
                         {pendingBalance > 0 && (
                           <Text fontSize="xs" color="orange.700" mt={1}>
-                            Deuda total si continúa:{" "}
+                            Deuda total si continua:{" "}
                             {formatCurrency(
                               selectedCustomer.balance + pendingBalance,
                             )}
@@ -776,7 +843,7 @@ export function Sales() {
                   {/* Payment Method */}
                   <FormControl mb={4}>
                     <FormLabel>{es.sales.paymentMethod}</FormLabel>
-                    <SimpleGrid columns={3} spacing={2}>
+                    <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={2}>
                       <Button
                         variant={
                           !useMixedPayment && paymentMethod === "cash"
@@ -828,7 +895,7 @@ export function Sales() {
                       onClick={() => setUseMixedPayment(!useMixedPayment)}
                       w="full"
                     >
-                      Pago Mixto (múltiples métodos)
+                      Pago mixto (multiples metodos)
                     </Button>
                   </FormControl>
 
@@ -946,7 +1013,6 @@ export function Sales() {
               </VStack>
             </SimpleGrid>
           </TabPanel>
-
           {/* Receive Installment Tab */}
           <TabPanel px={0}>
             <Box
@@ -970,11 +1036,11 @@ export function Sales() {
                   <FormControl isRequired>
                     <FormLabel>{es.sales.selectCustomer}</FormLabel>
                     <Select
+                      {...sharedSelectProps}
                       value={installmentCustomerId}
                       onChange={(e) => setInstallmentCustomerId(e.target.value)}
                       placeholder="Seleccionar cliente..."
-                      size="lg"
-                      fontSize="small"
+                      height={"80px"}
                     >
                       {customersWithBalance.map((c) => (
                         <option key={c.id} value={c.id}>
@@ -1197,12 +1263,12 @@ export function Sales() {
               <FormControl>
                 <FormLabel>Categoría (opcional)</FormLabel>
                 <Select
+                  {...sharedSelectProps}
                   value={unregCategory}
                   onChange={(e) =>
                     setUnregCategory(e.target.value as CategoryCode | "")
                   }
                   placeholder="Sin categoría"
-                  height={"90px"}
                 >
                   {CATEGORY_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>

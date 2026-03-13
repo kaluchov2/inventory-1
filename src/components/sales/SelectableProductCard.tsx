@@ -26,68 +26,58 @@ export function SelectableProductCard({
   return (
     <Box
       bg="white"
-      p={3}
+      p={2}
       borderRadius="lg"
-      boxShadow="sm"
       border="1px"
       borderColor="gray.100"
       cursor="pointer"
       transition="all 0.2s"
       _hover={{
         borderColor: 'brand.300',
-        boxShadow: 'md',
-        transform: 'translateY(-2px)',
+        boxShadow: 'sm',
       }}
       onClick={() => onSelect(product)}
     >
-      <VStack align="stretch" spacing={2}>
-        {/* Product Name */}
-        <Text fontWeight="medium" fontSize="sm" noOfLines={2} minH="40px">
-          {product.name}
-        </Text>
-
-        {/* Badges */}
-        <HStack spacing={1} flexWrap="wrap">
-          <Badge colorScheme="blue" fontSize="xs">
-            UPS {product.upsBatch}
-          </Badge>
-          <Badge colorScheme="purple" fontSize="xs">
-            {getCategoryLabel(product.category)}
-          </Badge>
-        </HStack>
-
-        {/* Brand/Color/Size */}
-        {(product.brand || product.color || product.size) && (
-          <Text fontSize="xs" color="gray.500" noOfLines={1}>
-            {[product.brand, product.color, product.size].filter(Boolean).join(' / ')}
+      <VStack align="stretch" spacing={1}>
+        <HStack justify="space-between" align="start" spacing={2}>
+          <Text fontWeight="semibold" fontSize="sm" noOfLines={1}>
+            {product.name}
           </Text>
-        )}
-
-        {/* Price and Quantity */}
-        <HStack justify="space-between" align="center">
-          <VStack align="start" spacing={0}>
-            <Text fontWeight="bold" color="green.600" fontSize="md">
-              {formatCurrency(product.unitPrice)}
-            </Text>
-            <Text fontSize="xs" color="gray.500">
-              {product.availableQty} disponibles
-            </Text>
-          </VStack>
-
-          {/* Add Multiple Button */}
           {onAddMultiple && (
             <IconButton
               icon={<Icon as={FiPlus} />}
-              aria-label="Agregar múltiples"
-              size="sm"
+              aria-label="Agregar multiples"
+              size="xs"
               colorScheme="brand"
-              variant="outline"
+              variant="ghost"
+              h="28px"
+              minH="28px"
+              w="28px"
+              minW="28px"
               onClick={(e) => {
                 e.stopPropagation();
                 onAddMultiple(product);
               }}
             />
           )}
+        </HStack>
+
+        <HStack spacing={1}>
+          <Badge colorScheme="blue" fontSize="xs">
+            UPS {product.upsBatch}
+          </Badge>
+          <Badge colorScheme="gray" fontSize="xs" noOfLines={1}>
+            {getCategoryLabel(product.category)}
+          </Badge>
+        </HStack>
+
+        <HStack justify="space-between">
+          <Text fontWeight="bold" color="green.600" fontSize="sm">
+            {formatCurrency(product.unitPrice)}
+          </Text>
+          <Text fontSize="xs" color="gray.500">
+            {product.availableQty} disp.
+          </Text>
         </HStack>
       </VStack>
     </Box>

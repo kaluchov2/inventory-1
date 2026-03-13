@@ -131,7 +131,10 @@ class SyncManager {
         console.log(`[SyncManager] Processing operation ${processed + 1}/${syncQueue.size()}:`, operation.type, operation.action);
 
         try {
-          await this.withTimeout(this.executeOperation(operation), 30_000);
+          await this.withTimeout(
+            this.executeOperation(operation),
+            this.getOperationTimeoutMs(operation),
+          );
 
           try {
             syncQueue.remove(operation.id);
@@ -148,6 +151,26 @@ class SyncManager {
           this.updateStatus({ pendingCount: syncQueue.size() });
         } catch (error) {
           console.error('[SyncManager] Sync operation failed:', error);
+
+          // On flaky mobile networks, a request can time out locally even if it committed remotely.
+          // Before retrying, verify whether the row now exists and dequeue if already applied.
+          if (this.isTimeoutError(error)) {
+            const alreadyApplied = await this.verifyOperationApplied(operation);
+            if (alreadyApplied) {
+              console.warn('[SyncManager] Timed out locally but operation is already persisted. Removing from queue:', operation.id);
+              try {
+                syncQueue.remove(operation.id);
+              } catch (queueError) {
+                console.error('[SyncManager] Failed to remove already-applied operation from queue:', queueError);
+                throw new Error('LocalStorage quota exceeded - cannot update sync queue');
+              }
+              processed++;
+              consecutiveErrors = 0;
+              this.updateStatus({ pendingCount: syncQueue.size() });
+              continue;
+            }
+          }
+
           consecutiveErrors++;
 
           try {
@@ -221,6 +244,51 @@ class SyncManager {
       setTimeout(() => reject(new Error(`Sync operation timed out after ${ms}ms`)), ms)
     );
     return Promise.race([promise, timeout]);
+  }
+
+  private getOperationTimeoutMs(operation: SyncOperation): number {
+    if (operation.type === 'products') {
+      if (operation.action === 'batch_create' || operation.action === 'batch_update') return 90_000;
+      if (operation.action === 'create' || operation.action === 'update') return 45_000;
+    }
+    return 30_000;
+  }
+
+  private isTimeoutError(error: unknown): boolean {
+    return error instanceof Error && error.message.includes('timed out');
+  }
+
+  private async verifyOperationApplied(operation: SyncOperation): Promise<boolean> {
+    const { type, action, data } = operation;
+    if (action !== 'create' && action !== 'update') return false;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+
+    const client = getSupabaseClient();
+    const row = data as Record<string, any>;
+    const tableMap: Record<string, string> = {
+      products: 'products',
+      customers: 'customers',
+      transactions: 'transactions',
+      drops: 'drops',
+      staff: 'staff',
+    };
+
+    const table = tableMap[type];
+    if (!table) return false;
+
+    const lookupColumn = type === 'drops' ? 'drop_number' : 'id';
+    const lookupValue = type === 'drops' ? row.dropNumber : row.id;
+    if (!lookupValue) return false;
+
+    const { data: existing, error } = await client
+      .from(table as any)
+      .select(lookupColumn)
+      .eq(lookupColumn, lookupValue)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) return false;
+    return !!existing;
   }
 
   private async executeOperation(operation: SyncOperation) {

@@ -491,7 +491,15 @@ export function Products() {
     setIsLoading(true);
     try {
       if (selectedProduct) {
-        updateProduct(selectedProduct.id, data);
+        // Preserve status and keep qty accounting consistent so the product
+        // never accidentally lands in "review" state after a simple price/name edit.
+        const quantityDelta = (data.quantity ?? selectedProduct.quantity) - selectedProduct.quantity;
+        const newAvailableQty = Math.max(0, (selectedProduct.availableQty ?? 0) + quantityDelta);
+        updateProduct(selectedProduct.id, {
+          ...data,
+          status: selectedProduct.status,
+          availableQty: newAvailableQty,
+        });
         toast({
           title: es.success.productUpdated,
           status: "success",

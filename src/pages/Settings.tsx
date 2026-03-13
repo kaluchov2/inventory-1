@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from "react";
 import {
   Box,
   Heading,
@@ -21,7 +21,7 @@ import {
   Stat,
   StatLabel,
   StatNumber,
-} from '@chakra-ui/react';
+} from "@chakra-ui/react";
 import {
   FiUpload,
   FiDownload,
@@ -35,26 +35,28 @@ import {
   FiBox,
   FiUserCheck,
   FiTrash2,
-} from 'react-icons/fi';
-import { useProductStore, ImportSyncResult } from '../store/productStore';
-import { useCustomerStore } from '../store/customerStore';
-import { useTransactionStore } from '../store/transactionStore';
-import { useDropStore } from '../store/dropStore';
-import { useStaffStore } from '../store/staffStore';
-import { importExcelFile, ImportResult } from '../utils/excelImport';
+} from "react-icons/fi";
+import { useProductStore, ImportSyncResult } from "../store/productStore";
+import { useCustomerStore } from "../store/customerStore";
+import { useTransactionStore } from "../store/transactionStore";
+import { useDropStore } from "../store/dropStore";
+import { useStaffStore } from "../store/staffStore";
+import { transactionService } from "../services/transactionService";
+import { importExcelFile, ImportResult } from "../utils/excelImport";
 import {
   exportProductsToExcel,
   exportProductsByUps,
   exportCustomersToExcel,
   exportTransactionsToExcel,
+  exportTransactionsByCustomer,
   exportAllToExcel,
-} from '../utils/excelExport';
-import { exportBackup, importBackup, BackupData } from '../utils/storage';
-import { es } from '../i18n/es';
-import { UPS_BATCH_OPTIONS } from '../constants/colors';
-import { AutocompleteSelect } from '../components/common';
-import { syncQueue } from '../lib/syncQueue';
-import { syncManager } from '../lib/syncManager';
+} from "../utils/excelExport";
+import { exportBackup, importBackup, BackupData } from "../utils/storage";
+import { es } from "../i18n/es";
+import { UPS_BATCH_OPTIONS } from "../constants/colors";
+import { AutocompleteSelect } from "../components/common";
+import { syncQueue } from "../lib/syncQueue";
+import { syncManager } from "../lib/syncManager";
 
 export function Settings() {
   const toast = useToast();
@@ -71,26 +73,121 @@ export function Settings() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importProgress, setImportProgress] = useState(0);
   const [syncResult, setSyncResult] = useState<ImportSyncResult | null>(null);
-  const [queueInfo, setQueueInfo] = useState<{count: number; sizeKB: string; oldestOperation?: string} | null>(null);
+  const [queueInfo, setQueueInfo] = useState<{
+    count: number;
+    sizeKB: string;
+    oldestOperation?: string;
+  } | null>(null);
   const [exportUps, setExportUps] = useState<number | null>(null);
-  const [importMode, setImportMode] = useState<'full' | 'by_ups'>('full');
+  const [exportCustomerId, setExportCustomerId] = useState<string | null>(null);
+  const [isExportingCustomer, setIsExportingCustomer] = useState(false);
+  const [importMode, setImportMode] = useState<"full" | "by_ups">("full");
   const [importUpsScope, setImportUpsScope] = useState<string | null>(null);
+
+  const normalizeCustomerKey = (value: string | undefined | null) =>
+    (value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
 
   const filteredByUpsCount = useMemo(() => {
     if (!exportUps) return 0;
-    return products.filter(p => Number(p.upsBatch) === exportUps).length;
+    return products.filter((p) => Number(p.upsBatch) === exportUps).length;
   }, [products, exportUps]);
 
   const importUpsScopeCount = useMemo(() => {
     if (!importUpsScope || !importResult) return 0;
-    return importResult.products.filter(p => p.dropNumber === importUpsScope).length;
+    return importResult.products.filter((p) => p.dropNumber === importUpsScope)
+      .length;
   }, [importResult, importUpsScope]);
+
+  const customerOptions = useMemo(
+    () => customers.map((c) => ({ value: c.id, label: c.name })),
+    [customers],
+  );
 
   const handleExportByUps = () => {
     if (!exportUps) return;
-    const filtered = products.filter(p => Number(p.upsBatch) === exportUps);
-    const date = new Date().toISOString().split('T')[0];
+    const filtered = products.filter((p) => Number(p.upsBatch) === exportUps);
+    const date = new Date().toISOString().split("T")[0];
     exportProductsByUps(filtered, `inventario_UPS${exportUps}_${date}.xlsx`);
+  };
+
+  const handleExportByCustomer = async () => {
+    if (!exportCustomerId) return;
+    const customer = customers.find((c) => c.id === exportCustomerId);
+    if (!customer) return;
+
+    setIsExportingCustomer(true);
+    let sourceTransactions = transactions;
+
+    try {
+      const remoteTransactions = await Promise.race([
+        transactionService.getSalesForCustomer(exportCustomerId, customer.name),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("transaction_fetch_timeout")), 15000),
+        ),
+      ]);
+      if (remoteTransactions.length > 0) {
+        sourceTransactions = remoteTransactions;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const timedOut = message === "transaction_fetch_timeout";
+
+      console.warn(
+        "[Settings] Could not fetch customer transactions for export, using local cache:",
+        error,
+      );
+      toast({
+        title: timedOut
+          ? "Consulta lenta - usando datos locales"
+          : "Sin conexion - usando datos locales",
+        description: timedOut
+          ? "La consulta tardo demasiado. Se exportara con cache local."
+          : "No se pudo conectar a Supabase. El archivo puede no incluir ventas recientes.",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+    } finally {
+      setIsExportingCustomer(false);
+    }
+
+    const targetName = normalizeCustomerKey(customer.name);
+    const exportedCount = sourceTransactions.filter(
+      (t) =>
+        String(t.type).toLowerCase() === "sale" &&
+        (t.customerId === exportCustomerId ||
+          normalizeCustomerKey(t.customerName) === targetName),
+    ).length;
+
+    if (exportedCount === 0) {
+      toast({
+        title: "No se encontraron ventas para este cliente",
+        description:
+          "Revise si el cliente fue registrado con otro nombre o ID.",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    exportTransactionsByCustomer(
+      sourceTransactions,
+      exportCustomerId,
+      customer.name,
+    );
+
+    toast({
+      title: `Archivo descargado - ${exportedCount} venta${exportedCount !== 1 ? "s" : ""}`,
+      description: "Ventas de " + customer.name + " exportadas correctamente.",
+      status: "success",
+      duration: 3000,
+    });
   };
 
   // Update queue info on mount and when sync status changes
@@ -100,7 +197,7 @@ export function Settings() {
         const info = syncQueue.getQueueInfo();
         setQueueInfo(info);
       } catch (error) {
-        console.error('Failed to get queue info:', error);
+        console.error("Failed to get queue info:", error);
       }
     };
 
@@ -111,11 +208,15 @@ export function Settings() {
       updateQueueInfo();
     });
 
-    return () => { unsubscribe(); };
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Handle Excel file import
-  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -130,22 +231,22 @@ export function Settings() {
       setImportProgress(100);
 
       toast({
-        title: 'Archivo procesado',
+        title: "Archivo procesado",
         description: `${result.products.length} productos, ${result.customers.length} clientes, ${result.transactions.length} transacciones encontrados`,
-        status: 'success',
+        status: "success",
         duration: 5000,
       });
     } catch (error) {
       toast({
         title: es.errors.importError,
         description: String(error),
-        status: 'error',
+        status: "error",
         duration: 5000,
       });
     } finally {
       setIsImporting(false);
       if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+        fileInputRef.current.value = "";
       }
     }
   };
@@ -158,7 +259,7 @@ export function Settings() {
 
     // V2: Import drops first (they're referenced by products)
     if (importResult.drops && importResult.drops.length > 0) {
-      const existingDropNumbers = new Set(drops.map(d => d.dropNumber));
+      const existingDropNumbers = new Set(drops.map((d) => d.dropNumber));
       for (const drop of importResult.drops) {
         if (!existingDropNumbers.has(drop.dropNumber)) {
           addDrop({
@@ -173,7 +274,9 @@ export function Settings() {
 
     // V2: Import staff (they're referenced by products)
     if (importResult.staff && importResult.staff.length > 0) {
-      const existingStaffNames = new Set(staff.map(s => s.name.toLowerCase()));
+      const existingStaffNames = new Set(
+        staff.map((s) => s.name.toLowerCase()),
+      );
       for (const staffMember of importResult.staff) {
         if (!existingStaffNames.has(staffMember.name.toLowerCase())) {
           addStaff({
@@ -188,10 +291,14 @@ export function Settings() {
     // Import products: use 'replace' for first import (no existing products),
     // use 'sync' or 'sync_by_ups' for updates
     if (importResult.products.length > 0) {
-      if (importMode === 'by_ups' && importUpsScope) {
-        result = await importProducts(importResult.products, 'sync_by_ups', importUpsScope);
+      if (importMode === "by_ups" && importUpsScope) {
+        result = await importProducts(
+          importResult.products,
+          "sync_by_ups",
+          importUpsScope,
+        );
       } else {
-        const mode = products.length > 0 ? 'sync' : 'replace';
+        const mode = products.length > 0 ? "sync" : "replace";
         result = await importProducts(importResult.products, mode);
       }
       setSyncResult(result);
@@ -205,8 +312,8 @@ export function Settings() {
     }
 
     // Reset import mode state
-    const usedUpsScope = importMode === 'by_ups' ? importUpsScope : null;
-    setImportMode('full');
+    const usedUpsScope = importMode === "by_ups" ? importUpsScope : null;
+    setImportMode("full");
     setImportUpsScope(null);
 
     // Show detailed sync result
@@ -214,16 +321,16 @@ export function Settings() {
       toast({
         title: usedUpsScope
           ? `Sincronización UPS ${usedUpsScope} completada`
-          : 'Sincronización completada',
+          : "Sincronización completada",
         description: `Creados: ${result.created}, Actualizados: ${result.updated}, Eliminados: ${result.deleted}, Sin cambios: ${result.unchanged}`,
-        status: 'success',
+        status: "success",
         duration: 5000,
         isClosable: true,
       });
     } else {
       toast({
         title: es.settings.dataImported,
-        status: 'success',
+        status: "success",
         duration: 3000,
       });
     }
@@ -236,27 +343,32 @@ export function Settings() {
     setImportResult(null);
     setImportProgress(0);
     setSyncResult(null);
-    setImportMode('full');
+    setImportMode("full");
     setImportUpsScope(null);
   };
 
   // Clear sync queue
   const handleClearQueue = () => {
-    if (window.confirm('¿Está seguro de que desea limpiar todas las operaciones de sincronización pendientes? Esta acción no se puede deshacer.')) {
+    if (
+      window.confirm(
+        "¿Está seguro de que desea limpiar todas las operaciones de sincronización pendientes? Esta acción no se puede deshacer.",
+      )
+    ) {
       try {
         syncQueue.clearQueue();
         setQueueInfo(syncQueue.getQueueInfo());
         toast({
-          title: 'Cola de sincronización limpiada',
-          description: 'Todas las operaciones pendientes han sido eliminadas. Actualice la página si es necesario.',
-          status: 'success',
+          title: "Cola de sincronización limpiada",
+          description:
+            "Todas las operaciones pendientes han sido eliminadas. Actualice la página si es necesario.",
+          status: "success",
           duration: 5000,
         });
       } catch (error) {
         toast({
-          title: 'Error al limpiar la cola',
+          title: "Error al limpiar la cola",
           description: String(error),
-          status: 'error',
+          status: "error",
           duration: 5000,
         });
       }
@@ -264,7 +376,9 @@ export function Settings() {
   };
 
   // Handle backup file import
-  const handleBackupSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBackupSelect = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -276,8 +390,8 @@ export function Settings() {
       if (success) {
         toast({
           title: es.settings.backupRestored,
-          description: 'Por favor recargue la página para ver los datos',
-          status: 'success',
+          description: "Por favor recargue la página para ver los datos",
+          status: "success",
           duration: 5000,
         });
         // Reload after a short delay
@@ -285,21 +399,21 @@ export function Settings() {
       }
     } catch (error) {
       toast({
-        title: 'Error al restaurar respaldo',
-        description: 'El archivo no es un respaldo válido',
-        status: 'error',
+        title: "Error al restaurar respaldo",
+        description: "El archivo no es un respaldo válido",
+        status: "error",
         duration: 5000,
       });
     }
 
     if (backupInputRef.current) {
-      backupInputRef.current.value = '';
+      backupInputRef.current.value = "";
     }
   };
 
   return (
     <VStack spacing={{ base: 4, md: 6 }} align="stretch">
-      <Heading size={{ base: 'lg', md: 'xl' }}>{es.settings.title}</Heading>
+      <Heading size={{ base: "lg", md: "xl" }}>{es.settings.title}</Heading>
 
       {/* Import Preview */}
       {importResult && (
@@ -314,13 +428,15 @@ export function Settings() {
           <VStack w="full" spacing={4} mb={4} align="stretch">
             <HStack>
               <AlertIcon boxSize={6} />
-              <AlertTitle fontSize={{ base: 'lg', md: 'xl' }}>Vista Previa de Importación</AlertTitle>
+              <AlertTitle fontSize={{ base: "lg", md: "xl" }}>
+                Vista Previa de Importación
+              </AlertTitle>
             </HStack>
             <HStack spacing={2} flexWrap="wrap">
               <Button
                 colorScheme="gray"
                 variant="outline"
-                size={{ base: 'md', md: 'md' }}
+                size={{ base: "md", md: "md" }}
                 onClick={handleCancelImport}
               >
                 Cancelar
@@ -328,42 +444,57 @@ export function Settings() {
               <Button
                 colorScheme="green"
                 leftIcon={<Icon as={FiCheck} />}
-                size={{ base: 'md', md: 'md' }}
+                size={{ base: "md", md: "md" }}
                 onClick={handleConfirmImport}
-                isDisabled={importMode === 'by_ups' && !importUpsScope}
+                isDisabled={importMode === "by_ups" && !importUpsScope}
               >
-                {importMode === 'by_ups' && importUpsScope
+                {importMode === "by_ups" && importUpsScope
                   ? `Confirmar UPS ${importUpsScope}`
-                  : 'Confirmar'}
+                  : "Confirmar"}
               </Button>
             </HStack>
           </VStack>
 
-          <SimpleGrid columns={{ base: 2, sm: 3, md: 5 }} spacing={{ base: 2, md: 4 }} w="full" mb={4}>
+          <SimpleGrid
+            columns={{ base: 2, sm: 3, md: 5 }}
+            spacing={{ base: 2, md: 4 }}
+            w="full"
+            mb={4}
+          >
             <Box p={4} bg="white" borderRadius="lg" textAlign="center">
               <Icon as={FiPackage} boxSize={6} color="blue.500" mb={2} />
-              <Text fontSize="2xl" fontWeight="bold">{importResult.products.length}</Text>
+              <Text fontSize="2xl" fontWeight="bold">
+                {importResult.products.length}
+              </Text>
               <Text color="gray.600">Productos</Text>
             </Box>
             <Box p={4} bg="white" borderRadius="lg" textAlign="center">
               <Icon as={FiUsers} boxSize={6} color="green.500" mb={2} />
-              <Text fontSize="2xl" fontWeight="bold">{importResult.customers.length}</Text>
+              <Text fontSize="2xl" fontWeight="bold">
+                {importResult.customers.length}
+              </Text>
               <Text color="gray.600">Clientes</Text>
             </Box>
             <Box p={4} bg="white" borderRadius="lg" textAlign="center">
               <Icon as={FiShoppingCart} boxSize={6} color="purple.500" mb={2} />
-              <Text fontSize="2xl" fontWeight="bold">{importResult.transactions.length}</Text>
+              <Text fontSize="2xl" fontWeight="bold">
+                {importResult.transactions.length}
+              </Text>
               <Text color="gray.600">Transacciones</Text>
             </Box>
             {/* V2: Drops and Staff */}
             <Box p={4} bg="white" borderRadius="lg" textAlign="center">
               <Icon as={FiBox} boxSize={6} color="orange.500" mb={2} />
-              <Text fontSize="2xl" fontWeight="bold">{importResult.drops?.length || 0}</Text>
+              <Text fontSize="2xl" fontWeight="bold">
+                {importResult.drops?.length || 0}
+              </Text>
               <Text color="gray.600">Drops</Text>
             </Box>
             <Box p={4} bg="white" borderRadius="lg" textAlign="center">
               <Icon as={FiUserCheck} boxSize={6} color="teal.500" mb={2} />
-              <Text fontSize="2xl" fontWeight="bold">{importResult.staff?.length || 0}</Text>
+              <Text fontSize="2xl" fontWeight="bold">
+                {importResult.staff?.length || 0}
+              </Text>
               <Text color="gray.600">Personal</Text>
             </Box>
           </SimpleGrid>
@@ -371,42 +502,54 @@ export function Settings() {
           {/* Import mode selector — only shown when DB has existing products */}
           {importResult.products.length > 0 && products.length > 0 && (
             <Box w="full" p={4} bg="white" borderRadius="lg">
-              <Text fontWeight="bold" mb={2}>Modo de Importación</Text>
-              <HStack spacing={2} mb={importMode === 'by_ups' ? 3 : 0}>
+              <Text fontWeight="bold" mb={2}>
+                Modo de Importación
+              </Text>
+              <HStack spacing={2} mb={importMode === "by_ups" ? 3 : 0}>
                 <Button
                   size="sm"
-                  colorScheme={importMode === 'full' ? 'blue' : 'gray'}
-                  variant={importMode === 'full' ? 'solid' : 'outline'}
-                  onClick={() => { setImportMode('full'); setImportUpsScope(null); }}
+                  colorScheme={importMode === "full" ? "blue" : "gray"}
+                  variant={importMode === "full" ? "solid" : "outline"}
+                  onClick={() => {
+                    setImportMode("full");
+                    setImportUpsScope(null);
+                  }}
                 >
                   Sincronización Completa
                 </Button>
                 <Button
                   size="sm"
-                  colorScheme={importMode === 'by_ups' ? 'teal' : 'gray'}
-                  variant={importMode === 'by_ups' ? 'solid' : 'outline'}
-                  onClick={() => setImportMode('by_ups')}
+                  colorScheme={importMode === "by_ups" ? "teal" : "gray"}
+                  variant={importMode === "by_ups" ? "solid" : "outline"}
+                  onClick={() => setImportMode("by_ups")}
                 >
                   Subir por UPS
                 </Button>
               </HStack>
-              {importMode === 'by_ups' && (
+              {importMode === "by_ups" && (
                 <VStack align="stretch" spacing={2}>
                   <Box maxW="300px">
                     <AutocompleteSelect
-                      options={UPS_BATCH_OPTIONS.map(o => ({ value: String(o.value), label: o.label }))}
-                      value={importUpsScope || ''}
-                      onChange={(val) => setImportUpsScope(val ? String(val) : null)}
+                      options={UPS_BATCH_OPTIONS.map((o) => ({
+                        value: String(o.value),
+                        label: o.label,
+                      }))}
+                      value={importUpsScope || ""}
+                      onChange={(val) =>
+                        setImportUpsScope(val ? String(val) : null)
+                      }
                       placeholder="Seleccionar UPS..."
                     />
                   </Box>
                   {importUpsScope && (
                     <Text fontSize="sm" color="gray.600">
-                      {importUpsScopeCount} productos del Excel coinciden con UPS {importUpsScope}
+                      {importUpsScopeCount} productos del Excel coinciden con
+                      UPS {importUpsScope}
                     </Text>
                   )}
                   <Text fontSize="xs" color="gray.500">
-                    Solo se crearán/actualizarán productos del UPS seleccionado. No se eliminará nada.
+                    Solo se crearán/actualizarán productos del UPS seleccionado.
+                    No se eliminará nada.
                   </Text>
                 </VStack>
               )}
@@ -439,27 +582,35 @@ export function Settings() {
 
       {/* Current Data Stats */}
       <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
-        <Heading size={{ base: 'sm', md: 'md' }} mb={4}>Datos Actuales</Heading>
+        <Heading size={{ base: "sm", md: "md" }} mb={4}>
+          Datos Actuales
+        </Heading>
         <SimpleGrid columns={{ base: 2, sm: 3, md: 5 }} spacing={4}>
           <HStack p={4} bg="gray.50" borderRadius="lg">
             <Icon as={FiPackage} boxSize={6} color="blue.500" />
             <Box>
               <Text fontWeight="bold">{products.length}</Text>
-              <Text fontSize="sm" color="gray.600">Productos</Text>
+              <Text fontSize="sm" color="gray.600">
+                Productos
+              </Text>
             </Box>
           </HStack>
           <HStack p={4} bg="gray.50" borderRadius="lg">
             <Icon as={FiUsers} boxSize={6} color="green.500" />
             <Box>
               <Text fontWeight="bold">{customers.length}</Text>
-              <Text fontSize="sm" color="gray.600">Clientes</Text>
+              <Text fontSize="sm" color="gray.600">
+                Clientes
+              </Text>
             </Box>
           </HStack>
           <HStack p={4} bg="gray.50" borderRadius="lg">
             <Icon as={FiShoppingCart} boxSize={6} color="purple.500" />
             <Box>
               <Text fontWeight="bold">{transactions.length}</Text>
-              <Text fontSize="sm" color="gray.600">Transacciones</Text>
+              <Text fontSize="sm" color="gray.600">
+                Transacciones
+              </Text>
             </Box>
           </HStack>
           {/* V2: Drops and Staff */}
@@ -467,14 +618,18 @@ export function Settings() {
             <Icon as={FiBox} boxSize={6} color="orange.500" />
             <Box>
               <Text fontWeight="bold">{drops.length}</Text>
-              <Text fontSize="sm" color="gray.600">Drops</Text>
+              <Text fontSize="sm" color="gray.600">
+                Drops
+              </Text>
             </Box>
           </HStack>
           <HStack p={4} bg="gray.50" borderRadius="lg">
             <Icon as={FiUserCheck} boxSize={6} color="teal.500" />
             <Box>
               <Text fontWeight="bold">{staff.length}</Text>
-              <Text fontSize="sm" color="gray.600">Personal</Text>
+              <Text fontSize="sm" color="gray.600">
+                Personal
+              </Text>
             </Box>
           </HStack>
         </SimpleGrid>
@@ -482,7 +637,9 @@ export function Settings() {
         {/* V2: Sync Result Summary */}
         {syncResult && (
           <Box mt={4} p={4} bg="green.50" borderRadius="lg">
-            <Text fontWeight="bold" color="green.700" mb={2}>Última Sincronización:</Text>
+            <Text fontWeight="bold" color="green.700" mb={2}>
+              Última Sincronización:
+            </Text>
             <SimpleGrid columns={{ base: 2, md: 4 }} spacing={2}>
               <Stat size="sm">
                 <StatLabel>Creados</StatLabel>
@@ -507,16 +664,22 @@ export function Settings() {
 
       {/* Import from Excel */}
       <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
-        <Heading size={{ base: 'sm', md: 'md' }} mb={4}>{es.settings.importFromExcel}</Heading>
-        <Text color="gray.600" mb={4} fontSize={{ base: 'sm', md: 'md' }}>
-          Importe datos desde su archivo Excel (Cuentas_UPS.xlsx). Se procesarán las hojas
-          "Inventario", "Inventario Comp Y Cel" y "Pagos".
+        <Heading size={{ base: "sm", md: "md" }} mb={4}>
+          {es.settings.importFromExcel}
+        </Heading>
+        <Text color="gray.600" mb={4} fontSize={{ base: "sm", md: "md" }}>
+          Importe datos desde su archivo Excel (Cuentas_UPS.xlsx). Se procesarán
+          las hojas "Inventario", "Inventario Comp Y Cel" y "Pagos".
         </Text>
 
         {isImporting && (
           <Box mb={4}>
             <Text mb={2}>Procesando archivo...</Text>
-            <Progress value={importProgress} colorScheme="brand" borderRadius="full" />
+            <Progress
+              value={importProgress}
+              colorScheme="brand"
+              borderRadius="full"
+            />
           </Box>
         )}
 
@@ -524,15 +687,15 @@ export function Settings() {
           type="file"
           ref={fileInputRef}
           accept=".xlsx,.xls"
-          style={{ display: 'none' }}
+          style={{ display: "none" }}
           onChange={handleFileSelect}
         />
 
         <Button
           leftIcon={<Icon as={FiUpload} />}
           colorScheme="brand"
-          size={{ base: 'md', md: 'lg' }}
-          w={{ base: 'full', md: 'auto' }}
+          size={{ base: "md", md: "lg" }}
+          w={{ base: "full", md: "auto" }}
           onClick={() => fileInputRef.current?.click()}
           isLoading={isImporting}
           loadingText="Importando..."
@@ -543,8 +706,10 @@ export function Settings() {
 
       {/* Export to Excel */}
       <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
-        <Heading size={{ base: 'sm', md: 'md' }} mb={4}>{es.settings.exportToExcel}</Heading>
-        <Text color="gray.600" mb={4} fontSize={{ base: 'sm', md: 'md' }}>
+        <Heading size={{ base: "sm", md: "md" }} mb={4}>
+          {es.settings.exportToExcel}
+        </Heading>
+        <Text color="gray.600" mb={4} fontSize={{ base: "sm", md: "md" }}>
           Exporte sus datos a archivos Excel compatibles con su formato actual.
         </Text>
 
@@ -553,48 +718,58 @@ export function Settings() {
             leftIcon={<Icon as={FiDownload} />}
             colorScheme="blue"
             variant="outline"
-            size={{ base: 'sm', md: 'lg' }}
-            fontSize={{ base: 'xs', md: 'md' }}
+            size={{ base: "sm", md: "lg" }}
+            fontSize={{ base: "xs", md: "md" }}
             onClick={() => exportProductsToExcel(products)}
             isDisabled={products.length === 0}
           >
             Inventario
-            <Badge ml={1} fontSize={{ base: '2xs', md: 'sm' }}>{products.length}</Badge>
+            <Badge ml={1} fontSize={{ base: "2xs", md: "sm" }}>
+              {products.length}
+            </Badge>
           </Button>
 
           <Button
             leftIcon={<Icon as={FiDownload} />}
             colorScheme="green"
             variant="outline"
-            size={{ base: 'sm', md: 'lg' }}
-            fontSize={{ base: 'xs', md: 'md' }}
+            size={{ base: "sm", md: "lg" }}
+            fontSize={{ base: "xs", md: "md" }}
             onClick={() => exportCustomersToExcel(customers)}
             isDisabled={customers.length === 0}
           >
             Clientes
-            <Badge ml={1} fontSize={{ base: '2xs', md: 'sm' }}>{customers.length}</Badge>
+            <Badge ml={1} fontSize={{ base: "2xs", md: "sm" }}>
+              {customers.length}
+            </Badge>
           </Button>
 
           <Button
             leftIcon={<Icon as={FiDownload} />}
             colorScheme="purple"
             variant="outline"
-            size={{ base: 'sm', md: 'lg' }}
-            fontSize={{ base: 'xs', md: 'md' }}
+            size={{ base: "sm", md: "lg" }}
+            fontSize={{ base: "xs", md: "md" }}
             onClick={() => exportTransactionsToExcel(transactions)}
             isDisabled={transactions.length === 0}
           >
             Transacciones
-            <Badge ml={1} fontSize={{ base: '2xs', md: 'sm' }}>{transactions.length}</Badge>
+            <Badge ml={1} fontSize={{ base: "2xs", md: "sm" }}>
+              {transactions.length}
+            </Badge>
           </Button>
 
           <Button
             leftIcon={<Icon as={FiDownload} />}
             colorScheme="orange"
-            size={{ base: 'sm', md: 'lg' }}
-            fontSize={{ base: 'xs', md: 'md' }}
+            size={{ base: "sm", md: "lg" }}
+            fontSize={{ base: "xs", md: "md" }}
             onClick={() => exportAllToExcel(products, customers, transactions)}
-            isDisabled={products.length === 0 && customers.length === 0 && transactions.length === 0}
+            isDisabled={
+              products.length === 0 &&
+              customers.length === 0 &&
+              transactions.length === 0
+            }
           >
             Todo
           </Button>
@@ -603,8 +778,11 @@ export function Settings() {
         <HStack mt={4} spacing={{ base: 2, md: 4 }} flexWrap="wrap">
           <Box flex="1" minW="180px" maxW="300px">
             <AutocompleteSelect
-              options={UPS_BATCH_OPTIONS.map(o => ({ value: String(o.value), label: o.label }))}
-              value={exportUps ? String(exportUps) : ''}
+              options={UPS_BATCH_OPTIONS.map((o) => ({
+                value: String(o.value),
+                label: o.label,
+              }))}
+              value={exportUps ? String(exportUps) : ""}
               onChange={(val) => setExportUps(val ? Number(val) : null)}
               placeholder="Seleccionar UPS..."
             />
@@ -612,35 +790,77 @@ export function Settings() {
           <Button
             leftIcon={<Icon as={FiDownload} />}
             colorScheme="teal"
-            size={{ base: 'sm', md: 'lg' }}
-            fontSize={{ base: 'xs', md: 'md' }}
+            size={{ base: "sm", md: "lg" }}
+            fontSize={{ base: "xs", md: "md" }}
             onClick={handleExportByUps}
             isDisabled={!exportUps || filteredByUpsCount === 0}
           >
-            {exportUps ? `Descargar UPS ${exportUps}` : 'Descargar UPS'}
-            {exportUps && <Badge ml={2} colorScheme="teal" fontSize={{ base: '2xs', md: 'sm' }}>{filteredByUpsCount}</Badge>}
+            {exportUps ? `Descargar UPS ${exportUps}` : "Descargar UPS"}
+            {exportUps && (
+              <Badge
+                ml={2}
+                colorScheme="teal"
+                fontSize={{ base: "2xs", md: "sm" }}
+              >
+                {filteredByUpsCount}
+              </Badge>
+            )}
+          </Button>
+        </HStack>
+
+        <HStack mt={4} spacing={{ base: 2, md: 4 }} flexWrap="wrap">
+          <Box flex="1" minW="180px" maxW="300px">
+            <AutocompleteSelect
+              options={customerOptions}
+              value={exportCustomerId || ""}
+              onChange={(val) => setExportCustomerId(val ? String(val) : null)}
+              placeholder="Seleccionar Cliente..."
+            />
+          </Box>
+          <Button
+            leftIcon={<Icon as={FiDownload} />}
+            colorScheme="pink"
+            size={{ base: "sm", md: "lg" }}
+            fontSize={{ base: "xs", md: "md" }}
+            onClick={handleExportByCustomer}
+            isDisabled={!exportCustomerId || isExportingCustomer}
+            isLoading={isExportingCustomer}
+            loadingText="Consultando..."
+          >
+            {exportCustomerId ? "Ventas Cliente" : "Ventas por Cliente"}
           </Button>
         </HStack>
       </Box>
 
       {/* Sync Queue Management */}
       <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
-        <Heading size={{ base: 'sm', md: 'md' }} mb={4}>Cola de Sincronización</Heading>
-        <Text color="gray.600" mb={4} fontSize={{ base: 'sm', md: 'md' }}>
-          Gestione las operaciones de sincronización pendientes entre su dispositivo y Supabase.
+        <Heading size={{ base: "sm", md: "md" }} mb={4}>
+          Cola de Sincronización
+        </Heading>
+        <Text color="gray.600" mb={4} fontSize={{ base: "sm", md: "md" }}>
+          Gestione las operaciones de sincronización pendientes entre su
+          dispositivo y Supabase.
         </Text>
 
         {queueInfo && (
           <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={4}>
             <Stat size="sm" p={4} bg="gray.50" borderRadius="lg">
               <StatLabel>Operaciones Pendientes</StatLabel>
-              <StatNumber color={queueInfo.count > 100 ? "orange.600" : "blue.600"}>
+              <StatNumber
+                color={queueInfo.count > 100 ? "orange.600" : "blue.600"}
+              >
                 {queueInfo.count}
               </StatNumber>
             </Stat>
             <Stat size="sm" p={4} bg="gray.50" borderRadius="lg">
               <StatLabel>Tamaño en Memoria</StatLabel>
-              <StatNumber color={parseFloat(queueInfo.sizeKB) > 1000 ? "orange.600" : "green.600"}>
+              <StatNumber
+                color={
+                  parseFloat(queueInfo.sizeKB) > 1000
+                    ? "orange.600"
+                    : "green.600"
+                }
+              >
                 {queueInfo.sizeKB} KB
               </StatNumber>
             </Stat>
@@ -648,13 +868,16 @@ export function Settings() {
               <StatLabel>Operación Más Antigua</StatLabel>
               <StatNumber fontSize="sm">
                 {queueInfo.oldestOperation
-                  ? new Date(queueInfo.oldestOperation).toLocaleString('es-MX', {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })
-                  : 'N/A'}
+                  ? new Date(queueInfo.oldestOperation).toLocaleString(
+                      "es-MX",
+                      {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      },
+                    )
+                  : "N/A"}
               </StatNumber>
             </Stat>
           </SimpleGrid>
@@ -667,10 +890,10 @@ export function Settings() {
                 leftIcon={<Icon as={FiRefreshCw} />}
                 colorScheme="blue"
                 variant="outline"
-                size={{ base: 'sm', md: 'lg' }}
-                fontSize={{ base: 'xs', md: 'md' }}
+                size={{ base: "sm", md: "lg" }}
+                fontSize={{ base: "xs", md: "md" }}
                 onClick={() => syncManager.forceSync()}
-                w={{ base: 'full', md: 'auto' }}
+                w={{ base: "full", md: "auto" }}
               >
                 Forzar Sincronización
               </Button>
@@ -678,10 +901,10 @@ export function Settings() {
                 leftIcon={<Icon as={FiTrash2} />}
                 colorScheme="red"
                 variant="outline"
-                size={{ base: 'sm', md: 'lg' }}
-                fontSize={{ base: 'xs', md: 'md' }}
+                size={{ base: "sm", md: "lg" }}
+                fontSize={{ base: "xs", md: "md" }}
                 onClick={handleClearQueue}
-                w={{ base: 'full', md: 'auto' }}
+                w={{ base: "full", md: "auto" }}
               >
                 Limpiar Cola
               </Button>
@@ -691,10 +914,13 @@ export function Settings() {
               <Alert status="warning" mt={4} borderRadius="lg">
                 <AlertIcon />
                 <Box>
-                  <AlertTitle fontSize={{ base: 'sm', md: 'md' }}>Cola Grande Detectada</AlertTitle>
-                  <AlertDescription fontSize={{ base: 'sm', md: 'md' }}>
-                    Tiene {queueInfo.count} operaciones pendientes ocupando {queueInfo.sizeKB} KB.
-                    Si la sincronización está atascada, limpie la cola y vuelva a importar sus datos.
+                  <AlertTitle fontSize={{ base: "sm", md: "md" }}>
+                    Cola Grande Detectada
+                  </AlertTitle>
+                  <AlertDescription fontSize={{ base: "sm", md: "md" }}>
+                    Tiene {queueInfo.count} operaciones pendientes ocupando{" "}
+                    {queueInfo.sizeKB} KB. Si la sincronización está atascada,
+                    limpie la cola y vuelva a importar sus datos.
                   </AlertDescription>
                 </Box>
               </Alert>
@@ -706,8 +932,10 @@ export function Settings() {
           <Alert status="success" borderRadius="lg">
             <AlertIcon />
             <Box>
-              <AlertTitle fontSize={{ base: 'sm', md: 'md' }}>Cola Vacía</AlertTitle>
-              <AlertDescription fontSize={{ base: 'sm', md: 'md' }}>
+              <AlertTitle fontSize={{ base: "sm", md: "md" }}>
+                Cola Vacía
+              </AlertTitle>
+              <AlertDescription fontSize={{ base: "sm", md: "md" }}>
                 No hay operaciones de sincronización pendientes.
               </AlertDescription>
             </Box>
@@ -717,17 +945,19 @@ export function Settings() {
 
       {/* Backup & Restore */}
       <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
-        <Heading size={{ base: 'sm', md: 'md' }} mb={4}>{es.settings.backup}</Heading>
-        <Text color="gray.600" mb={4} fontSize={{ base: 'sm', md: 'md' }}>
-          Cree respaldos de todos sus datos en formato JSON. Puede restaurar estos respaldos
-          en cualquier momento.
+        <Heading size={{ base: "sm", md: "md" }} mb={4}>
+          {es.settings.backup}
+        </Heading>
+        <Text color="gray.600" mb={4} fontSize={{ base: "sm", md: "md" }}>
+          Cree respaldos de todos sus datos en formato JSON. Puede restaurar
+          estos respaldos en cualquier momento.
         </Text>
 
         <input
           type="file"
           ref={backupInputRef}
           accept=".json"
-          style={{ display: 'none' }}
+          style={{ display: "none" }}
           onChange={handleBackupSelect}
         />
 
@@ -735,8 +965,8 @@ export function Settings() {
           <Button
             leftIcon={<Icon as={FiDatabase} />}
             colorScheme="green"
-            size={{ base: 'sm', md: 'lg' }}
-            fontSize={{ base: 'xs', md: 'md' }}
+            size={{ base: "sm", md: "lg" }}
+            fontSize={{ base: "xs", md: "md" }}
             onClick={exportBackup}
           >
             Crear Respaldo
@@ -746,8 +976,8 @@ export function Settings() {
             leftIcon={<Icon as={FiRefreshCw} />}
             colorScheme="orange"
             variant="outline"
-            size={{ base: 'sm', md: 'lg' }}
-            fontSize={{ base: 'xs', md: 'md' }}
+            size={{ base: "sm", md: "lg" }}
+            fontSize={{ base: "xs", md: "md" }}
             onClick={() => backupInputRef.current?.click()}
           >
             Restaurar
@@ -757,10 +987,12 @@ export function Settings() {
         <Alert status="warning" mt={4} borderRadius="lg">
           <AlertIcon />
           <Box>
-            <AlertTitle fontSize={{ base: 'sm', md: 'md' }}>Importante</AlertTitle>
-            <AlertDescription fontSize={{ base: 'sm', md: 'md' }}>
-              Restaurar un respaldo reemplazará todos los datos actuales. Asegúrese de crear
-              un respaldo antes de restaurar.
+            <AlertTitle fontSize={{ base: "sm", md: "md" }}>
+              Importante
+            </AlertTitle>
+            <AlertDescription fontSize={{ base: "sm", md: "md" }}>
+              Restaurar un respaldo reemplazará todos los datos actuales.
+              Asegúrese de crear un respaldo antes de restaurar.
             </AlertDescription>
           </Box>
         </Alert>

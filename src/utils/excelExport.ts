@@ -19,6 +19,15 @@ function getStatusLabel(status: ProductStatus): string {
   return statusLabels[status] || status;
 }
 
+function normalizeCustomerKey(value: string | undefined | null): string {
+  return (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 // Export products to Excel
 export function exportProductsToExcel(products: Product[], filename?: string): void {
   const data = products.map(p => ({
@@ -231,6 +240,85 @@ export function exportTransactionsToExcel(transactions: Transaction[]): void {
 
   const date = new Date().toISOString().split('T')[0];
   XLSX.writeFile(workbook, `transacciones_${date}.xlsx`);
+}
+
+// Export transactions filtered by customer
+export function exportTransactionsByCustomer(
+  transactions: Transaction[],
+  customerId: string,
+  customerName: string
+): void {
+  const normalizedCustomerName = normalizeCustomerKey(customerName);
+  const filteredSales = transactions
+    .filter((t) => {
+      if (t.type !== 'sale') return false;
+      if (t.customerId === customerId) return true;
+      return normalizeCustomerKey(t.customerName) === normalizedCustomerName;
+    })
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  const data: any[] = [];
+
+  filteredSales.forEach((t) => {
+    t.items.forEach((item) => {
+      const isRegisteredItem = !!(item.productId && item.productId.trim() !== '');
+      data.push({
+        'Fecha Transaccion': formatDate(t.date),
+        'Articulo Vendido': item.productName,
+        'Cliente': t.customerName || customerName,
+        'UPS': item.upsBatch ?? '',
+        'Articulo Registrado': isRegisteredItem ? 'Si' : 'No',
+        'Cantidad': item.quantity,
+        'Precio Unitario': item.unitPrice,
+        'Total Linea': item.totalPrice,
+        'Total Transaccion': t.total,
+        'Metodo de Pago': t.paymentMethod === 'cash' ? 'Efectivo' :
+                         t.paymentMethod === 'transfer' ? 'Transferencia' :
+                         t.paymentMethod === 'card' ? 'Tarjeta' :
+                         t.paymentMethod === 'mixed' ? 'Mixto' : 'Credito',
+        'Notas': t.notes || '',
+      });
+    });
+  });
+
+  const totalSales = filteredSales.reduce((sum, t) => sum + t.total, 0);
+  const totalUnits = data.reduce((sum, row) => sum + (Number(row['Cantidad']) || 0), 0);
+
+  data.push({
+    'Fecha Transaccion': 'TOTAL',
+    'Articulo Vendido': '',
+    'Cliente': customerName,
+    'UPS': '',
+    'Articulo Registrado': '',
+    'Cantidad': totalUnits,
+    'Precio Unitario': '',
+    'Total Linea': '',
+    'Total Transaccion': totalSales,
+    'Metodo de Pago': '',
+    'Notas': '',
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Ventas Cliente');
+
+  worksheet['!cols'] = [
+    { wch: 16 }, // Fecha Transaccion
+    { wch: 40 }, // Articulo Vendido
+    { wch: 28 }, // Cliente
+    { wch: 8 },  // UPS
+    { wch: 18 }, // Articulo Registrado
+    { wch: 10 }, // Cantidad
+    { wch: 14 }, // Precio Unitario
+    { wch: 12 }, // Total Linea
+    { wch: 16 }, // Total Transaccion
+    { wch: 16 }, // Metodo de Pago
+    { wch: 30 }, // Notas
+  ];
+
+  const safeName = customerName.replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, '_');
+  const date = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(workbook, `ventas_cliente_${safeName}_${date}.xlsx`);
 }
 
 // Export all data to a single Excel file with multiple sheets

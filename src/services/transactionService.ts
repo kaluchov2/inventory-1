@@ -54,6 +54,44 @@ export const transactionService = {
     return data.map(convertFromDbFormat);
   },
 
+  async getSalesForCustomer(customerId: string, customerName?: string): Promise<Transaction[]> {
+    const client = getSupabaseClient();
+
+    const { data: byIdData, error: byIdError } = await client
+      .from('transactions')
+      .select('*, transaction_items(*)')
+      .eq('customer_id', customerId)
+      .eq('type', 'sale')
+      .eq('is_deleted', false)
+      .order('date', { ascending: false });
+
+    if (byIdError) throw byIdError;
+
+    const trimmedName = (customerName || '').trim();
+    if (!trimmedName) {
+      return byIdData.map(convertFromDbFormat);
+    }
+
+    const { data: byNameData, error: byNameError } = await client
+      .from('transactions')
+      .select('*, transaction_items(*)')
+      .ilike('customer_name', trimmedName)
+      .eq('type', 'sale')
+      .eq('is_deleted', false)
+      .order('date', { ascending: false });
+
+    if (byNameError) throw byNameError;
+
+    const unique = new Map<string, any>();
+    [...byIdData, ...byNameData].forEach((row) => {
+      unique.set(row.id, row);
+    });
+
+    return Array.from(unique.values())
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .map(convertFromDbFormat);
+  },
+
   async create(transaction: Transaction): Promise<Transaction> {
     const client = getSupabaseClient();
 

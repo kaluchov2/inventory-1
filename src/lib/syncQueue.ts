@@ -176,6 +176,27 @@ class SyncQueue {
     }
   }
 
+  /**
+   * Move an existing operation to the back of the queue.
+   * Useful to avoid head-of-line blocking when one operation is flaky.
+   */
+  public moveToBack(id: string): boolean {
+    const index = this.queue.findIndex((op) => op.id === id);
+    if (index === -1 || index === this.queue.length - 1) return false;
+
+    const originalQueue = [...this.queue];
+    const [op] = this.queue.splice(index, 1);
+    this.queue.push(op);
+
+    try {
+      this.saveQueue();
+      return true;
+    } catch (error) {
+      this.queue = originalQueue;
+      throw error;
+    }
+  }
+
   public incrementRetry(id: string): boolean {
     const op = this.queue.find((o) => o.id === id);
     if (!op) return false;

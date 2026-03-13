@@ -153,20 +153,39 @@ export const useTransactionStore = create<TransactionStore>()(
       queueSaleSync: (payload) => {
         if (!supabase) return;
 
+        console.log('[TransactionStore.queueSaleSync] Queueing sale sync payload', {
+          transactionId: payload.transaction.id,
+          items: payload.transaction.items.length,
+          productsToSync: payload.products.length,
+          hasCustomerSnapshot: !!payload.customer,
+        });
+
         try {
-          syncManager.queueOperation({
+          const operationId = syncManager.queueOperation({
             type: 'transactions',
             action: 'record_sale',
             data: payload,
           });
+          console.log('[TransactionStore.queueSaleSync] record_sale operation queued', {
+            operationId,
+            transactionId: payload.transaction.id,
+          });
         } catch (queueError) {
           console.warn('[Store] Sale queue failed (localStorage quota?), attempting direct sale sync:', queueError);
           (async () => {
+            console.log('[TransactionStore.queueSaleSync] Falling back to direct sale sync', {
+              transactionId: payload.transaction.id,
+            });
             try {
               const controller = new AbortController();
               const timer = setTimeout(() => controller.abort(), 45_000);
+              const startedAt = Date.now();
               try {
                 await syncRecordedSale(payload, controller.signal);
+                console.log('[TransactionStore.queueSaleSync] Direct sale sync fallback succeeded', {
+                  transactionId: payload.transaction.id,
+                  elapsedMs: Date.now() - startedAt,
+                });
               } finally {
                 clearTimeout(timer);
               }

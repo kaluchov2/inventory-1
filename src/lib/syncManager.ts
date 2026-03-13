@@ -306,6 +306,8 @@ class SyncManager {
           });
         } catch (error) {
           console.error('[SyncManager] Sync operation failed:', error);
+          const isTimeoutError =
+            error instanceof Error && error.message.includes('timed out');
           this.logDebug('Operation failed', {
             ...opSummary,
             elapsedMs: Date.now() - opStartedAt,
@@ -315,7 +317,7 @@ class SyncManager {
 
           // On flaky mobile networks, a request can time out locally even if it committed remotely.
           // Before retrying, verify whether the row now exists and dequeue if already applied.
-          if (error instanceof Error && error.message.includes('timed out')) {
+          if (isTimeoutError) {
             this.logDebug('Timeout detected, verifying whether operation was applied remotely', opSummary);
             const alreadyApplied = await this.verifyOperationApplied(operation);
             this.logDebug('Timeout verification result', {
@@ -372,6 +374,23 @@ class SyncManager {
               });
               consecutiveErrors = 0; // Reset after removing failed operation
             } else {
+              if (isTimeoutError && operation.action === 'record_sale' && syncQueue.size() > 1) {
+                const movedToBack = syncQueue.moveToBack(operation.id);
+                this.logDebug(
+                  'Moved timed-out record_sale operation to queue tail to avoid blocking later writes',
+                  {
+                    ...opSummary,
+                    movedToBack,
+                    queueSize: syncQueue.size(),
+                  },
+                );
+                if (movedToBack) {
+                  consecutiveErrors = 0;
+                  this.updateStatus({ pendingCount: syncQueue.size() });
+                  continue;
+                }
+              }
+
               // Add exponential backoff delay before retrying
               const delay = Math.min(1000 * Math.pow(2, operation.retryCount - 1), 10000);
               console.log(`[SyncManager] Retrying in ${delay}ms...`);

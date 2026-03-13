@@ -99,9 +99,19 @@ class SyncManager {
   public async syncPendingOperations() {
     if (this.isSyncing || !supabase) return;
 
-    const status = connectionStatus.getStatus();
-    if (!status.isOnline || !status.isSupabaseConnected) {
+    let status = connectionStatus.getStatus();
+    if (!status.isOnline) {
       return;
+    }
+
+    // Force a fresh connectivity probe so we don't rely on stale 30s status.
+    // This avoids the "only syncs after refresh" behavior on mobile/PWA.
+    if (!status.isSupabaseConnected) {
+      await connectionStatus.forceCheck();
+      status = connectionStatus.getStatus();
+      if (!status.isSupabaseConnected) {
+        return;
+      }
     }
 
     this.isSyncing = true;
@@ -131,10 +141,17 @@ class SyncManager {
         console.log(`[SyncManager] Processing operation ${processed + 1}/${syncQueue.size()}:`, operation.type, operation.action);
 
         try {
-          await this.withTimeout(
-            this.executeOperation(operation),
-            this.getOperationTimeoutMs(operation),
+          const { signal, cleanup, timeoutPromise } = this.createAbortableTimeout(
+            this.getOperationTimeoutMs(operation)
           );
+          try {
+            await Promise.race([
+              this.executeOperation(operation, signal),
+              timeoutPromise,
+            ]);
+          } finally {
+            cleanup();
+          }
 
           try {
             syncQueue.remove(operation.id);
@@ -154,7 +171,7 @@ class SyncManager {
 
           // On flaky mobile networks, a request can time out locally even if it committed remotely.
           // Before retrying, verify whether the row now exists and dequeue if already applied.
-          if (this.isTimeoutError(error)) {
+          if (error instanceof Error && error.message.includes('timed out')) {
             const alreadyApplied = await this.verifyOperationApplied(operation);
             if (alreadyApplied) {
               console.warn('[SyncManager] Timed out locally but operation is already persisted. Removing from queue:', operation.id);
@@ -239,23 +256,31 @@ class SyncManager {
     }
   }
 
-  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-    const timeout = new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`Sync operation timed out after ${ms}ms`)), ms)
-    );
-    return Promise.race([promise, timeout]);
+  private createAbortableTimeout(ms: number): {
+    signal: AbortSignal;
+    cleanup: () => void;
+    timeoutPromise: Promise<never>;
+  } {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () =>
+        reject(new Error(`Sync operation timed out after ${ms}ms`))
+      );
+    });
+    return {
+      signal: controller.signal,
+      cleanup: () => clearTimeout(timer),
+      timeoutPromise,
+    };
   }
 
   private getOperationTimeoutMs(operation: SyncOperation): number {
     if (operation.type === 'products') {
-      if (operation.action === 'batch_create' || operation.action === 'batch_update') return 90_000;
-      if (operation.action === 'create' || operation.action === 'update') return 45_000;
+      if (operation.action === 'batch_create' || operation.action === 'batch_update') return 60_000;
+      if (operation.action === 'create' || operation.action === 'update') return 30_000;
     }
     return 30_000;
-  }
-
-  private isTimeoutError(error: unknown): boolean {
-    return error instanceof Error && error.message.includes('timed out');
   }
 
   private async verifyOperationApplied(operation: SyncOperation): Promise<boolean> {
@@ -280,18 +305,30 @@ class SyncManager {
     const lookupValue = type === 'drops' ? row.dropNumber : row.id;
     if (!lookupValue) return false;
 
-    const { data: existing, error } = await client
-      .from(table as any)
-      .select(lookupColumn)
-      .eq(lookupColumn, lookupValue)
-      .limit(1)
-      .maybeSingle();
+    // Use AbortController to prevent this verification from hanging
+    // if the Supabase client is stuck (which caused the original timeout)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5_000);
 
-    if (error) return false;
-    return !!existing;
+    try {
+      const { data: existing, error } = await client
+        .from(table as any)
+        .select(lookupColumn)
+        .eq(lookupColumn, lookupValue)
+        .limit(1)
+        .abortSignal(controller.signal)
+        .maybeSingle();
+
+      if (error) return false;
+      return !!existing;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
-  private async executeOperation(operation: SyncOperation) {
+  private async executeOperation(operation: SyncOperation, signal: AbortSignal) {
     // Validate client is available before delegating to specific sync methods
     getSupabaseClient();
 
@@ -299,22 +336,22 @@ class SyncManager {
 
     switch (type) {
       case 'products':
-        return this.syncProduct(action, data);
+        return this.syncProduct(action, data, signal);
       case 'customers':
-        return this.syncCustomer(action, data);
+        return this.syncCustomer(action, data, signal);
       case 'transactions':
-        return this.syncTransaction(action, data);
+        return this.syncTransaction(action, data, signal);
       // V2: New entity types
       case 'drops':
-        return this.syncDrop(action, data);
+        return this.syncDrop(action, data, signal);
       case 'staff':
-        return this.syncStaff(action, data);
+        return this.syncStaff(action, data, signal);
       default:
         throw new Error(`Unknown sync type: ${type}`);
     }
   }
 
-  private async syncProduct(action: string, data: any) {
+  private async syncProduct(action: string, data: any, signal: AbortSignal) {
     const client = getSupabaseClient();
 
     switch (action) {
@@ -324,7 +361,8 @@ class SyncManager {
         const dbData = this.convertToDbFormat(data, 'product');
         const { error: upsertError } = await client
           .from('products')
-          .upsert(dbData, { onConflict: 'id' });
+          .upsert(dbData, { onConflict: 'id' })
+          .abortSignal(signal);
         if (upsertError) throw upsertError;
         break;
 
@@ -342,7 +380,8 @@ class SyncManager {
         );
         const { error: batchUpsertError } = await client
           .from('products')
-          .upsert(batchData, { onConflict: 'id' });
+          .upsert(batchData, { onConflict: 'id' })
+          .abortSignal(signal);
         if (batchUpsertError) throw batchUpsertError;
         break;
 
@@ -352,6 +391,7 @@ class SyncManager {
         //                  WHERE id = product_id AND available_qty >= qty
         // data shape: { id: string, qty: number }
         // Cast needed until decrement_stock is added to Supabase generated types
+        // Note: RPC calls don't reliably support .abortSignal() — outer Promise.race handles timeout
         const { error: rpcError } = await (client as any).rpc('decrement_stock', {
           product_id: data.id,
           qty: data.qty,
@@ -363,7 +403,8 @@ class SyncManager {
 
           const { error: fallbackError } = await client
             .from('products')
-            .upsert(this.convertToDbFormat(data.snapshot, 'product'), { onConflict: 'id' });
+            .upsert(this.convertToDbFormat(data.snapshot, 'product'), { onConflict: 'id' })
+            .abortSignal(signal);
           if (fallbackError) throw fallbackError;
           break;
         }
@@ -377,7 +418,8 @@ class SyncManager {
               status: data.snapshot.status,
               updated_at: data.snapshot.updatedAt,
             })
-            .eq('id', data.id);
+            .eq('id', data.id)
+            .abortSignal(signal);
           if (metadataError) throw metadataError;
         }
         break;
@@ -388,7 +430,8 @@ class SyncManager {
         const { error: deleteError } = await client
           .from('products')
           .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('id', data.id);
+          .eq('id', data.id)
+          .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
 
@@ -398,7 +441,8 @@ class SyncManager {
         const { error: batchDeleteError } = await client
           .from('products')
           .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .in('id', ids);
+          .in('id', ids)
+          .abortSignal(signal);
         if (batchDeleteError) throw batchDeleteError;
         break;
 
@@ -407,7 +451,7 @@ class SyncManager {
     }
   }
 
-  private async syncCustomer(action: string, data: any) {
+  private async syncCustomer(action: string, data: any, signal: AbortSignal) {
     const client = getSupabaseClient();
 
     const dbData = this.convertToDbFormat(data, 'customer');
@@ -417,7 +461,8 @@ class SyncManager {
       case 'update':
         const { error: upsertError } = await client
           .from('customers')
-          .upsert(dbData, { onConflict: 'id' });
+          .upsert(dbData, { onConflict: 'id' })
+          .abortSignal(signal);
         if (upsertError) throw upsertError;
         break;
 
@@ -425,7 +470,8 @@ class SyncManager {
         const { error: deleteError } = await client
           .from('customers')
           .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('id', data.id);
+          .eq('id', data.id)
+          .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
 
@@ -434,7 +480,7 @@ class SyncManager {
     }
   }
 
-  private async syncTransaction(action: string, data: any) {
+  private async syncTransaction(action: string, data: any, signal: AbortSignal) {
     const client = getSupabaseClient();
 
     const { items, ...transactionData } = data;
@@ -445,14 +491,16 @@ class SyncManager {
       case 'update':
         const { error: upsertError } = await client
           .from('transactions')
-          .upsert(dbData, { onConflict: 'id' });
+          .upsert(dbData, { onConflict: 'id' })
+          .abortSignal(signal);
         if (upsertError) throw upsertError;
 
         if (items && items.length > 0) {
           const { error: deleteItemsError } = await client
             .from('transaction_items')
             .delete()
-            .eq('transaction_id', data.id);
+            .eq('transaction_id', data.id)
+            .abortSignal(signal);
           if (deleteItemsError) throw deleteItemsError;
 
           const itemsData = items.map((item: any) => ({
@@ -470,7 +518,8 @@ class SyncManager {
 
           const { error: insertItemsError } = await client
             .from('transaction_items')
-            .insert(itemsData);
+            .insert(itemsData)
+            .abortSignal(signal);
           if (insertItemsError) throw insertItemsError;
         }
         break;
@@ -479,11 +528,13 @@ class SyncManager {
         const { error: deleteError } = await client
           .from('transactions')
           .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('id', data.id);
+          .eq('id', data.id)
+          .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
 
       case 'record_sale':
+        // syncRecordedSale is external — outer Promise.race handles timeout
         await syncRecordedSale(data);
         break;
 
@@ -493,7 +544,7 @@ class SyncManager {
   }
 
   // V2: Sync drop entity
-  private async syncDrop(action: string, data: any) {
+  private async syncDrop(action: string, data: any, signal: AbortSignal) {
     const client = getSupabaseClient();
 
     const dbData = this.convertToDbFormat(data, 'drop');
@@ -505,7 +556,8 @@ class SyncManager {
         // This prevents duplicate constraint violations when re-importing
         const { error: upsertError } = await client
           .from('drops')
-          .upsert(dbData, { onConflict: 'drop_number' });
+          .upsert(dbData, { onConflict: 'drop_number' })
+          .abortSignal(signal);
         if (upsertError) throw upsertError;
         break;
 
@@ -514,7 +566,8 @@ class SyncManager {
         const { error: deleteError } = await client
           .from('drops')
           .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('drop_number', data.dropNumber);
+          .eq('drop_number', data.dropNumber)
+          .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
 
@@ -524,7 +577,7 @@ class SyncManager {
   }
 
   // V2: Sync staff entity
-  private async syncStaff(action: string, data: any) {
+  private async syncStaff(action: string, data: any, signal: AbortSignal) {
     const client = getSupabaseClient();
 
     const dbData = this.convertToDbFormat(data, 'staff');
@@ -534,7 +587,8 @@ class SyncManager {
       case 'update':
         const { error: upsertError } = await client
           .from('staff')
-          .upsert(dbData, { onConflict: 'id' });
+          .upsert(dbData, { onConflict: 'id' })
+          .abortSignal(signal);
         if (upsertError) throw upsertError;
         break;
 
@@ -542,7 +596,8 @@ class SyncManager {
         const { error: deleteError } = await client
           .from('staff')
           .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('id', data.id);
+          .eq('id', data.id)
+          .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
 
@@ -706,7 +761,7 @@ class SyncManager {
     this.updateStatus({ pendingCount: syncQueue.size() });
 
     const status = connectionStatus.getStatus();
-    if (status.isOnline && status.isSupabaseConnected && !this.isSyncing) {
+    if (status.isOnline && !this.isSyncing) {
       this.syncPendingOperations();
     }
 

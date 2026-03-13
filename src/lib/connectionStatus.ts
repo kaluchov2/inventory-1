@@ -40,14 +40,25 @@ class ConnectionStatusManager {
       return;
     }
 
+    // AbortController prevents health check from hanging forever
+    // if the Supabase client is in a stuck state (zombie connections)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5_000);
+
     try {
-      const { error } = await supabase.from('products').select('id').limit(1);
+      const { error } = await supabase
+        .from('products')
+        .select('id')
+        .limit(1)
+        .abortSignal(controller.signal);
       this.updateStatus({
         isSupabaseConnected: !error,
         lastChecked: new Date(),
       });
     } catch {
       this.updateStatus({ isSupabaseConnected: false, lastChecked: new Date() });
+    } finally {
+      clearTimeout(timer);
     }
   }
 

@@ -1173,10 +1173,17 @@ export const useProductStore = create<ProductStore>()(
           return value ? JSON.parse(value) : null;
         },
         setItem: (name, value) => {
+          const serialized = JSON.stringify(value);
           try {
-            localStorage.setItem(name, JSON.stringify(value));
-          } catch (e) {
-            console.warn('[Storage] localStorage write failed (quota exceeded?), data lives in memory only');
+            localStorage.setItem(name, serialized);
+          } catch {
+            try {
+              // Drop stale oversized snapshot and retry once with the trimmed payload.
+              localStorage.removeItem(name);
+              localStorage.setItem(name, serialized);
+            } catch {
+              console.warn('[Storage] localStorage write failed (quota exceeded?), data lives in memory only');
+            }
           }
         },
         removeItem: (name) => localStorage.removeItem(name),

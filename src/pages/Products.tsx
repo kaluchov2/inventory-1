@@ -312,7 +312,7 @@ export function Products() {
     getFilteredProducts,
   } = useProductStore();
 
-  const { addTransaction, transactions, getEffectivePendingMap } = useTransactionStore();
+  const { addTransaction, queueSaleSync, transactions, getEffectivePendingMap } = useTransactionStore();
   const { addPurchase } = useCustomerStore();
   const { customers } = useCustomerStore();
 
@@ -569,7 +569,7 @@ export function Products() {
       const qty = resolveData.quantity;
       const updates: Partial<Product> = {};
 
-      // Increment the target qty field on the SAME product — no split
+      // Increment the target qty field on the SAME product - no split
       switch (resolveData.resolution) {
         case 'available': updates.availableQty = product.availableQty + qty; break;
         case 'sold': updates.soldQty = product.soldQty + qty; break;
@@ -578,8 +578,13 @@ export function Products() {
         case 'expired': updates.expiredQty = product.expiredQty + qty; break;
       }
 
-      // Handle sold resolution — create transaction + payment
+      // Update notes
+      if (resolveData.notes) {
+        updates.notes = `${product.notes || ''}\nResolucion: ${resolveData.notes}`.trim();
+      }
+
       if (resolveData.resolution === 'sold') {
+        const soldAt = new Date().toISOString();
         const effectiveUnitPrice = resolveData.salePrice ?? product.unitPrice;
         const effectiveTotalPrice = qty * effectiveUnitPrice;
 
@@ -608,22 +613,52 @@ export function Products() {
           }
         );
 
-        addTransaction(transaction);
+        const savedTransaction = addTransaction(transaction, { skipSync: true });
 
         updates.soldTo = resolveData.customerId;
-        updates.soldAt = new Date().toISOString();
+        updates.soldAt = soldAt;
 
         if (resolveData.discount && resolveData.discount > 0) {
           updates.originalPrice = product.unitPrice;
           updates.unitPrice = effectiveUnitPrice;
         }
 
+        const derivedProduct = { ...product, ...updates } as Product;
+        updates.status = deriveStatus(derivedProduct);
+
+        const fallbackSnapshot = {
+          ...derivedProduct,
+          status: updates.status,
+          updatedAt: new Date().toISOString(),
+        } as Product;
+
+        const productSnapshot =
+          updateProduct(product.id, updates, { skipSync: true }) || fallbackSnapshot;
+
         // Handle credit balance
         const paidAmount = (resolveData.cashAmount || 0) + (resolveData.transferAmount || 0) + (resolveData.cardAmount || 0);
         const unpaidAmount = effectiveTotalPrice - paidAmount;
-        if (unpaidAmount > 0 && resolveData.customerId) {
-          addPurchase(resolveData.customerId, unpaidAmount);
-        }
+        const customerSnapshot =
+          unpaidAmount > 0 && resolveData.customerId
+            ? addPurchase(resolveData.customerId, unpaidAmount, { skipSync: true })
+            : undefined;
+
+        queueSaleSync({
+          transaction: savedTransaction,
+          products: [{
+            id: product.id,
+            qty,
+            snapshot: productSnapshot,
+            decrementAvailable: false,
+          }],
+          customer: customerSnapshot
+            ? {
+                snapshot: customerSnapshot,
+                balanceDelta: unpaidAmount,
+                purchaseDelta: unpaidAmount,
+              }
+            : undefined,
+        });
 
         toast({
           title: "Producto marcado como vendido",
@@ -632,26 +667,8 @@ export function Products() {
           duration: 4000,
           isClosable: true,
         });
-      } else {
-        const labelMap: Record<string, string> = {
-          available: 'disponible',
-          donated: 'donado',
-          lost: 'perdido',
-          expired: 'caducado',
-        };
 
-        toast({
-          title: `Producto marcado como ${labelMap[resolveData.resolution]}`,
-          description: `${qty}x ${product.name}`,
-          status: "success",
-          duration: 3000,
-          isClosable: true,
-        });
-      }
-
-      // Update notes
-      if (resolveData.notes) {
-        updates.notes = `${product.notes || ''}\nResolucion: ${resolveData.notes}`.trim();
+        return;
       }
 
       // Derive status for backward compat
@@ -659,6 +676,21 @@ export function Products() {
       updates.status = deriveStatus(updatedProduct as Product);
 
       updateProduct(product.id, updates);
+
+      const labelMap: Record<string, string> = {
+        available: 'disponible',
+        donated: 'donado',
+        lost: 'perdido',
+        expired: 'caducado',
+      };
+
+      toast({
+        title: `Producto marcado como ${labelMap[resolveData.resolution]}`,
+        description: `${qty}x ${product.name}`,
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
     } finally {
       isResolvingRef.current = false;
     }

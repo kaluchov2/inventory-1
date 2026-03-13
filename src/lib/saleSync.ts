@@ -5,6 +5,7 @@ export interface SaleProductSync {
   id: string;
   qty: number;
   snapshot: Product;
+  decrementAvailable?: boolean;
 }
 
 export interface SaleCustomerSync {
@@ -138,6 +139,14 @@ function toDbProduct(product: Product) {
 
 async function syncProductAfterSale(productSync: SaleProductSync) {
   const client = getSupabaseClient();
+  if (productSync.decrementAvailable === false) {
+    const { error: upsertError } = await client
+      .from('products')
+      .upsert(toDbProduct(productSync.snapshot), { onConflict: 'id' });
+    if (upsertError) throw upsertError;
+    return;
+  }
+
   const { error: rpcError } = await (client as any).rpc('decrement_stock', {
     product_id: productSync.id,
     qty: productSync.qty,
@@ -216,4 +225,3 @@ export async function syncRecordedSale(payload: SaleSyncPayload) {
   console.warn('[Sync] record_sale RPC not found, falling back to legacy per-table sale sync');
   await syncRecordedSaleLegacy(payload);
 }
-

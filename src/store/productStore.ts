@@ -80,7 +80,11 @@ interface ProductStore {
   addProduct: (
     product: Omit<Product, "id" | "sku" | "createdAt" | "updatedAt">,
   ) => Product;
-  updateProduct: (id: string, updates: Partial<Product>) => void;
+  updateProduct: (
+    id: string,
+    updates: Partial<Product>,
+    options?: { skipSync?: boolean },
+  ) => Product | undefined;
   /** Atomically decrement stock for a completed sale. Uses RPC on Supabase to avoid race conditions. */
   updateProductFromSale: (
     id: string,
@@ -240,7 +244,7 @@ export const useProductStore = create<ProductStore>()(
         return newProduct;
       },
 
-      updateProduct: (id, updates) => {
+      updateProduct: (id, updates, options) => {
         const product = get().products.find((p) => p.id === id);
         if (!product) return;
 
@@ -267,7 +271,7 @@ export const useProductStore = create<ProductStore>()(
         }));
 
         // Queue for sync (with direct-sync fallback for localStorage quota)
-        if (supabase) {
+        if (supabase && !options?.skipSync) {
           try {
             syncManager.queueOperation({
               type: "products",
@@ -320,6 +324,8 @@ export const useProductStore = create<ProductStore>()(
             })();
           }
         }
+
+        return updatedProduct;
       },
 
       updateProductFromSale: (id, qtySold, otherUpdates, options) => {

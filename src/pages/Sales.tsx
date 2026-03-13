@@ -611,8 +611,18 @@ export function Sales() {
                       leftIcon={<Icon as={FiPlus} />}
                       onClick={onUnregisteredModalOpen}
                       w="full"
+                      h="auto"
+                      minH={{ base: "14", md: "11" }}
+                      whiteSpace="normal"
+                      lineHeight="short"
+                      py={{ base: 2, md: 3 }}
                     >
-                      Agregar producto sin registrar (UPS 0)
+                      <Text display={{ base: "none", sm: "inline" }}>
+                        Agregar producto sin registrar (UPS 0)
+                      </Text>
+                      <Text display={{ base: "inline", sm: "none" }}>
+                        Agregar producto UPS 0
+                      </Text>
                     </Button>
 
                     <FormControl>

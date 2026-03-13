@@ -43,17 +43,23 @@ export function SyncInitializer() {
 
   // Initial load from Supabase — flush pending queue first
   useEffect(() => {
+    console.log('[Sync] Initializer auth/offline state changed', {
+      isAuthenticated,
+      isOfflineMode,
+    });
     if (isAuthenticated && !isOfflineMode) {
       console.log('[Sync] Flushing pending queue before initial load...');
+      console.log('[Sync] Status before initial flush:', syncManager.getStatus());
 
       syncManager.syncPendingOperations().then(() => {
+        console.log('[Sync] Status after initial flush:', syncManager.getStatus());
         // Bug 1 guard: if queue still has pending items after flush, we were offline
         // (syncPendingOperations returned early). Do NOT overwrite local state with
         // remote data — that would erase transactions/products queued but not yet sent.
         // The connectionStatus subscription will trigger another flush+reload once online.
         const { pendingCount } = syncManager.getStatus();
         if (pendingCount > 0) {
-          console.log('[Sync] Queue still has', pendingCount, 'pending item(s) — offline flush skipped, deferring remote load to preserve local state');
+          console.log('[Sync] Queue still has', pendingCount, 'pending item(s) - deferring remote load to preserve local state');
           return;
         }
         console.log('[Sync] Queue flushed, loading initial data from Supabase...');
@@ -82,10 +88,12 @@ export function SyncInitializer() {
         // early, leaving the queue unprocessed until the next 10 s tick.
         setTimeout(() => {
           console.log('[Sync] App returned to foreground, flushing queue and reloading...');
+          console.log('[Sync] Status before foreground flush:', syncManager.getStatus());
           syncManager.syncPendingOperations().then(() => {
+            console.log('[Sync] Status after foreground flush:', syncManager.getStatus());
             const { pendingCount } = syncManager.getStatus();
             if (pendingCount > 0) {
-              console.log('[Sync] Foreground flush skipped (still offline), deferring remote load');
+              console.log('[Sync] Foreground reload deferred because queue still has pending operations');
               return;
             }
             return Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);

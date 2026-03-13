@@ -189,19 +189,33 @@ export const useProductStore = create<ProductStore>()(
         set((state) => ({
           products: [...state.products, newProduct],
         }));
+        console.log('[ProductStore.addProduct] Local product created', {
+          id: newProduct.id,
+          name: newProduct.name,
+          upsBatch: newProduct.upsBatch,
+          quantity: newProduct.quantity,
+          createdAt: newProduct.createdAt,
+        });
 
         // Queue for sync (with direct-sync fallback for localStorage quota)
         if (supabase) {
           try {
-            syncManager.queueOperation({
+            const operationId = syncManager.queueOperation({
               type: "products",
               action: "create",
               data: newProduct,
+            });
+            console.log('[ProductStore.addProduct] Queue operation created', {
+              operationId,
+              productId: newProduct.id,
             });
           } catch (queueError) {
             console.warn('[Store] Product queue failed (localStorage quota?), attempting direct sync:', queueError);
             // Await the fallback so failures are visible — not fire-and-forget
             (async () => {
+              console.log('[ProductStore.addProduct] Falling back to direct product upsert', {
+                productId: newProduct.id,
+              });
               const { error } = await getSupabaseClient()
                 .from('products')
                 .upsert({
@@ -240,6 +254,10 @@ export const useProductStore = create<ProductStore>()(
               if (error) {
                 console.error('[Store] Direct product create sync failed — recording in dead-letter:', error);
                 syncManager.addToDeadLetter({ type: 'products', action: 'create', data: newProduct });
+              } else {
+                console.log('[ProductStore.addProduct] Direct product upsert fallback succeeded', {
+                  productId: newProduct.id,
+                });
               }
             })();
           }
@@ -273,19 +291,32 @@ export const useProductStore = create<ProductStore>()(
             p.id === id ? updatedProduct : p,
           ),
         }));
+        console.log('[ProductStore.updateProduct] Local product updated', {
+          id: updatedProduct.id,
+          name: updatedProduct.name,
+          updatedAt: updatedProduct.updatedAt,
+          skipSync: !!options?.skipSync,
+        });
 
         // Queue for sync (with direct-sync fallback for localStorage quota)
         if (supabase && !options?.skipSync) {
           try {
-            syncManager.queueOperation({
+            const operationId = syncManager.queueOperation({
               type: "products",
               action: "update",
               data: updatedProduct,
+            });
+            console.log('[ProductStore.updateProduct] Queue operation created', {
+              operationId,
+              productId: updatedProduct.id,
             });
           } catch (queueError) {
             console.warn('[Store] Product queue failed (localStorage quota?), attempting direct sync:', queueError);
             // Await the fallback so failures are visible — not fire-and-forget
             (async () => {
+              console.log('[ProductStore.updateProduct] Falling back to direct product upsert', {
+                productId: updatedProduct.id,
+              });
               const { error } = await getSupabaseClient()
                 .from('products')
                 .upsert({
@@ -324,6 +355,10 @@ export const useProductStore = create<ProductStore>()(
               if (error) {
                 console.error('[Store] Direct product update sync failed — recording in dead-letter:', error);
                 syncManager.addToDeadLetter({ type: 'products', action: 'update', data: updatedProduct });
+              } else {
+                console.log('[ProductStore.updateProduct] Direct product upsert fallback succeeded', {
+                  productId: updatedProduct.id,
+                });
               }
             })();
           }
@@ -434,13 +469,20 @@ export const useProductStore = create<ProductStore>()(
         set((state) => ({
           products: state.products.filter((p) => p.id !== id),
         }));
+        console.log('[ProductStore.deleteProduct] Local product removed', {
+          productId: id,
+        });
 
         // Queue for sync
         if (supabase) {
-          syncManager.queueOperation({
+          const operationId = syncManager.queueOperation({
             type: "products",
             action: "delete",
             data: { id },
+          });
+          console.log('[ProductStore.deleteProduct] Queue operation created', {
+            operationId,
+            productId: id,
           });
         }
       },

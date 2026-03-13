@@ -137,34 +137,42 @@ function toDbProduct(product: Product) {
   };
 }
 
-async function syncProductAfterSale(productSync: SaleProductSync) {
+async function syncProductAfterSale(productSync: SaleProductSync, signal?: AbortSignal) {
   const client = getSupabaseClient();
   if (productSync.decrementAvailable === false) {
-    const { error: upsertError } = await client
+    let upsertQuery: any = client
       .from('products')
       .upsert(toDbProduct(productSync.snapshot), { onConflict: 'id' });
+    if (signal) upsertQuery = upsertQuery.abortSignal(signal);
+    const { error: upsertError } = await upsertQuery;
     if (upsertError) throw upsertError;
     return;
   }
 
-  const { error: rpcError } = await (client as any).rpc('decrement_stock', {
+  let rpcQuery: any = (client as any).rpc('decrement_stock', {
     product_id: productSync.id,
     qty: productSync.qty,
   });
+  if (signal && typeof rpcQuery.abortSignal === 'function') {
+    rpcQuery = rpcQuery.abortSignal(signal);
+  }
+  const { error: rpcError } = await rpcQuery;
 
   if (rpcError) {
     if (!isMissingDatabaseFunction(rpcError, 'decrement_stock')) {
       throw rpcError;
     }
 
-    const { error: upsertError } = await client
+    let upsertQuery: any = client
       .from('products')
       .upsert(toDbProduct(productSync.snapshot), { onConflict: 'id' });
+    if (signal) upsertQuery = upsertQuery.abortSignal(signal);
+    const { error: upsertError } = await upsertQuery;
     if (upsertError) throw upsertError;
     return;
   }
 
-  const { error: metadataError } = await client
+  let metadataQuery: any = client
     .from('products')
     .update({
       sold_to: productSync.snapshot.soldTo || null,
@@ -173,48 +181,62 @@ async function syncProductAfterSale(productSync: SaleProductSync) {
       updated_at: productSync.snapshot.updatedAt,
     })
     .eq('id', productSync.id);
+  if (signal) metadataQuery = metadataQuery.abortSignal(signal);
+  const { error: metadataError } = await metadataQuery;
   if (metadataError) throw metadataError;
 }
 
-async function syncRecordedSaleLegacy(payload: SaleSyncPayload) {
+async function syncRecordedSaleLegacy(payload: SaleSyncPayload, signal?: AbortSignal) {
   const client = getSupabaseClient();
 
-  const { error: transactionError } = await client
+  let transactionQuery: any = client
     .from('transactions')
     .upsert(toDbTransaction(payload.transaction), { onConflict: 'id' });
+  if (signal) transactionQuery = transactionQuery.abortSignal(signal);
+  const { error: transactionError } = await transactionQuery;
   if (transactionError) throw transactionError;
 
-  const { error: deleteItemsError } = await client
+  let deleteItemsQuery: any = client
     .from('transaction_items')
     .delete()
     .eq('transaction_id', payload.transaction.id);
+  if (signal) deleteItemsQuery = deleteItemsQuery.abortSignal(signal);
+  const { error: deleteItemsError } = await deleteItemsQuery;
   if (deleteItemsError) throw deleteItemsError;
 
   const itemsData = toDbTransactionItems(payload.transaction);
   if (itemsData.length > 0) {
-    const { error: itemsError } = await client
+    let insertItemsQuery: any = client
       .from('transaction_items')
       .insert(itemsData);
+    if (signal) insertItemsQuery = insertItemsQuery.abortSignal(signal);
+    const { error: itemsError } = await insertItemsQuery;
     if (itemsError) throw itemsError;
   }
 
   if (payload.customer) {
-    const { error: customerError } = await client
+    let customerQuery: any = client
       .from('customers')
       .upsert(toDbCustomer(payload.customer.snapshot), { onConflict: 'id' });
+    if (signal) customerQuery = customerQuery.abortSignal(signal);
+    const { error: customerError } = await customerQuery;
     if (customerError) throw customerError;
   }
 
   for (const productSync of payload.products) {
-    await syncProductAfterSale(productSync);
+    await syncProductAfterSale(productSync, signal);
   }
 }
 
-export async function syncRecordedSale(payload: SaleSyncPayload) {
+export async function syncRecordedSale(payload: SaleSyncPayload, signal?: AbortSignal) {
   const client = getSupabaseClient();
-  const { error } = await (client as any).rpc('record_sale', {
+  let rpcQuery: any = (client as any).rpc('record_sale', {
     sale_payload: payload,
   });
+  if (signal && typeof rpcQuery.abortSignal === 'function') {
+    rpcQuery = rpcQuery.abortSignal(signal);
+  }
+  const { error } = await rpcQuery;
 
   if (!error) return;
 
@@ -223,5 +245,5 @@ export async function syncRecordedSale(payload: SaleSyncPayload) {
   }
 
   console.warn('[Sync] record_sale RPC not found, falling back to legacy per-table sale sync');
-  await syncRecordedSaleLegacy(payload);
+  await syncRecordedSaleLegacy(payload, signal);
 }

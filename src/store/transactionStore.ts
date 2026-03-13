@@ -163,7 +163,13 @@ export const useTransactionStore = create<TransactionStore>()(
           console.warn('[Store] Sale queue failed (localStorage quota?), attempting direct sale sync:', queueError);
           (async () => {
             try {
-              await syncRecordedSale(payload);
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), 45_000);
+              try {
+                await syncRecordedSale(payload, controller.signal);
+              } finally {
+                clearTimeout(timer);
+              }
             } catch (error) {
               console.error('[Store] Direct sale sync failed — recording in dead-letter:', error);
               syncManager.addToDeadLetter({

@@ -10,6 +10,7 @@ import { Product, ProductStatus } from "../types";
 export const productService = {
   async getAll(): Promise<Product[]> {
     const client = getSupabaseClient();
+    const BATCH_TIMEOUT_MS = 15_000;
 
     // Fetch all products using pagination (Supabase has default limit ~1000-2000)
     const BATCH_SIZE = 1000;
@@ -21,13 +22,32 @@ export const productService = {
     console.log("[ProductService.getAll] Starting fetch...");
 
     while (hasMore) {
-      const { data, error } = await client
-        .from("products")
-        .select("*")
-        .eq("is_deleted", false)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: true })
-        .range(offset, offset + BATCH_SIZE - 1);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), BATCH_TIMEOUT_MS);
+      let data: any[] | null = null;
+      let error: any = null;
+
+      try {
+        const result = await client
+          .from("products")
+          .select("*")
+          .eq("is_deleted", false)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(offset, offset + BATCH_SIZE - 1)
+          .abortSignal(controller.signal);
+        data = result.data;
+        error = result.error;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          throw new Error(
+            `[ProductService.getAll] Request timed out after ${BATCH_TIMEOUT_MS}ms`,
+          );
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
 
       if (error) throw error;
 

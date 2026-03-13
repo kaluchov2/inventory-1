@@ -1,5 +1,8 @@
 import { productService } from '../services/productService';
 import { useProductStore } from '../store/productStore';
+import { syncManager } from '../lib/syncManager';
+import { connectionStatus } from '../lib/connectionStatus';
+import { syncQueue } from '../lib/syncQueue';
 
 export async function quickSyncCheck(): Promise<void> {
   console.log('=== SYNC DIAGNOSTICS ===');
@@ -34,15 +37,41 @@ export async function quickSyncCheck(): Promise<void> {
   console.log('========================');
 }
 
+export function dumpSyncState(): void {
+  const connection = connectionStatus.getStatus();
+  const syncStatus = syncManager.getStatus();
+  const queueItems = syncQueue.getAll();
+
+  console.log('=== SYNC STATE SNAPSHOT ===');
+  console.log('Connection:', {
+    isOnline: connection.isOnline,
+    isSupabaseConnected: connection.isSupabaseConnected,
+    lastChecked: connection.lastChecked,
+  });
+  console.log('Sync status:', syncStatus);
+  console.log('Queue info:', syncQueue.getQueueInfo());
+  console.log('Queue items:', queueItems.map((op) => ({
+    id: op.id,
+    type: op.type,
+    action: op.action,
+    retryCount: op.retryCount,
+    timestamp: op.timestamp,
+    rowId: op.action === 'record_sale' ? op.data?.transaction?.id : op.data?.id,
+  })));
+  console.log('===========================');
+}
+
 // Expose for browser console
 declare global {
   interface Window {
     quickSyncCheck: typeof quickSyncCheck;
+    dumpSyncState: typeof dumpSyncState;
     productService: typeof productService;
   }
 }
 
 window.quickSyncCheck = quickSyncCheck;
+window.dumpSyncState = dumpSyncState;
 window.productService = productService;
 
-console.log('[SyncDiagnostics] Diagnostic tools loaded. Run quickSyncCheck() in console to check sync status.');
+console.log('[SyncDiagnostics] Diagnostic tools loaded. Run quickSyncCheck() and dumpSyncState() in console.');

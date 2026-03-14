@@ -58,6 +58,8 @@ import { AutocompleteSelect } from "../components/common";
 import { syncQueue } from "../lib/syncQueue";
 import { syncManager } from "../lib/syncManager";
 
+const WALK_IN_OPTION_VALUE = "__WALK_IN__";
+
 export function Settings() {
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -82,6 +84,7 @@ export function Settings() {
   const [exportUps, setExportUps] = useState<number | null>(null);
   const [exportCustomerId, setExportCustomerId] = useState<string | null>(null);
   const [isExportingCustomer, setIsExportingCustomer] = useState(false);
+  const [isExportingTransactions, setIsExportingTransactions] = useState(false);
   const [importMode, setImportMode] = useState<"full" | "by_ups">("full");
   const [importUpsScope, setImportUpsScope] = useState<string | null>(null);
 
@@ -105,7 +108,13 @@ export function Settings() {
   }, [importResult, importUpsScope]);
 
   const customerOptions = useMemo(
-    () => customers.map((c) => ({ value: c.id, label: c.name })),
+    () => [
+      {
+        value: WALK_IN_OPTION_VALUE,
+        label: `${es.customers.walkIn} (sin registrar)`,
+      },
+      ...customers.map((c) => ({ value: c.id, label: c.name })),
+    ],
     [customers],
   );
 
@@ -116,17 +125,76 @@ export function Settings() {
     exportProductsByUps(filtered, `inventario_UPS${exportUps}_${date}.xlsx`);
   };
 
+  const handleExportAllTransactions = async () => {
+    setIsExportingTransactions(true);
+    let sourceTransactions = transactions;
+
+    try {
+      const remoteTransactions = await Promise.race([
+        transactionService.getAll(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("transaction_fetch_timeout")), 15000),
+        ),
+      ]);
+
+      const mergedById = new Map<string, (typeof transactions)[number]>();
+      remoteTransactions.forEach((tx) => mergedById.set(tx.id, tx));
+      transactions.forEach((tx) => mergedById.set(tx.id, tx));
+      sourceTransactions = Array.from(mergedById.values()).sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+      );
+    } catch (error) {
+      console.warn(
+        "[Settings] Could not fetch all transactions for export, using local cache:",
+        error,
+      );
+      toast({
+        title: "Usando datos locales",
+        description:
+          "No se pudo consultar Supabase. Se exportará con datos locales.",
+        status: "warning",
+        duration: 3500,
+        isClosable: true,
+      });
+    } finally {
+      setIsExportingTransactions(false);
+    }
+
+    if (sourceTransactions.length === 0) {
+      toast({
+        title: "No hay transacciones para exportar",
+        status: "warning",
+        duration: 3000,
+      });
+      return;
+    }
+
+    exportTransactionsToExcel(sourceTransactions);
+    toast({
+      title: "Transacciones exportadas",
+      description: `${sourceTransactions.length} registro(s) incluidos.`,
+      status: "success",
+      duration: 2500,
+    });
+  };
+
   const handleExportByCustomer = async () => {
     if (!exportCustomerId) return;
-    const customer = customers.find((c) => c.id === exportCustomerId);
-    if (!customer) return;
+    const isWalkIn = exportCustomerId === WALK_IN_OPTION_VALUE;
+    const customer = isWalkIn
+      ? undefined
+      : customers.find((c) => c.id === exportCustomerId);
+    if (!isWalkIn && !customer) return;
+    const customerName = isWalkIn ? es.customers.walkIn : customer!.name;
 
     setIsExportingCustomer(true);
     let sourceTransactions = transactions;
 
     try {
       const remoteTransactions = await Promise.race([
-        transactionService.getSalesForCustomer(exportCustomerId, customer.name),
+        isWalkIn
+          ? transactionService.getWalkInSales(customerName)
+          : transactionService.getSalesForCustomer(exportCustomerId, customerName),
         new Promise<never>((_, reject) =>
           setTimeout(
             () => reject(new Error("transaction_fetch_timeout")),
@@ -134,9 +202,15 @@ export function Settings() {
           ),
         ),
       ]);
-      if (remoteTransactions.length > 0) {
-        sourceTransactions = remoteTransactions;
-      }
+
+      // Merge remote + local so optimistic/pending local sales are never dropped.
+      // Local rows overwrite same-id remote rows because they can include fresher edits.
+      const mergedById = new Map<string, (typeof transactions)[number]>();
+      remoteTransactions.forEach((tx) => mergedById.set(tx.id, tx));
+      transactions.forEach((tx) => mergedById.set(tx.id, tx));
+      sourceTransactions = Array.from(mergedById.values()).sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const timedOut = message === "transaction_fetch_timeout";
@@ -160,12 +234,14 @@ export function Settings() {
       setIsExportingCustomer(false);
     }
 
-    const targetName = normalizeCustomerKey(customer.name);
+    const targetName = normalizeCustomerKey(customerName);
     const exportedCount = sourceTransactions.filter(
       (t) =>
         String(t.type).toLowerCase() === "sale" &&
-        (t.customerId === exportCustomerId ||
-          normalizeCustomerKey(t.customerName) === targetName),
+        (isWalkIn
+          ? !t.customerId && normalizeCustomerKey(t.customerName) === targetName
+          : t.customerId === exportCustomerId ||
+            normalizeCustomerKey(t.customerName) === targetName),
     ).length;
 
     if (exportedCount === 0) {
@@ -182,13 +258,13 @@ export function Settings() {
 
     exportTransactionsByCustomer(
       sourceTransactions,
-      exportCustomerId,
-      customer.name,
+      isWalkIn ? "" : exportCustomerId,
+      customerName,
     );
 
     toast({
       title: `Archivo descargado - ${exportedCount} venta${exportedCount !== 1 ? "s" : ""}`,
-      description: "Ventas de " + customer.name + " exportadas correctamente.",
+      description: "Ventas de " + customerName + " exportadas correctamente.",
       status: "success",
       duration: 3000,
     });
@@ -812,8 +888,10 @@ export function Settings() {
             variant="outline"
             size={{ base: "sm", md: "lg" }}
             fontSize={{ base: "xs", md: "md" }}
-            onClick={() => exportTransactionsToExcel(transactions)}
-            isDisabled={transactions.length === 0}
+            onClick={handleExportAllTransactions}
+            isDisabled={isExportingTransactions}
+            isLoading={isExportingTransactions}
+            loadingText="Consultando..."
           >
             Transacciones
             <Badge ml={1} fontSize={{ base: "2xs", md: "sm" }}>

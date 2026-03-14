@@ -74,6 +74,8 @@ interface CartItem extends TransactionItem {
   maxQuantity: number;
 }
 
+const PENDING_BALANCE_EPSILON = 0.01;
+
 export function Scanner() {
   const toast = useToast();
   const [mode, setMode] = useState<ScanMode>("sell");
@@ -105,6 +107,7 @@ export function Scanner() {
   const [cardAmount, setCardAmount] = useState(0);
   const [useMixedPayment, setUseMixedPayment] = useState(false);
   const [notes, setNotes] = useState("");
+  const [isSubmittingSale, setIsSubmittingSale] = useState(false);
 
   // AddToCartModal disclosure
   const {
@@ -147,6 +150,8 @@ export function Scanner() {
   }, [useMixedPayment, amountToPay, cashAmount, transferAmount, cardAmount]);
 
   const pendingBalance = Math.max(0, cartTotal - paidAmount);
+  const hasPendingBalance = pendingBalance > PENDING_BALANCE_EPSILON;
+  const effectivePendingBalance = hasPendingBalance ? pendingBalance : 0;
 
   const effectivePaymentMethod: PaymentMethod = useMemo(() => {
     if (useMixedPayment) {
@@ -157,13 +162,13 @@ export function Scanner() {
         Boolean,
       ).length;
       if (methodCount > 1) return "mixed";
-      if (pendingBalance > 0) return "credit";
+      if (hasPendingBalance) return "credit";
       if (hasCash) return "cash";
       if (hasTransfer) return "transfer";
       if (hasCard) return "card";
       return "credit";
     }
-    if (pendingBalance > 0) return "credit";
+    if (hasPendingBalance) return "credit";
     return paymentMethod;
   }, [
     useMixedPayment,
@@ -171,7 +176,7 @@ export function Scanner() {
     cashAmount,
     transferAmount,
     cardAmount,
-    pendingBalance,
+    hasPendingBalance,
   ]);
 
   const selectedCustomer = useMemo(
@@ -181,9 +186,9 @@ export function Scanner() {
 
   const canCompleteSale = useMemo(() => {
     if (cart.length === 0) return false;
-    if (pendingBalance > 0 && !selectedCustomerId) return false;
+    if (hasPendingBalance && !selectedCustomerId) return false;
     return true;
-  }, [cart.length, pendingBalance, selectedCustomerId]);
+  }, [cart.length, hasPendingBalance, selectedCustomerId]);
 
   // --- Scan logic ---
   const processBarcode = useCallback(
@@ -340,6 +345,7 @@ export function Scanner() {
           quantity: qty,
           unitPrice: productToAddToCart.unitPrice,
           totalPrice: qty * productToAddToCart.unitPrice,
+          upsBatch: productToAddToCart.upsBatch,
           category: productToAddToCart.category,
           brand: productToAddToCart.brand,
           color: productToAddToCart.color,
@@ -376,8 +382,10 @@ export function Scanner() {
 
   // --- Complete sale ---
   const handleCompleteSaleScanner = () => {
+    if (isSubmittingSale) return;
+
     if (!canCompleteSale) {
-      if (pendingBalance > 0 && !selectedCustomerId) {
+      if (hasPendingBalance && !selectedCustomerId) {
         toast({
           title: "Seleccione un cliente para registrar el saldo pendiente",
           status: "warning",
@@ -392,6 +400,8 @@ export function Scanner() {
       }
       return;
     }
+
+    setIsSubmittingSale(true);
 
     let finalCash = 0;
     let finalTransfer = 0;
@@ -419,6 +429,7 @@ export function Scanner() {
             quantity,
             unitPrice,
             totalPrice,
+            upsBatch,
             category,
             brand,
             color,
@@ -429,6 +440,7 @@ export function Scanner() {
             quantity,
             unitPrice,
             totalPrice,
+            upsBatch,
             category,
             brand,
             color,
@@ -443,7 +455,7 @@ export function Scanner() {
         },
         {
           notes: notes || undefined,
-          isInstallment: pendingBalance > 0,
+          isInstallment: hasPendingBalance,
         },
       );
 
@@ -470,8 +482,10 @@ export function Scanner() {
       });
 
       const customerSnapshot =
-        pendingBalance > 0 && selectedCustomerId
-          ? addPurchase(selectedCustomerId, pendingBalance, { skipSync: true })
+        hasPendingBalance && selectedCustomerId
+          ? addPurchase(selectedCustomerId, effectivePendingBalance, {
+              skipSync: true,
+            })
           : undefined;
 
       queueSaleSync({
@@ -480,15 +494,15 @@ export function Scanner() {
         customer: customerSnapshot
           ? {
               snapshot: customerSnapshot,
-              balanceDelta: pendingBalance,
-              purchaseDelta: pendingBalance,
+              balanceDelta: effectivePendingBalance,
+              purchaseDelta: effectivePendingBalance,
             }
           : undefined,
       });
 
       const toastTitle =
-        pendingBalance > 0
-          ? `Venta registrada (Saldo pendiente: ${formatCurrency(pendingBalance)})`
+        hasPendingBalance
+          ? `Venta registrada (Saldo pendiente: ${formatCurrency(effectivePendingBalance)})`
           : es.sales.saleCompleted;
 
       toast({ title: toastTitle, status: "success", duration: 4000 });
@@ -507,6 +521,8 @@ export function Scanner() {
       handleScanAgain();
     } catch {
       toast({ title: es.errors.saveError, status: "error", duration: 3000 });
+    } finally {
+      setIsSubmittingSale(false);
     }
   };
 
@@ -1192,7 +1208,7 @@ export function Scanner() {
                   </Text>
                 </FormControl>
 
-                {pendingBalance > 0 && (
+                {hasPendingBalance && (
                   <HStack
                     justify="space-between"
                     mt={3}
@@ -1204,12 +1220,12 @@ export function Scanner() {
                       Saldo Pendiente:
                     </Text>
                     <Text fontWeight="bold" color="orange.700" fontSize="lg">
-                      {formatCurrency(pendingBalance)}
+                      {formatCurrency(effectivePendingBalance)}
                     </Text>
                   </HStack>
                 )}
 
-                {pendingBalance > 0 && !selectedCustomerId && (
+                {hasPendingBalance && !selectedCustomerId && (
                   <Alert status="warning" borderRadius="md" mt={2}>
                     <AlertIcon />
                     <Text fontSize="sm">
@@ -1239,10 +1255,12 @@ export function Scanner() {
               size="lg"
               leftIcon={<Icon as={FiShoppingCart} />}
               onClick={handleCompleteSaleScanner}
-              isDisabled={!canCompleteSale}
+              isDisabled={!canCompleteSale || isSubmittingSale}
+              isLoading={isSubmittingSale}
+              loadingText="Registrando..."
             >
-              {pendingBalance > 0
-                ? `Registrar (Debe ${formatCurrency(pendingBalance)})`
+              {hasPendingBalance
+                ? `Registrar (Debe ${formatCurrency(effectivePendingBalance)})`
                 : "Confirmar Venta"}
             </Button>
           </ModalFooter>

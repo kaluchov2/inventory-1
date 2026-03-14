@@ -7,7 +7,9 @@ import { Products } from './pages/Products';
 import { Customers } from './pages/Customers';
 import { Sales } from './pages/Sales';
 import { Reports } from './pages/Reports';
+import { Transactions } from './pages/Transactions';
 import { Settings } from './pages/Settings';
+import { Soporte } from './pages/Soporte';
 import { Login } from './pages/Login';
 import { Scanner } from './pages/Scanner';
 import { QRGenerator } from './pages/QRGenerator';
@@ -76,7 +78,9 @@ function App() {
           <Route path="escaner" element={<Scanner />} />
           <Route path="codigos" element={<QRGenerator />} />
           <Route path="reportes" element={<Reports />} />
+          <Route path="transacciones" element={<Transactions />} />
           <Route path="configuracion" element={<Settings />} />
+          <Route path="soporte" element={<Soporte />} />
         </Route>
 
         {/* Catch all - redirect to home */}

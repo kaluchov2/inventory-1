@@ -15,10 +15,12 @@ import {
   FiUsers,
   FiShoppingCart,
   FiBarChart2,
+  FiFileText,
   FiSettings,
   FiLogOut,
   FiCamera,
   FiGrid,
+  FiHelpCircle,
 } from 'react-icons/fi';
 import { es } from '../../i18n/es';
 import { useAuthStore } from '../../store/authStore';
@@ -37,8 +39,10 @@ const navItems: NavItem[] = [
   { icon: FiShoppingCart, label: es.nav.sales, path: '/ventas' },
   { icon: FiCamera, label: es.nav.scanner, path: '/escaner' },
   { icon: FiGrid, label: es.nav.qrGenerator, path: '/codigos' },
+  { icon: FiFileText, label: es.nav.transactions, path: '/transacciones' },
   { icon: FiBarChart2, label: es.nav.reports, path: '/reportes' },
   { icon: FiSettings, label: es.nav.settings, path: '/configuracion' },
+  { icon: FiHelpCircle, label: 'Soporte', path: '/soporte' },
 ];
 
 export function Sidebar() {

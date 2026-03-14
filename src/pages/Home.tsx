@@ -1,4 +1,4 @@
-import {
+﻿import {
   Box,
   Heading,
   SimpleGrid,
@@ -7,14 +7,8 @@ import {
   Button,
   Icon,
   Text,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
-  Badge,
   Select,
+  Badge,
 } from '@chakra-ui/react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -25,15 +19,25 @@ import {
   FiUsers,
   FiAlertCircle,
   FiClipboard,
+  FiStar,
+  FiCheckCircle,
 } from 'react-icons/fi';
 import { StatCard } from '../components/common';
 import { useProductStore } from '../store/productStore';
 import { useCustomerStore } from '../store/customerStore';
-import { useTransactionStore } from '../store/transactionStore';
-import { formatCurrency, formatDateTime } from '../utils/formatters';
+import { formatCurrency } from '../utils/formatters';
 import { es } from '../i18n/es';
 import { getReviewQty } from '../utils/productHelpers';
 import { UPS_BATCH_OPTIONS } from '../constants/colors';
+
+const whatsNewItems = [
+  'Mejoras en sincronizacion de ventas y productos',
+  'Correcciones de errores en flujo de ventas',
+  'Nueva seccion de ayuda en Soporte',
+  'Validacion de ventas por cliente y fecha en Transacciones',
+  'Soporte para Cliente de Paso en validacion y exportes',
+  'Impresion de QR disponible desde Productos',
+];
 
 export function Home() {
   const navigate = useNavigate();
@@ -41,7 +45,6 @@ export function Home() {
 
   const { products, getTotalInventoryValue } = useProductStore();
   const { getTotalOutstandingBalance } = useCustomerStore();
-  const { transactions, getTodaySales } = useTransactionStore();
 
   const filteredProducts = selectedUps
     ? products.filter(p => Number(p.upsBatch) === selectedUps)
@@ -53,13 +56,7 @@ export function Home() {
         .reduce((sum, p) => sum + p.availableQty * p.unitPrice, 0)
     : getTotalInventoryValue();
   const reviewProducts = filteredProducts.filter(p => getReviewQty(p) > 0);
-  const todaySales = getTodaySales();
   const outstandingBalance = getTotalOutstandingBalance();
-
-  // Get recent transactions (last 5)
-  const recentTransactions = transactions
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .slice(0, 5);
 
   const quickActions = [
     {
@@ -112,7 +109,7 @@ export function Home() {
         </Select>
         {selectedUps !== '' && (
           <Button size="sm" variant="ghost" colorScheme="gray" onClick={() => setSelectedUps('')}>
-            ✕ Limpiar
+            âœ• Limpiar
           </Button>
         )}
       </HStack>
@@ -145,37 +142,32 @@ export function Home() {
         />
       </SimpleGrid>
 
-      {/* Today's Sales Summary */}
-      <Box bg="white" borderRadius="xl" p={{ base: 4, md: 6 }} boxShadow="sm">
-        <Heading size={{ base: 'md', md: 'lg' }} mb={4}>
-          {es.dashboard.todaysSales}
-        </Heading>
-        <SimpleGrid columns={{ base: 2, md: 4 }} spacing={{ base: 2, md: 4 }}>
-          <Box p={4} bg="green.50" borderRadius="lg" textAlign="center">
-            <Text fontSize="md" color="gray.600">Efectivo</Text>
-            <Text fontSize="2xl" fontWeight="bold" color="green.600">
-              {formatCurrency(todaySales.cash)}
-            </Text>
-          </Box>
-          <Box p={4} bg="blue.50" borderRadius="lg" textAlign="center">
-            <Text fontSize="md" color="gray.600">Transferencia</Text>
-            <Text fontSize="2xl" fontWeight="bold" color="blue.600">
-              {formatCurrency(todaySales.transfer)}
-            </Text>
-          </Box>
-          <Box p={4} bg="purple.50" borderRadius="lg" textAlign="center">
-            <Text fontSize="md" color="gray.600">Tarjeta</Text>
-            <Text fontSize="2xl" fontWeight="bold" color="purple.600">
-              {formatCurrency(todaySales.card)}
-            </Text>
-          </Box>
-          <Box p={4} bg="gray.100" borderRadius="lg" textAlign="center">
-            <Text fontSize="md" color="gray.600">Total</Text>
-            <Text fontSize="2xl" fontWeight="bold" color="gray.800">
-              {formatCurrency(todaySales.total)}
-            </Text>
-          </Box>
-        </SimpleGrid>
+      {/* What's New */}
+      <Box bg="blue.50" borderRadius="xl" p={{ base: 4, md: 6 }} border="1px" borderColor="blue.100">
+        <HStack spacing={2} mb={4} flexWrap="wrap">
+          <Icon as={FiStar} color="blue.500" boxSize={5} />
+          <Heading size="md" color="blue.700">Â¿QuÃ© hay de nuevo?</Heading>
+          <Badge colorScheme="blue" fontSize="xs" borderRadius="full" px={2}>
+            Ãšltima actualizaciÃ³n
+          </Badge>
+        </HStack>
+        <VStack spacing={2} align="stretch">
+          {whatsNewItems.map((item, i) => (
+            <HStack key={i} spacing={2} align="flex-start">
+              <Icon as={FiCheckCircle} color="blue.400" boxSize={4} mt="2px" flexShrink={0} />
+              <Text fontSize="sm" color="blue.800">{item}</Text>
+            </HStack>
+          ))}
+        </VStack>
+        <Button
+          mt={4}
+          size="sm"
+          colorScheme="blue"
+          variant="outline"
+          onClick={() => navigate('/soporte')}
+        >
+          Ver Preguntas Frecuentes
+        </Button>
       </Box>
 
       {/* Quick Actions */}
@@ -202,115 +194,6 @@ export function Home() {
           ))}
         </SimpleGrid>
       </Box>
-
-      {/* Recent Transactions */}
-      <Box bg="white" borderRadius="xl" p={{ base: 4, md: 6 }} boxShadow="sm">
-        <HStack justify="space-between" mb={4} flexWrap="wrap" gap={2}>
-          <Heading size={{ base: 'md', md: 'lg' }}>
-            {es.dashboard.recentTransactions}
-          </Heading>
-          <Button
-            variant="link"
-            colorScheme="brand"
-            onClick={() => navigate('/reportes')}
-          >
-            Ver todos
-          </Button>
-        </HStack>
-
-        {recentTransactions.length === 0 ? (
-          <Text color="gray.500" textAlign="center" py={8}>
-            {es.transactions.noTransactions}
-          </Text>
-        ) : (
-          <Box overflowX="auto">
-            <Table>
-              <Thead>
-                <Tr>
-                  <Th>{es.transactions.date}</Th>
-                  <Th>{es.transactions.customer}</Th>
-                  <Th isNumeric>{es.transactions.amount}</Th>
-                  <Th>{es.transactions.paymentMethod}</Th>
-                  <Th>{es.transactions.type}</Th>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {recentTransactions.map((transaction) => (
-                  <Tr key={transaction.id}>
-                    <Td>{formatDateTime(transaction.date)}</Td>
-                    <Td fontWeight="medium">{transaction.customerName}</Td>
-                    <Td isNumeric fontWeight="bold" color="green.600">
-                      {formatCurrency(transaction.total)}
-                    </Td>
-                    <Td>
-                      <Badge
-                        colorScheme={
-                          transaction.paymentMethod === 'cash' ? 'green' :
-                          transaction.paymentMethod === 'transfer' ? 'blue' :
-                          transaction.paymentMethod === 'card' ? 'purple' : 'gray'
-                        }
-                      >
-                        {transaction.paymentMethod === 'cash' ? 'Efectivo' :
-                         transaction.paymentMethod === 'transfer' ? 'Transferencia' :
-                         transaction.paymentMethod === 'card' ? 'Tarjeta' :
-                         transaction.paymentMethod === 'mixed' ? 'Mixto' : 'Crédito'}
-                      </Badge>
-                    </Td>
-                    <Td>
-                      <Badge colorScheme="gray">
-                        {transaction.type === 'sale' ? 'Venta' :
-                         transaction.type === 'return' ? 'Devolución' :
-                         transaction.type === 'installment_payment' ? 'Abono' : 'Ajuste'}
-                      </Badge>
-                    </Td>
-                  </Tr>
-                ))}
-              </Tbody>
-            </Table>
-          </Box>
-        )}
-      </Box>
-
-      {/* Review Alert */}
-      {reviewProducts.length > 0 && (
-        <Box bg="yellow.50" borderRadius="xl" p={{ base: 4, md: 6 }} border="2px" borderColor="yellow.200">
-          <HStack spacing={3} mb={4} flexWrap="wrap">
-            <Icon as={FiAlertCircle} boxSize={{ base: 5, md: 6 }} color="yellow.600" />
-            <Heading size={{ base: 'md', md: 'lg' }} color="yellow.700">
-              Productos por Revisar ({reviewProducts.length}){selectedUps !== '' ? ` — UPS ${selectedUps}` : ''}
-            </Heading>
-          </HStack>
-          <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={3}>
-            {reviewProducts.slice(0, 4).map((product) => (
-              <Box
-                key={product.id}
-                p={3}
-                bg="white"
-                borderRadius="lg"
-                border="1px"
-                borderColor="yellow.200"
-              >
-                <Text fontWeight="bold" noOfLines={1}>{product.name}</Text>
-                <HStack justify="space-between">
-                  <Text fontSize="sm" color="gray.600">UPS {product.upsBatch}</Text>
-                  <Text fontSize="sm" fontWeight="bold" color="green.600">{formatCurrency(product.unitPrice)}</Text>
-                </HStack>
-                {product.notes && (
-                  <Text fontSize="xs" color="gray.500" noOfLines={1} mt={1}>{product.notes}</Text>
-                )}
-              </Box>
-            ))}
-          </SimpleGrid>
-          <Button
-            variant="link"
-            colorScheme="yellow"
-            mt={4}
-            onClick={() => navigate('/productos?tab=review')}
-          >
-            Ver todos ({reviewProducts.length} productos por revisar)
-          </Button>
-        </Box>
-      )}
     </VStack>
   );
 }

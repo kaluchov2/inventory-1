@@ -38,7 +38,7 @@ import {
   Spinner,
   Center,
 } from "@chakra-ui/react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   FiPlus,
   FiMoreVertical,
@@ -52,6 +52,8 @@ import {
   FiAlertCircle,
   FiCheckCircle,
   FiRotateCcw,
+  FiHelpCircle,
+  FiPrinter,
 } from "react-icons/fi";
 import { SearchInput, EmptyState, ConfirmDialog, AutocompleteSelect } from "../components/common";
 import { ProductForm, SoldProductDetails, ResolveReviewModal, RefundModal } from "../components/products";
@@ -122,6 +124,7 @@ function ProductCard({
   paymentStatus?: { status: 'paid' | 'pending' | 'unknown'; amount: number };
 }) {
   const { customers } = useCustomerStore();
+  const navigate = useNavigate();
   const customer = product.soldTo ? customers.find(c => c.id === product.soldTo) : null;
 
   return (
@@ -292,12 +295,26 @@ function ProductCard({
           Resolver
         </Button>
       )}
+
+      {/* Print QR Button - Mobile */}
+      <Button
+        mt={2}
+        size="sm"
+        variant="outline"
+        colorScheme="gray"
+        leftIcon={<Icon as={FiPrinter} />}
+        onClick={() => navigate(`/codigos?ups=${product.upsBatch}&seq=${product.productNumber ?? product.dropSequence ?? ''}`)}
+        w="full"
+      >
+        Imprimir QR
+      </Button>
     </Box>
   );
 }
 
 export function Products() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isMobile = useBreakpointValue({ base: true, lg: false });
 
@@ -834,14 +851,25 @@ export function Products() {
       {/* Header */}
       <Flex justify="space-between" align="center" wrap="wrap" gap={3}>
         <Heading size={{ base: "lg", md: "xl" }}>{es.products.title}</Heading>
-        <Button
-          leftIcon={<Icon as={FiPlus} />}
-          colorScheme="brand"
-          size={{ base: "md", md: "lg" }}
-          onClick={handleAddProduct}
-        >
-          {es.products.addProduct}
-        </Button>
+        <HStack spacing={2}>
+          <Button
+            leftIcon={<Icon as={FiHelpCircle} />}
+            variant="outline"
+            colorScheme="gray"
+            size={{ base: "md", md: "lg" }}
+            onClick={() => navigate('/soporte')}
+          >
+            Preguntas Frecuentes
+          </Button>
+          <Button
+            leftIcon={<Icon as={FiPlus} />}
+            colorScheme="brand"
+            size={{ base: "md", md: "lg" }}
+            onClick={handleAddProduct}
+          >
+            {es.products.addProduct}
+          </Button>
+        </HStack>
       </Flex>
 
       {/* View Mode Tabs */}
@@ -1293,6 +1321,17 @@ export function Products() {
                               </Box>
                             </SimpleGrid>
                           )}
+                          <Flex justify="flex-end" px={4} pt={2}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              colorScheme="gray"
+                              leftIcon={<Icon as={FiPrinter} />}
+                              onClick={() => navigate(`/codigos?ups=${product.upsBatch}&seq=${product.productNumber ?? product.dropSequence ?? ''}`)}
+                            >
+                              Imprimir QR
+                            </Button>
+                          </Flex>
                         </Td>
                       </Tr>
                     )}

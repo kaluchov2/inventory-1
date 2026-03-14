@@ -34,6 +34,7 @@ import {
 import { generateBarcode } from "../utils/barcodeGenerator";
 import { UPS_BATCH_OPTIONS } from "../constants/colors";
 
+import { useSearchParams } from "react-router-dom";
 const NUMBERED_UPS_THRESHOLD = 20;
 import { AutocompleteSelect } from "../components/common";
 import { useProductStore } from "../store/productStore";
@@ -55,12 +56,15 @@ const SIZE_CONFIG: Record<
 
 export function QRGenerator() {
   const toast = useToast();
-  const [selectedUps, setSelectedUps] = useState<number | "">("");
-  const [fromInput, setFromInput] = useState("1");
-  const [toInput, setToInput] = useState("40");
+  const [searchParams] = useSearchParams();
+  const paramUps = searchParams.get("ups");
+  const paramSeq = searchParams.get("seq");
+  const [selectedUps, setSelectedUps] = useState<number | "">(paramUps ? Number(paramUps) : "");
+  const [fromInput, setFromInput] = useState(paramSeq || "1");
+  const [toInput, setToInput] = useState(paramSeq || "40");
   const fromSeq = Math.max(1, parseInt(fromInput) || 1);
   const toSeq = Math.max(fromSeq, parseInt(toInput) || fromSeq);
-  const [size, setSize] = useState<QRSize>("M");
+  const [size, setSize] = useState<QRSize>(paramSeq ? "T" : "M");
   const [showPreview, setShowPreview] = useState(false);
   const [mode, setMode] = useState<Mode>("generate");
   // Map of product.id → number of copies

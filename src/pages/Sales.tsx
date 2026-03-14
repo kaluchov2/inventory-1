@@ -63,6 +63,8 @@ interface CartItem extends TransactionItem {
   isUnregistered?: boolean;
 }
 
+const PENDING_BALANCE_EPSILON = 0.01;
+
 export function Sales() {
   const toast = useToast();
 
@@ -162,6 +164,8 @@ export function Sales() {
 
   // Calculate pending balance
   const pendingBalance = Math.max(0, total - paidAmount);
+  const hasPendingBalance = pendingBalance > PENDING_BALANCE_EPSILON;
+  const effectivePendingBalance = hasPendingBalance ? pendingBalance : 0;
   const sharedSelectProps = {
     size: "md" as const,
     bg: "white",
@@ -186,13 +190,13 @@ export function Sales() {
       ).length;
 
       if (methodCount > 1) return "mixed";
-      if (pendingBalance > 0) return "credit";
+      if (hasPendingBalance) return "credit";
       if (hasCash) return "cash";
       if (hasTransfer) return "transfer";
       if (hasCard) return "card";
       return "credit";
     }
-    if (pendingBalance > 0) return "credit";
+    if (hasPendingBalance) return "credit";
     return paymentMethod;
   }, [
     useMixedPayment,
@@ -200,7 +204,7 @@ export function Sales() {
     cashAmount,
     transferAmount,
     cardAmount,
-    pendingBalance,
+    hasPendingBalance,
   ]);
 
   // Handle product selection from filter panel (quick add 1)
@@ -319,14 +323,14 @@ export function Sales() {
   const canCompleteSale = useMemo(() => {
     if (cart.length === 0) return false;
     // If there's pending balance, must have customer
-    if (pendingBalance > 0 && !selectedCustomerId) return false;
+    if (hasPendingBalance && !selectedCustomerId) return false;
     return true;
-  }, [cart.length, pendingBalance, selectedCustomerId]);
+  }, [cart.length, hasPendingBalance, selectedCustomerId]);
 
   // Process sale
   const handleCompleteSale = () => {
     if (!canCompleteSale) {
-      if (pendingBalance > 0 && !selectedCustomerId) {
+      if (hasPendingBalance && !selectedCustomerId) {
         toast({
           title: "Seleccione un cliente para registrar el saldo pendiente",
           status: "warning",
@@ -402,7 +406,7 @@ export function Sales() {
         discount,
         discountNote: discountNote || undefined,
         notes: notes || undefined,
-        isInstallment: pendingBalance > 0,
+        isInstallment: hasPendingBalance,
       },
     );
 
@@ -430,8 +434,8 @@ export function Sales() {
     });
 
     const customerSnapshot =
-      pendingBalance > 0 && selectedCustomerId
-        ? addPurchase(selectedCustomerId, pendingBalance, { skipSync: true })
+      hasPendingBalance && selectedCustomerId
+        ? addPurchase(selectedCustomerId, effectivePendingBalance, { skipSync: true })
         : undefined;
 
     queueSaleSync({
@@ -440,15 +444,15 @@ export function Sales() {
       customer: customerSnapshot
         ? {
             snapshot: customerSnapshot,
-            balanceDelta: pendingBalance,
-            purchaseDelta: pendingBalance,
+            balanceDelta: effectivePendingBalance,
+            purchaseDelta: effectivePendingBalance,
           }
         : undefined,
     });
 
     const toastTitle =
-      pendingBalance > 0
-        ? `Venta registrada (Saldo pendiente: ${formatCurrency(pendingBalance)})`
+      hasPendingBalance
+        ? `Venta registrada (Saldo pendiente: ${formatCurrency(effectivePendingBalance)})`
         : es.sales.saleCompleted;
 
     toast({ title: toastTitle, status: "success", duration: 3000 });
@@ -838,11 +842,11 @@ export function Sales() {
                           {selectedCustomer.name} tiene saldo pendiente:{" "}
                           {formatCurrency(selectedCustomer.balance)}
                         </Text>
-                        {pendingBalance > 0 && (
+                        {hasPendingBalance && (
                           <Text fontSize="xs" color="orange.700" mt={1}>
                             Deuda total si continua:{" "}
                             {formatCurrency(
-                              selectedCustomer.balance + pendingBalance,
+                              selectedCustomer.balance + effectivePendingBalance,
                             )}
                           </Text>
                         )}
@@ -853,48 +857,90 @@ export function Sales() {
                   {/* Payment Method */}
                   <FormControl mb={4}>
                     <FormLabel>{es.sales.paymentMethod}</FormLabel>
-                    <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={2}>
+                    <SimpleGrid columns={{ base: 1, sm: 2, md: 3 }} spacing={2}>
                       <Button
+                        size="sm"
                         variant={
                           !useMixedPayment && paymentMethod === "cash"
                             ? "solid"
                             : "outline"
                         }
                         colorScheme="green"
+                        h="auto"
+                        minH={{ base: "14", md: "11" }}
+                        whiteSpace="normal"
+                        lineHeight="short"
+                        py={{ base: 2, md: 3 }}
+                        fontSize={{ base: "md", md: "lg" }}
+                        minW={0}
+                        sx={{ overflowWrap: "anywhere" }}
                         onClick={() => {
                           setPaymentMethod("cash");
                           setUseMixedPayment(false);
                         }}
                       >
-                        {es.sales.cash}
+                        <Text display={{ base: "inline", lg: "none" }}>
+                          Efect.
+                        </Text>
+                        <Text display={{ base: "none", lg: "inline" }}>
+                          {es.sales.cash}
+                        </Text>
                       </Button>
                       <Button
+                        size="sm"
                         variant={
                           !useMixedPayment && paymentMethod === "transfer"
                             ? "solid"
                             : "outline"
                         }
                         colorScheme="blue"
+                        h="auto"
+                        minH={{ base: "14", md: "11" }}
+                        whiteSpace="normal"
+                        lineHeight="short"
+                        py={{ base: 2, md: 3 }}
+                        fontSize={{ base: "md", md: "lg" }}
+                        minW={0}
+                        sx={{ overflowWrap: "anywhere" }}
                         onClick={() => {
                           setPaymentMethod("transfer");
                           setUseMixedPayment(false);
                         }}
                       >
-                        {es.sales.transfer}
+                        <Text display={{ base: "inline", lg: "none" }}>
+                          Transf.
+                        </Text>
+                        <Text display={{ base: "none", lg: "inline" }}>
+                          {es.sales.transfer}
+                        </Text>
                       </Button>
                       <Button
+                        size="sm"
                         variant={
                           !useMixedPayment && paymentMethod === "card"
                             ? "solid"
                             : "outline"
                         }
                         colorScheme="purple"
+                        h="auto"
+                        minH={{ base: "14", md: "11" }}
+                        whiteSpace="normal"
+                        lineHeight="short"
+                        py={{ base: 2, md: 3 }}
+                        fontSize={{ base: "md", md: "lg" }}
+                        minW={0}
+                        sx={{ overflowWrap: "anywhere" }}
                         onClick={() => {
                           setPaymentMethod("card");
                           setUseMixedPayment(false);
                         }}
                       >
-                        {es.sales.card}
+                        <Text display={{ base: "inline", lg: "none" }}>
+                          Tarj.
+                        </Text>
+                        <Text display={{ base: "none", lg: "inline" }}>
+                          {es.sales.card}
+                        </Text>
                       </Button>
                     </SimpleGrid>
                     <Button
@@ -904,8 +950,19 @@ export function Sales() {
                       colorScheme="orange"
                       onClick={() => setUseMixedPayment(!useMixedPayment)}
                       w="full"
+                      h="auto"
+                      minH={{ base: "14", md: "11" }}
+                      whiteSpace="normal"
+                      lineHeight="short"
+                      py={{ base: 2, md: 3 }}
+                      fontSize={{ base: "md", md: "lg" }}
                     >
-                      Pago mixto (multiples metodos)
+                      <Text display={{ base: "none", lg: "inline" }}>
+                        Pago mixto (multiples metodos)
+                      </Text>
+                      <Text display={{ base: "inline", lg: "none" }}>
+                        Pago mixto
+                      </Text>
                     </Button>
                   </FormControl>
 
@@ -962,7 +1019,7 @@ export function Sales() {
                     </FormControl>
 
                     {/* Pending balance display */}
-                    {pendingBalance > 0 && (
+                    {hasPendingBalance && (
                       <HStack
                         justify="space-between"
                         mt={3}
@@ -978,12 +1035,12 @@ export function Sales() {
                           color="orange.700"
                           fontSize="lg"
                         >
-                          {formatCurrency(pendingBalance)}
+                          {formatCurrency(effectivePendingBalance)}
                         </Text>
                       </HStack>
                     )}
 
-                    {pendingBalance > 0 && !selectedCustomerId && (
+                    {hasPendingBalance && !selectedCustomerId && (
                       <Alert status="warning" borderRadius="md" mt={2}>
                         <AlertIcon />
                         <Text fontSize="sm">
@@ -1015,8 +1072,8 @@ export function Sales() {
                     onClick={handleCompleteSale}
                     isDisabled={!canCompleteSale}
                   >
-                    {pendingBalance > 0
-                      ? `Registrar Venta (Debe ${formatCurrency(pendingBalance)})`
+                    {hasPendingBalance
+                      ? `Registrar Venta (Debe ${formatCurrency(effectivePendingBalance)})`
                       : es.sales.registerSale}
                   </Button>
                 </Box>
@@ -1155,36 +1212,62 @@ export function Sales() {
                           {/* Payment Method */}
                           <FormControl>
                             <FormLabel>{es.sales.paymentMethod}</FormLabel>
-                            <HStack>
+                            <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={2}>
                               <Button
-                                flex={1}
+                                size="sm"
                                 variant={
                                   installmentPaymentMethod === "cash"
                                     ? "solid"
                                     : "outline"
                                 }
                                 colorScheme="green"
+                                h="auto"
+                                minH={{ base: "14", md: "11" }}
+                                whiteSpace="normal"
+                                lineHeight="short"
+                                py={{ base: 2, md: 3 }}
+                                fontSize={{ base: "md", md: "lg" }}
+                                minW={0}
+                                sx={{ overflowWrap: "anywhere" }}
                                 onClick={() =>
                                   setInstallmentPaymentMethod("cash")
                                 }
                               >
-                                {es.sales.cash}
+                                <Text display={{ base: "inline", lg: "none" }}>
+                                  Efect.
+                                </Text>
+                                <Text display={{ base: "none", lg: "inline" }}>
+                                  {es.sales.cash}
+                                </Text>
                               </Button>
                               <Button
-                                flex={1}
+                                size="sm"
                                 variant={
                                   installmentPaymentMethod === "transfer"
                                     ? "solid"
                                     : "outline"
                                 }
                                 colorScheme="blue"
+                                h="auto"
+                                minH={{ base: "14", md: "11" }}
+                                whiteSpace="normal"
+                                lineHeight="short"
+                                py={{ base: 2, md: 3 }}
+                                fontSize={{ base: "md", md: "lg" }}
+                                minW={0}
+                                sx={{ overflowWrap: "anywhere" }}
                                 onClick={() =>
                                   setInstallmentPaymentMethod("transfer")
                                 }
                               >
-                                {es.sales.transfer}
+                                <Text display={{ base: "inline", lg: "none" }}>
+                                  Transf.
+                                </Text>
+                                <Text display={{ base: "none", lg: "inline" }}>
+                                  {es.sales.transfer}
+                                </Text>
                               </Button>
-                            </HStack>
+                            </SimpleGrid>
                           </FormControl>
 
                           {/* Notes */}

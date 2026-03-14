@@ -72,10 +72,13 @@ export const transactionService = {
       return byIdData.map(convertFromDbFormat);
     }
 
+    // Use contains match to tolerate historical spacing/punctuation variants in denormalized names.
+    const namePattern = `%${trimmedName}%`;
+
     const { data: byNameData, error: byNameError } = await client
       .from('transactions')
       .select('*, transaction_items(*)')
-      .ilike('customer_name', trimmedName)
+      .ilike('customer_name', namePattern)
       .eq('type', 'sale')
       .eq('is_deleted', false)
       .order('date', { ascending: false });
@@ -84,6 +87,45 @@ export const transactionService = {
 
     const unique = new Map<string, any>();
     [...byIdData, ...byNameData].forEach((row) => {
+      unique.set(row.id, row);
+    });
+
+    return Array.from(unique.values())
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .map(convertFromDbFormat);
+  },
+
+  async getWalkInSales(walkInName?: string): Promise<Transaction[]> {
+    const client = getSupabaseClient();
+
+    const { data: byNullCustomerData, error: byNullCustomerError } = await client
+      .from('transactions')
+      .select('*, transaction_items(*)')
+      .is('customer_id', null)
+      .eq('type', 'sale')
+      .eq('is_deleted', false)
+      .order('date', { ascending: false });
+
+    if (byNullCustomerError) throw byNullCustomerError;
+
+    const trimmedName = (walkInName || '').trim();
+    if (!trimmedName) {
+      return byNullCustomerData.map(convertFromDbFormat);
+    }
+
+    const namePattern = `%${trimmedName}%`;
+    const { data: byNameData, error: byNameError } = await client
+      .from('transactions')
+      .select('*, transaction_items(*)')
+      .ilike('customer_name', namePattern)
+      .eq('type', 'sale')
+      .eq('is_deleted', false)
+      .order('date', { ascending: false });
+
+    if (byNameError) throw byNameError;
+
+    const unique = new Map<string, any>();
+    [...byNullCustomerData, ...byNameData].forEach((row) => {
       unique.set(row.id, row);
     });
 

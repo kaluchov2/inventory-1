@@ -109,7 +109,7 @@ export function Home() {
         </Select>
         {selectedUps !== '' && (
           <Button size="sm" variant="ghost" colorScheme="gray" onClick={() => setSelectedUps('')}>
-            âœ• Limpiar
+            X Limpiar
           </Button>
         )}
       </HStack>
@@ -146,9 +146,9 @@ export function Home() {
       <Box bg="blue.50" borderRadius="xl" p={{ base: 4, md: 6 }} border="1px" borderColor="blue.100">
         <HStack spacing={2} mb={4} flexWrap="wrap">
           <Icon as={FiStar} color="blue.500" boxSize={5} />
-          <Heading size="md" color="blue.700">Â¿QuÃ© hay de nuevo?</Heading>
+          <Heading size="md" color="blue.700">{"\u00BFQu\u00E9 hay de nuevo?"}</Heading>
           <Badge colorScheme="blue" fontSize="xs" borderRadius="full" px={2}>
-            Ãšltima actualizaciÃ³n
+            {"\u00DAltima actualizaci\u00F3n"}
           </Badge>
         </HStack>
         <VStack spacing={2} align="stretch">

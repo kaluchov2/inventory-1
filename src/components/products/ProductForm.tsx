@@ -149,16 +149,33 @@ export function ProductForm({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} size="xl" isCentered>
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      size={{ base: "full", md: "xl" }}
+      isCentered
+      scrollBehavior="inside"
+      motionPreset="slideInBottom"
+    >
       <ModalOverlay />
-      <ModalContent mx={4} maxH="90vh" overflowY="auto">
+      <ModalContent
+        mx={{ base: 2, md: 4 }}
+        my={{ base: 2, md: 6 }}
+        maxH={{ base: "calc(100dvh - 16px)", md: "calc(100vh - 64px)" }}
+        display="flex"
+        flexDirection="column"
+        overflow="hidden"
+      >
         <ModalHeader fontSize="2xl">
           {isEditing ? es.products.editProduct : es.products.addProduct}
         </ModalHeader>
         <ModalCloseButton size="lg" />
 
-        <form onSubmit={handleSubmit(handleFormSubmit)}>
-          <ModalBody>
+        <form
+          onSubmit={handleSubmit(handleFormSubmit)}
+          style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+        >
+          <ModalBody overflowY="auto" flex="1" minH={0}>
             <VStack spacing={5}>
               {/* Product Name */}
               <FormControl isInvalid={!!errors.name} isRequired>
@@ -174,7 +191,7 @@ export function ProductForm({
               </FormControl>
 
               {/* UPS Batch and Category */}
-              <SimpleGrid columns={2} spacing={4} w="full">
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} w="full">
                 <FormControl isInvalid={!!errors.upsBatch} isRequired>
                   <FormLabel>{es.products.upsBatch}</FormLabel>
                   <Controller
@@ -187,7 +204,7 @@ export function ProductForm({
                         value={field.value}
                         onChange={(val) => field.onChange(val ? Number(val) : '')}
                         placeholder="Buscar UPS..."
-                        size="lg"
+                        size="md"
                       />
                     )}
                   />
@@ -206,7 +223,7 @@ export function ProductForm({
                         value={field.value}
                         onChange={(val) => field.onChange(val as CategoryCode)}
                         placeholder="Buscar categoría..."
-                        size="lg"
+                        size="md"
                       />
                     )}
                   />
@@ -215,7 +232,7 @@ export function ProductForm({
               </SimpleGrid>
 
               {/* Quantity and Price */}
-              <SimpleGrid columns={2} spacing={4} w="full">
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} w="full">
                 <FormControl isInvalid={!!errors.quantity} isRequired>
                   <FormLabel>{es.products.quantity}</FormLabel>
                   <Controller
@@ -268,7 +285,7 @@ export function ProductForm({
               </SimpleGrid>
 
               {/* Brand and Color */}
-              <SimpleGrid columns={2} spacing={4} w="full">
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} w="full">
                 <FormControl>
                   <FormLabel>{es.products.brand}</FormLabel>
                   <Input
@@ -286,10 +303,9 @@ export function ProductForm({
                 <FormControl>
                   <FormLabel>{es.products.color}</FormLabel>
                   <Select
-                    height={"fit-content"}
                     {...register("color")}
                     placeholder="Seleccionar color"
-                    size="lg"
+                    size="md"
                   >
                     {PRODUCT_COLORS.map((color) => (
                       <option key={color} value={color}>
@@ -318,7 +334,14 @@ export function ProductForm({
             </VStack>
           </ModalBody>
 
-          <ModalFooter gap={2} flexWrap="wrap" justifyContent="flex-end">
+          <ModalFooter
+            gap={2}
+            flexWrap="wrap"
+            justifyContent="flex-end"
+            borderTopWidth="1px"
+            borderColor="gray.100"
+            bg="white"
+          >
             <Button
               variant="outline"
               size="lg"

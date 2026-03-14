@@ -38,7 +38,15 @@ import {
   Alert,
   AlertIcon,
 } from "@chakra-ui/react";
-import { FiPlus, FiTrash2, FiShoppingCart, FiDollarSign } from "react-icons/fi";
+import {
+  FiPlus,
+  FiTrash2,
+  FiShoppingCart,
+  FiDollarSign,
+  FiHelpCircle,
+  FiRefreshCw,
+} from "react-icons/fi";
+import { useNavigate } from "react-router-dom";
 import { AutocompleteSelect, CurrencyInput } from "../components/common";
 import { ProductFilterPanel } from "../components/sales";
 import { useProductStore } from "../store/productStore";
@@ -67,6 +75,7 @@ const PENDING_BALANCE_EPSILON = 0.01;
 
 export function Sales() {
   const toast = useToast();
+  const navigate = useNavigate();
 
   const { products, updateProductFromSale } = useProductStore();
   const { customers, addPurchase, receivePayment } = useCustomerStore();
@@ -143,6 +152,10 @@ export function Sales() {
             : c.name,
       })),
     [customers],
+  );
+  const unregisteredCategoryOptions = useMemo(
+    () => [{ value: "", label: "Sin categoria" }, ...CATEGORY_OPTIONS],
+    [],
   );
 
   // Cart totals
@@ -435,7 +448,9 @@ export function Sales() {
 
     const customerSnapshot =
       hasPendingBalance && selectedCustomerId
-        ? addPurchase(selectedCustomerId, effectivePendingBalance, { skipSync: true })
+        ? addPurchase(selectedCustomerId, effectivePendingBalance, {
+            skipSync: true,
+          })
         : undefined;
 
     queueSaleSync({
@@ -450,10 +465,9 @@ export function Sales() {
         : undefined,
     });
 
-    const toastTitle =
-      hasPendingBalance
-        ? `Venta registrada (Saldo pendiente: ${formatCurrency(effectivePendingBalance)})`
-        : es.sales.saleCompleted;
+    const toastTitle = hasPendingBalance
+      ? `Venta registrada (Saldo pendiente: ${formatCurrency(effectivePendingBalance)})`
+      : es.sales.saleCompleted;
 
     toast({ title: toastTitle, status: "success", duration: 3000 });
     toast({
@@ -539,9 +553,72 @@ export function Sales() {
     setInstallmentNotes("");
   };
 
+  const handleOpenSupport = () => {
+    navigate("/soporte");
+  };
+
+  const handleOpenTransactions = () => {
+    navigate("/transacciones");
+  };
+
+  const handleRefreshTransactions = () => {
+    navigate(`/transacciones?refresh=${Date.now()}`);
+  };
+
   return (
     <VStack spacing={{ base: 4, md: 6 }} align="stretch">
-      <Heading size={{ base: "lg", md: "xl" }}>{es.sales.title}</Heading>
+      <Flex
+        justify="space-between"
+        align={{ base: "stretch", md: "center" }}
+        direction={{ base: "column", md: "row" }}
+        gap={3}
+      >
+        <Heading size={{ base: "lg", md: "xl" }}>{es.sales.title}</Heading>
+        <Button
+          size="sm"
+          variant="outline"
+          colorScheme="blue"
+          leftIcon={<Icon as={FiHelpCircle} />}
+          onClick={handleOpenSupport}
+          h="auto"
+          minH={{ base: "14", md: "11" }}
+          whiteSpace="normal"
+          py={{ base: 2, md: 3 }}
+        >
+          Como saber si se registraron mis ventas correctamente
+        </Button>
+      </Flex>
+
+      <Box bg="white" p={{ base: 4, md: 5 }} borderRadius="xl" boxShadow="sm">
+        <VStack align="stretch" spacing={3}>
+          <Text fontWeight="semibold" color="gray.700">
+            Para verificar una venta dirigete a Transacciones, selecciona la
+            fecha y el cliente.
+          </Text>
+          <Text fontWeight="bold" color="red.500">
+            Verificar que la fecha seleccionada es la deseada para visualizar
+            las transacciones.
+          </Text>
+          <HStack spacing={2} flexWrap="wrap">
+            <Button
+              size="sm"
+              colorScheme="brand"
+              onClick={handleOpenTransactions}
+            >
+              Ir a Transacciones
+            </Button>
+            {/* <Button
+              size="sm"
+              variant="outline"
+              colorScheme="orange"
+              leftIcon={<Icon as={FiRefreshCw} />}
+              onClick={handleRefreshTransactions}
+            >
+              Actualizar Transacciones
+            </Button> */}
+          </HStack>
+        </VStack>
+      </Box>
 
       <Tabs colorScheme="brand" size={{ base: "md", md: "lg" }}>
         <TabList>
@@ -635,7 +712,9 @@ export function Sales() {
                         options={customerOptions}
                         value={selectedCustomerId}
                         onChange={(value) =>
-                          setSelectedCustomerId(value === "" ? "" : String(value))
+                          setSelectedCustomerId(
+                            value === "" ? "" : String(value),
+                          )
                         }
                         placeholder={es.customers.walkIn}
                         size="md"
@@ -846,7 +925,8 @@ export function Sales() {
                           <Text fontSize="xs" color="orange.700" mt={1}>
                             Deuda total si continua:{" "}
                             {formatCurrency(
-                              selectedCustomer.balance + effectivePendingBalance,
+                              selectedCustomer.balance +
+                                effectivePendingBalance,
                             )}
                           </Text>
                         )}
@@ -1212,7 +1292,10 @@ export function Sales() {
                           {/* Payment Method */}
                           <FormControl>
                             <FormLabel>{es.sales.paymentMethod}</FormLabel>
-                            <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={2}>
+                            <SimpleGrid
+                              columns={{ base: 1, sm: 2 }}
+                              spacing={2}
+                            >
                               <Button
                                 size="sm"
                                 variant={
@@ -1355,20 +1438,17 @@ export function Sales() {
 
               <FormControl>
                 <FormLabel>Categoría (opcional)</FormLabel>
-                <Select
-                  {...sharedSelectProps}
+                <AutocompleteSelect
+                  options={unregisteredCategoryOptions}
                   value={unregCategory}
-                  onChange={(e) =>
-                    setUnregCategory(e.target.value as CategoryCode | "")
+                  onChange={(value) =>
+                    setUnregCategory(
+                      value === "" ? "" : (value as CategoryCode),
+                    )
                   }
-                  placeholder="Sin categoría"
-                >
-                  {CATEGORY_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </Select>
+                  placeholder="Sin categoria"
+                  size="md"
+                />
               </FormControl>
 
               <FormControl>

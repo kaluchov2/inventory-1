@@ -44,7 +44,6 @@ import {
   FiShoppingCart,
   FiDollarSign,
   FiHelpCircle,
-  FiRefreshCw,
 } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import { AutocompleteSelect, CurrencyInput } from "../components/common";
@@ -561,9 +560,9 @@ export function Sales() {
     navigate("/transacciones");
   };
 
-  const handleRefreshTransactions = () => {
-    navigate(`/transacciones?refresh=${Date.now()}`);
-  };
+  // const handleRefreshTransactions = () => {
+  //   navigate(`/transacciones?refresh=${Date.now()}`);
+  // };
 
   return (
     <VStack spacing={{ base: 4, md: 6 }} align="stretch">

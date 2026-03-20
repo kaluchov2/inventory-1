@@ -43,6 +43,7 @@ import { useDropStore } from "../store/dropStore";
 import { useStaffStore } from "../store/staffStore";
 import { transactionService } from "../services/transactionService";
 import { importExcelFile, ImportResult } from "../utils/excelImport";
+import { Transaction } from "../types";
 import {
   exportProductsToExcel,
   exportProductsByUps,
@@ -96,6 +97,19 @@ export function Settings() {
       .trim()
       .toLowerCase();
 
+  const withTimeout = async <T,>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    timeoutCode: string,
+  ): Promise<T> => {
+    return Promise.race([
+      promise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(timeoutCode)), timeoutMs),
+      ),
+    ]);
+  };
+
   const filteredByUpsCount = useMemo(() => {
     if (!exportUps) return 0;
     return products.filter((p) => Number(p.upsBatch) === exportUps).length;
@@ -127,35 +141,46 @@ export function Settings() {
 
   const handleExportAllTransactions = async () => {
     setIsExportingTransactions(true);
-    let sourceTransactions = transactions;
+    let sourceTransactions: Transaction[] = [];
 
     try {
-      const remoteTransactions = await Promise.race([
-        transactionService.getAll(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("transaction_fetch_timeout")), 15000),
-        ),
-      ]);
+      let remoteTransactions: Transaction[] = [];
+      try {
+        remoteTransactions = await withTimeout(
+          transactionService.getAll(),
+          15000,
+          "transaction_fetch_timeout",
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === "transaction_fetch_timeout") {
+          remoteTransactions = await withTimeout(
+            transactionService.getAll(),
+            60000,
+            "transaction_fetch_timeout",
+          );
+        } else {
+          throw error;
+        }
+      }
 
-      const mergedById = new Map<string, (typeof transactions)[number]>();
-      remoteTransactions.forEach((tx) => mergedById.set(tx.id, tx));
-      transactions.forEach((tx) => mergedById.set(tx.id, tx));
-      sourceTransactions = Array.from(mergedById.values()).sort(
+      sourceTransactions = [...remoteTransactions].sort(
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
       );
     } catch (error) {
       console.warn(
-        "[Settings] Could not fetch all transactions for export, using local cache:",
+        "[Settings] Could not fetch all transactions for export:",
         error,
       );
       toast({
-        title: "Usando datos locales",
+        title: "No se pudo consultar Supabase",
         description:
-          "No se pudo consultar Supabase. Se exportará con datos locales.",
-        status: "warning",
-        duration: 3500,
+          "No se exporto archivo para evitar datos incompletos. Reintente cuando haya mejor conexion.",
+        status: "error",
+        duration: 4500,
         isClosable: true,
       });
+      return;
     } finally {
       setIsExportingTransactions(false);
     }
@@ -188,27 +213,35 @@ export function Settings() {
     const customerName = isWalkIn ? es.customers.walkIn : customer!.name;
 
     setIsExportingCustomer(true);
-    let sourceTransactions = transactions;
+    let sourceTransactions: Transaction[] = [];
 
     try {
-      const remoteTransactions = await Promise.race([
+      const fetchCustomerTransactions = () =>
         isWalkIn
           ? transactionService.getWalkInSales(customerName)
-          : transactionService.getSalesForCustomer(exportCustomerId, customerName),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("transaction_fetch_timeout")),
-            15000,
-          ),
-        ),
-      ]);
+          : transactionService.getSalesForCustomer(exportCustomerId, customerName);
 
-      // Merge remote + local so optimistic/pending local sales are never dropped.
-      // Local rows overwrite same-id remote rows because they can include fresher edits.
-      const mergedById = new Map<string, (typeof transactions)[number]>();
-      remoteTransactions.forEach((tx) => mergedById.set(tx.id, tx));
-      transactions.forEach((tx) => mergedById.set(tx.id, tx));
-      sourceTransactions = Array.from(mergedById.values()).sort(
+      let remoteTransactions: Transaction[] = [];
+      try {
+        remoteTransactions = await withTimeout(
+          fetchCustomerTransactions(),
+          15000,
+          "transaction_fetch_timeout",
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === "transaction_fetch_timeout") {
+          remoteTransactions = await withTimeout(
+            fetchCustomerTransactions(),
+            60000,
+            "transaction_fetch_timeout",
+          );
+        } else {
+          throw error;
+        }
+      }
+
+      sourceTransactions = [...remoteTransactions].sort(
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
       );
     } catch (error) {
@@ -216,20 +249,21 @@ export function Settings() {
       const timedOut = message === "transaction_fetch_timeout";
 
       console.warn(
-        "[Settings] Could not fetch customer transactions for export, using local cache:",
+        "[Settings] Could not fetch customer transactions for export:",
         error,
       );
       toast({
         title: timedOut
-          ? "Consulta lenta - usando datos locales"
-          : "Sin conexion - usando datos locales",
+          ? "Consulta lenta de Supabase"
+          : "Sin conexion a Supabase",
         description: timedOut
-          ? "La consulta tardo demasiado. Se exportara con cache local."
-          : "No se pudo conectar a Supabase. El archivo puede no incluir ventas recientes.",
-        status: "warning",
-        duration: 4000,
+          ? "No se exporto archivo para evitar datos incompletos. Intente de nuevo."
+          : "No se exporto archivo para evitar datos incompletos.",
+        status: "error",
+        duration: 5000,
         isClosable: true,
       });
+      return;
     } finally {
       setIsExportingCustomer(false);
     }

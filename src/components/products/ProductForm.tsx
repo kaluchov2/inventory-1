@@ -11,7 +11,6 @@ import {
   FormLabel,
   FormErrorMessage,
   Input,
-  Select,
   Textarea,
   SimpleGrid,
   VStack,
@@ -302,17 +301,24 @@ export function ProductForm({
 
                 <FormControl>
                   <FormLabel>{es.products.color}</FormLabel>
-                  <Select
-                    {...register("color")}
-                    placeholder="Seleccionar color"
-                    size="md"
-                  >
-                    {PRODUCT_COLORS.map((color) => (
-                      <option key={color} value={color}>
-                        {color}
-                      </option>
-                    ))}
-                  </Select>
+                  <Controller
+                    name="color"
+                    control={control}
+                    render={({ field }) => (
+                      <AutocompleteSelect
+                        options={PRODUCT_COLORS.map((color) => ({
+                          value: color,
+                          label: color,
+                        }))}
+                        value={field.value || ""}
+                        onChange={(val) =>
+                          field.onChange(val === "" ? "" : String(val))
+                        }
+                        placeholder="Seleccionar color"
+                        size="md"
+                      />
+                    )}
+                  />
                 </FormControl>
               </SimpleGrid>
 

@@ -16,12 +16,12 @@ export interface SyncIncident {
   };
 }
 
-const STORAGE_KEY = 'inventory_sync_incidents';
 const MAX_STORED_INCIDENTS = 200;
 const MAX_META_CHARS = 6_000;
 const POST_TIMEOUT_MS = 4_000;
 const DUPLICATE_WINDOW_MS = 10_000;
 const lastIncidentByFingerprint = new Map<string, number>();
+const memoryIncidents: SyncIncident[] = [];
 
 function toSafeMeta(meta: unknown): Record<string, unknown> | undefined {
   if (meta === undefined) return undefined;
@@ -60,14 +60,9 @@ function toSafeMeta(meta: unknown): Record<string, unknown> | undefined {
 }
 
 function persistIncident(incident: SyncIncident) {
-  if (typeof window === 'undefined') return;
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    const parsed = stored ? (JSON.parse(stored) as SyncIncident[]) : [];
-    const next = [...parsed, incident].slice(-MAX_STORED_INCIDENTS);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // Intentionally ignore storage errors to avoid impacting sync flow.
+  memoryIncidents.push(incident);
+  if (memoryIncidents.length > MAX_STORED_INCIDENTS) {
+    memoryIncidents.splice(0, memoryIncidents.length - MAX_STORED_INCIDENTS);
   }
 }
 
@@ -157,21 +152,9 @@ export function logSyncIncident(
 }
 
 export function getStoredSyncIncidents(): SyncIncident[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    const parsed = stored ? JSON.parse(stored) : [];
-    return Array.isArray(parsed) ? (parsed as SyncIncident[]) : [];
-  } catch {
-    return [];
-  }
+  return [...memoryIncidents];
 }
 
 export function clearStoredSyncIncidents(): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // noop
-  }
+  memoryIncidents.length = 0;
 }

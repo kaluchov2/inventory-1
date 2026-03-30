@@ -8,16 +8,18 @@ import {
   Divider,
   Button,
   Icon,
+  IconButton,
   Alert,
   AlertIcon,
   Spinner,
 } from '@chakra-ui/react';
-import { FiDollarSign } from 'react-icons/fi';
+import { FiDollarSign, FiEdit2 } from 'react-icons/fi';
 import { Customer, Transaction } from '../../types';
 import { useTransactionStore } from '../../store/transactionStore';
 import { formatCurrency, formatDate, formatDateTime } from '../../utils/formatters';
 import { es } from '../../i18n/es';
 import { transactionService } from '../../services/transactionService';
+import { EditSaleTransactionModal } from './EditSaleTransactionModal';
 
 interface CustomerTransactionDetailsProps {
   customer: Customer;
@@ -91,6 +93,7 @@ export function CustomerTransactionDetails({
   const [latestTransactions, setLatestTransactions] = useState<Transaction[]>([]);
   const [isLoadingLatest, setIsLoadingLatest] = useState(false);
   const [latestError, setLatestError] = useState<string | null>(null);
+  const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
 
   const unpaidTransactions = useMemo(
     () => getUnpaidTransactionsByCustomer(customer.id),
@@ -379,6 +382,16 @@ export function CustomerTransactionDetails({
                         <Badge colorScheme={paymentMethodColor[transaction.paymentMethod]}>
                           {paymentMethodLabel[transaction.paymentMethod]}
                         </Badge>
+                        {transaction.type === 'sale' && (
+                          <IconButton
+                            aria-label={es.actions.modify}
+                            icon={<Icon as={FiEdit2} />}
+                            size="xs"
+                            variant="ghost"
+                            colorScheme="brand"
+                            onClick={() => setTransactionToEdit(transaction)}
+                          />
+                        )}
                       </HStack>
                     </HStack>
 
@@ -448,6 +461,18 @@ export function CustomerTransactionDetails({
           )}
         </VStack>
       </Box>
+
+      <EditSaleTransactionModal
+        transaction={transactionToEdit}
+        isOpen={!!transactionToEdit}
+        onClose={() => setTransactionToEdit(null)}
+        onSaved={(updatedTransaction) => {
+          setLatestTransactions((current) => {
+            const merged = mergeTransactions([updatedTransaction], current);
+            return getLatestTransactionsForCustomer(merged, customer.id, customer.name);
+          });
+        }}
+      />
     </VStack>
   );
 }

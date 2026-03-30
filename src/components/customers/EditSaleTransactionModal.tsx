@@ -1,0 +1,582 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  AlertIcon,
+  Badge,
+  Box,
+  Button,
+  Divider,
+  FormControl,
+  FormLabel,
+  HStack,
+  Icon,
+  IconButton,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
+  NumberDecrementStepper,
+  NumberIncrementStepper,
+  NumberInput,
+  NumberInputField,
+  NumberInputStepper,
+  Text,
+  VStack,
+  useDisclosure,
+  useToast,
+} from '@chakra-ui/react';
+import { FiMinusCircle, FiPlus } from 'react-icons/fi';
+import { ConfirmDialog, AutocompleteSelect } from '../common';
+import { connectionStatus } from '../../lib/connectionStatus';
+import { syncManager } from '../../lib/syncManager';
+import { isMissingDatabaseFunction } from '../../lib/saleSync';
+import {
+  ModifySaleTransactionPayload,
+  transactionService,
+} from '../../services/transactionService';
+import { useCustomerStore } from '../../store/customerStore';
+import { useProductStore } from '../../store/productStore';
+import { useTransactionStore } from '../../store/transactionStore';
+import { Transaction } from '../../types';
+import { es } from '../../i18n/es';
+import { formatCurrency } from '../../utils/formatters';
+
+interface EditableLine {
+  lineId: string;
+  productId: string | null;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  category?: string;
+  brand?: string;
+  color?: string;
+  size?: string;
+  isExistingUnregistered: boolean;
+}
+
+interface EditSaleTransactionModalProps {
+  transaction: Transaction | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onSaved: (updatedTransaction: Transaction) => void;
+}
+
+const PENDING_BALANCE_EPSILON = 0.01;
+
+export function EditSaleTransactionModal({
+  transaction,
+  isOpen,
+  onClose,
+  onSaved,
+}: EditSaleTransactionModalProps) {
+  const toast = useToast();
+  const { products, loadFromSupabase: loadProducts } = useProductStore();
+  const loadCustomers = useCustomerStore((state) => state.loadFromSupabase);
+  const loadTransactions = useTransactionStore((state) => state.loadFromSupabase);
+  const {
+    isOpen: isConfirmOpen,
+    onOpen: onConfirmOpen,
+    onClose: onConfirmClose,
+  } = useDisclosure();
+
+  const [lines, setLines] = useState<EditableLine[]>([]);
+  const [addProductId, setAddProductId] = useState<string | null>(null);
+  const [addQuantity, setAddQuantity] = useState(1);
+  const [isSaving, setIsSaving] = useState(false);
+  const [lineSeed, setLineSeed] = useState(0);
+
+  const paidAmount = useMemo(() => {
+    if (!transaction) return 0;
+    return transaction.cashAmount + transaction.transferAmount + transaction.cardAmount;
+  }, [transaction]);
+
+  const subtotal = useMemo(
+    () =>
+      lines.reduce((sum, line) => {
+        return sum + line.quantity * line.unitPrice;
+      }, 0),
+    [lines]
+  );
+
+  const discount = transaction?.discount || 0;
+  const total = subtotal - discount;
+  const pending = Math.max(0, total - paidAmount);
+
+  const lineProductIds = useMemo(
+    () => new Set(lines.map((line) => line.productId).filter(Boolean) as string[]),
+    [lines]
+  );
+
+  const selectableProducts = useMemo(() => {
+    return products
+      .filter((product) => product.availableQty > 0 || lineProductIds.has(product.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [lineProductIds, products]);
+
+  const productOptions = useMemo(
+    () =>
+      selectableProducts.map((product) => ({
+        value: product.id,
+        label: `${product.name} (${product.availableQty} disp.)`,
+      })),
+    [selectableProducts]
+  );
+
+  const selectedProduct = useMemo(
+    () => selectableProducts.find((product) => product.id === addProductId),
+    [addProductId, selectableProducts]
+  );
+
+  const totalBelowPaidFloor = total + PENDING_BALANCE_EPSILON < paidAmount;
+  const canSave = !isSaving && lines.length > 0 && !totalBelowPaidFloor;
+
+  useEffect(() => {
+    if (!isOpen || !transaction) return;
+
+    const initialLines: EditableLine[] = transaction.items.map((item, index) => ({
+      lineId: `${transaction.id}-${index}-${Date.now()}`,
+      productId: item.productId || null,
+      productName: item.productName,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      category: item.category,
+      brand: item.brand,
+      color: item.color,
+      size: item.size,
+      isExistingUnregistered: !item.productId,
+    }));
+
+    setLines(initialLines);
+    setAddProductId(null);
+    setAddQuantity(1);
+    setLineSeed((current) => current + 1);
+  }, [isOpen, transaction]);
+
+  const handleClose = () => {
+    if (isSaving) return;
+    onConfirmClose();
+    onClose();
+  };
+
+  const handleAddProductLine = () => {
+    if (!selectedProduct || addQuantity <= 0) return;
+
+    setLines((current) => {
+      const existingIdx = current.findIndex(
+        (line) => line.productId === selectedProduct.id && !line.isExistingUnregistered
+      );
+
+      if (existingIdx >= 0) {
+        const next = [...current];
+        next[existingIdx] = {
+          ...next[existingIdx],
+          quantity: next[existingIdx].quantity + addQuantity,
+        };
+        return next;
+      }
+
+      return [
+        ...current,
+        {
+          lineId: `${selectedProduct.id}-${lineSeed}-${Date.now()}`,
+          productId: selectedProduct.id,
+          productName: selectedProduct.name,
+          quantity: addQuantity,
+          unitPrice: selectedProduct.unitPrice,
+          category: selectedProduct.category,
+          brand: selectedProduct.brand,
+          color: selectedProduct.color,
+          size: selectedProduct.size,
+          isExistingUnregistered: false,
+        },
+      ];
+    });
+
+    setAddProductId(null);
+    setAddQuantity(1);
+  };
+
+  const handleQuantityChange = (lineId: string, quantity: number) => {
+    if (!Number.isFinite(quantity) || quantity < 1) return;
+    setLines((current) =>
+      current.map((line) =>
+        line.lineId === lineId ? { ...line, quantity: Math.trunc(quantity) } : line
+      )
+    );
+  };
+
+  const handleRemoveLine = (lineId: string) => {
+    setLines((current) => current.filter((line) => line.lineId !== lineId));
+  };
+
+  const buildPayload = (): ModifySaleTransactionPayload | null => {
+    if (!transaction) return null;
+
+    return {
+      transactionId: transaction.id,
+      discount: transaction.discount,
+      discountNote: transaction.discountNote,
+      items: lines.map((line) => ({
+        productId: line.productId,
+        productName: line.productName,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        totalPrice: line.quantity * line.unitPrice,
+        category: line.category,
+        brand: line.brand,
+        color: line.color,
+        size: line.size,
+      })),
+    };
+  };
+
+  const notifyError = (error: unknown) => {
+    const message =
+      error && typeof error === 'object' && 'message' in error
+        ? String((error as any).message || '')
+        : String(error || '');
+    const lower = message.toLowerCase();
+
+    if (isMissingDatabaseFunction(error, 'modify_sale_transaction')) {
+      toast({
+        title: es.errors.transactionModifyRpcMissing,
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (lower.includes('paid_floor_violation')) {
+      toast({
+        title: es.errors.transactionModifyPaidFloor,
+        status: 'error',
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (lower.includes('insufficient_stock')) {
+      toast({
+        title: es.errors.transactionModifyInsufficientStock,
+        description: message,
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (lower.includes('sold_qty_underflow')) {
+      toast({
+        title: es.errors.transactionModifySoldUnderflow,
+        description: message,
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (
+      lower.includes('unregistered_item_add_not_allowed') ||
+      lower.includes('transaction_not_sale') ||
+      lower.includes('invalid_items_payload') ||
+      lower.includes('transaction_requires_at_least_one_item')
+    ) {
+      toast({
+        title: es.errors.transactionModifyInvalidPayload,
+        description: message,
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+      return;
+    }
+
+    toast({
+      title: es.errors.saveError,
+      description: message || es.errors.genericError,
+      status: 'error',
+      duration: 4500,
+      isClosable: true,
+    });
+  };
+
+  const handleConfirmSave = async () => {
+    const payload = buildPayload();
+    if (!payload || !transaction) return;
+    if (!canSave) return;
+
+    setIsSaving(true);
+    try {
+      const conn = connectionStatus.getStatus();
+      if (!conn.isOnline || !conn.isSupabaseConnected) {
+        toast({
+          title: es.errors.transactionModifyRequiresOnline,
+          status: 'error',
+          duration: 4000,
+          isClosable: true,
+        });
+        return;
+      }
+
+      await syncManager.syncPendingOperations();
+      const syncStatus = syncManager.getStatus();
+      if (syncStatus.pendingCount > 0) {
+        toast({
+          title: es.errors.transactionModifyPendingSync,
+          description: `${syncStatus.pendingCount} ${es.transactions.pendingSyncSuffix}`,
+          status: 'error',
+          duration: 4500,
+          isClosable: true,
+        });
+        return;
+      }
+      if (syncStatus.deadLetterCount > 0) {
+        toast({
+          title: es.errors.transactionModifyDeadLetter,
+          description: `${syncStatus.deadLetterCount} ${es.transactions.failedSyncSuffix}`,
+          status: 'error',
+          duration: 4500,
+          isClosable: true,
+        });
+        return;
+      }
+
+      const { result, transaction: updatedTransaction } =
+        await transactionService.modifySaleTransaction(payload);
+
+      await Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
+
+      onSaved(updatedTransaction);
+      onConfirmClose();
+      onClose();
+
+      toast({
+        title: es.success.transactionModified,
+        description: `${formatCurrency(result.oldTotal)} -> ${formatCurrency(result.newTotal)}`,
+        status: 'success',
+        duration: 4000,
+        isClosable: true,
+      });
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (!transaction) return null;
+
+  return (
+    <>
+      <Modal
+        isOpen={isOpen}
+        onClose={handleClose}
+        size="4xl"
+        scrollBehavior="inside"
+      >
+        <ModalOverlay />
+        <ModalContent mx={4}>
+          <ModalHeader>{es.transactions.editSaleTitle}</ModalHeader>
+          <ModalCloseButton />
+
+          <ModalBody>
+            <VStack align="stretch" spacing={4}>
+              <Box bg="gray.50" p={3} borderRadius="md">
+                <HStack justify="space-between" flexWrap="wrap">
+                  <Text fontSize="sm" color="gray.600">
+                    ID: {transaction.id}
+                  </Text>
+                  <Badge colorScheme="blue">
+                    {es.transactions.saleTypeLabel}
+                  </Badge>
+                </HStack>
+              </Box>
+
+              <Box border="1px solid" borderColor="gray.200" borderRadius="md" p={3}>
+                <VStack align="stretch" spacing={3}>
+                  <Text fontWeight="semibold">{es.transactions.addProductsLabel}</Text>
+                  <HStack align="end" flexWrap="wrap">
+                    <FormControl minW="260px" flex={1}>
+                      <FormLabel fontSize="sm">{es.transactions.productLabel}</FormLabel>
+                      <AutocompleteSelect
+                        options={productOptions}
+                        value={addProductId || ''}
+                        onChange={(value) => setAddProductId(value ? String(value) : null)}
+                        placeholder={es.transactions.selectProductPlaceholder}
+                      />
+                    </FormControl>
+                    <FormControl maxW="120px">
+                      <FormLabel fontSize="sm">{es.sales.quantity}</FormLabel>
+                      <NumberInput
+                        min={1}
+                        value={addQuantity}
+                        onChange={(_, valueNumber) => setAddQuantity(Math.max(1, valueNumber || 1))}
+                      >
+                        <NumberInputField />
+                        <NumberInputStepper>
+                          <NumberIncrementStepper />
+                          <NumberDecrementStepper />
+                        </NumberInputStepper>
+                      </NumberInput>
+                    </FormControl>
+                    <Button
+                      leftIcon={<Icon as={FiPlus} />}
+                      colorScheme="brand"
+                      onClick={handleAddProductLine}
+                      isDisabled={!selectedProduct}
+                    >
+                      {es.actions.add}
+                    </Button>
+                  </HStack>
+                </VStack>
+              </Box>
+
+              <VStack align="stretch" spacing={3}>
+                {lines.map((line) => {
+                  const lineTotal = line.quantity * line.unitPrice;
+                  return (
+                    <Box
+                      key={line.lineId}
+                      border="1px solid"
+                      borderColor="gray.200"
+                      borderRadius="md"
+                      p={3}
+                    >
+                      <VStack align="stretch" spacing={2}>
+                        <HStack justify="space-between" align="start">
+                          <VStack align="start" spacing={0}>
+                            <Text fontWeight="medium">{line.productName}</Text>
+                            {line.isExistingUnregistered && (
+                              <Badge colorScheme="orange" variant="outline">
+                                {es.transactions.unregisteredLineLabel}
+                              </Badge>
+                            )}
+                          </VStack>
+                          <IconButton
+                            aria-label={es.actions.delete}
+                            icon={<Icon as={FiMinusCircle} />}
+                            colorScheme="red"
+                            variant="ghost"
+                            onClick={() => handleRemoveLine(line.lineId)}
+                          />
+                        </HStack>
+
+                        <HStack spacing={3} align="end" flexWrap="wrap">
+                          <FormControl maxW="120px">
+                            <FormLabel fontSize="sm">{es.sales.quantity}</FormLabel>
+                            <NumberInput
+                              min={1}
+                              value={line.quantity}
+                              onChange={(_, valueNumber) =>
+                                handleQuantityChange(line.lineId, Math.max(1, valueNumber || 1))
+                              }
+                              isDisabled={line.isExistingUnregistered}
+                            >
+                              <NumberInputField />
+                              <NumberInputStepper>
+                                <NumberIncrementStepper />
+                                <NumberDecrementStepper />
+                              </NumberInputStepper>
+                            </NumberInput>
+                          </FormControl>
+                          <Box>
+                            <Text fontSize="sm" color="gray.500">
+                              {es.transactions.unitPriceLabel}
+                            </Text>
+                            <Text fontWeight="semibold">{formatCurrency(line.unitPrice)}</Text>
+                          </Box>
+                          <Box>
+                            <Text fontSize="sm" color="gray.500">
+                              {es.transactions.lineTotalLabel}
+                            </Text>
+                            <Text fontWeight="semibold">{formatCurrency(lineTotal)}</Text>
+                          </Box>
+                        </HStack>
+                      </VStack>
+                    </Box>
+                  );
+                })}
+              </VStack>
+
+              {lines.length === 0 && (
+                <Alert status="warning" borderRadius="md">
+                  <AlertIcon />
+                  {es.transactions.atLeastOneItemRequired}
+                </Alert>
+              )}
+
+              <Divider />
+
+              <Box bg="gray.50" p={3} borderRadius="md">
+                <VStack align="stretch" spacing={2}>
+                  <HStack justify="space-between">
+                    <Text>{es.sales.subtotal}</Text>
+                    <Text>{formatCurrency(subtotal)}</Text>
+                  </HStack>
+                  <HStack justify="space-between">
+                    <Text>{es.sales.discount}</Text>
+                    <Text>{formatCurrency(discount)}</Text>
+                  </HStack>
+                  <HStack justify="space-between">
+                    <Text fontWeight="semibold">{es.sales.total}</Text>
+                    <Text fontWeight="bold">{formatCurrency(total)}</Text>
+                  </HStack>
+                  <HStack justify="space-between">
+                    <Text>{es.transactions.paidLabel}</Text>
+                    <Text>{formatCurrency(paidAmount)}</Text>
+                  </HStack>
+                  <HStack justify="space-between">
+                    <Text>{es.transactions.pendingLabel}</Text>
+                    <Text color={pending > 0 ? 'orange.600' : 'green.600'}>
+                      {formatCurrency(pending)}
+                    </Text>
+                  </HStack>
+                </VStack>
+              </Box>
+
+              {totalBelowPaidFloor && (
+                <Alert status="error" borderRadius="md">
+                  <AlertIcon />
+                  {es.errors.transactionModifyPaidFloor}
+                </Alert>
+              )}
+            </VStack>
+          </ModalBody>
+
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={handleClose} isDisabled={isSaving}>
+              {es.actions.cancel}
+            </Button>
+            <Button
+              colorScheme="brand"
+              onClick={onConfirmOpen}
+              isDisabled={!canSave}
+              isLoading={isSaving}
+            >
+              {es.actions.save}
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={isConfirmOpen}
+        onClose={onConfirmClose}
+        onConfirm={handleConfirmSave}
+        title={es.transactions.modifyConfirmTitle}
+        message={es.transactions.modifyConfirmMessage}
+        confirmText={es.actions.confirm}
+        cancelText={es.actions.cancel}
+        colorScheme="brand"
+        isLoading={isSaving}
+      />
+    </>
+  );
+}

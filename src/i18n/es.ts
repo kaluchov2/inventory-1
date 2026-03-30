@@ -17,6 +17,7 @@ export const es = {
   actions: {
     add: 'Agregar',
     edit: 'Editar',
+    modify: 'Modificar',
     delete: 'Eliminar',
     save: 'Guardar',
     cancel: 'Cancelar',
@@ -136,6 +137,22 @@ export const es = {
     filterByDate: 'Filtrar por Fecha',
     filterByCustomer: 'Filtrar por Cliente',
     filterByPayment: 'Filtrar por Método de Pago',
+    editSaleTitle: 'Modificar Venta',
+    saleTypeLabel: 'Venta',
+    addProductsLabel: 'Agregar o quitar productos',
+    productLabel: 'Producto',
+    selectProductPlaceholder: 'Seleccionar producto...',
+    unregisteredLineLabel: 'Sin registrar',
+    unitPriceLabel: 'Precio unitario',
+    lineTotalLabel: 'Total de linea',
+    atLeastOneItemRequired: 'La transaccion debe tener al menos un producto.',
+    paidLabel: 'Pagado',
+    pendingLabel: 'Pendiente',
+    modifyConfirmTitle: 'Modificar transaccion',
+    modifyConfirmMessage:
+      '¿Seguro que deseas modificar esta transaccion? Esto actualizara inventario y saldos.',
+    pendingSyncSuffix: 'cambio(s) pendiente(s) de sincronizar antes de modificar.',
+    failedSyncSuffix: 'operacion(es) fallida(s). Reintenta sincronizar antes de modificar.',
   },
 
   // Reports
@@ -204,6 +221,7 @@ export const es = {
     customerDeleted: '¡Cliente eliminado exitosamente!',
     saleCompleted: '¡Venta registrada exitosamente!',
     paymentReceived: '¡Pago recibido exitosamente!',
+    transactionModified: '¡Transaccion modificada exitosamente!',
   },
 
   // Error messages
@@ -216,6 +234,22 @@ export const es = {
     exportError: 'Error al exportar los datos.',
     notEnoughStock: 'No hay suficiente stock disponible.',
     invalidAmount: 'El monto ingresado no es válido.',
+    transactionModifyRpcMissing:
+      'La funcion de modificacion no existe en la base de datos. Aplica migraciones.',
+    transactionModifyPaidFloor:
+      'No se puede guardar: el total no puede ser menor al monto ya pagado.',
+    transactionModifyInsufficientStock:
+      'No hay inventario suficiente para aplicar este cambio.',
+    transactionModifySoldUnderflow:
+      'No se puede reducir mas cantidad vendida para uno de los productos.',
+    transactionModifyInvalidPayload:
+      'La modificacion contiene datos invalidos o no permitidos.',
+    transactionModifyRequiresOnline:
+      'Necesitas conexion activa para modificar una transaccion.',
+    transactionModifyPendingSync:
+      'Hay cambios pendientes por sincronizar. Intenta de nuevo en unos segundos.',
+    transactionModifyDeadLetter:
+      'Hay operaciones fallidas de sincronizacion. Reintenta antes de modificar.',
   },
 
   // Confirmations

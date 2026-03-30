@@ -3,6 +3,7 @@ import { useProductStore } from '../store/productStore';
 import { syncManager } from '../lib/syncManager';
 import { connectionStatus } from '../lib/connectionStatus';
 import { syncQueue } from '../lib/syncQueue';
+import { clearStoredSyncIncidents, getStoredSyncIncidents } from '../lib/syncIncidentLogger';
 
 export async function quickSyncCheck(): Promise<void> {
   console.log('=== SYNC DIAGNOSTICS ===');
@@ -61,17 +62,43 @@ export function dumpSyncState(): void {
   console.log('===========================');
 }
 
+export function dumpSyncIncidents(): void {
+  const incidents = getStoredSyncIncidents();
+  console.log('=== SYNC INCIDENTS ===');
+  console.log('Count:', incidents.length);
+  console.table(
+    incidents.map((incident) => ({
+      at: incident.at,
+      level: incident.level,
+      event: incident.event,
+      message: incident.message,
+      path: incident.app?.path,
+    }))
+  );
+  console.log('Raw incidents:', incidents);
+  console.log('======================');
+}
+
+export function clearSyncIncidents(): void {
+  clearStoredSyncIncidents();
+  console.log('[SyncDiagnostics] Cleared stored sync incidents');
+}
+
 // Expose for browser console
 declare global {
   interface Window {
     quickSyncCheck: typeof quickSyncCheck;
     dumpSyncState: typeof dumpSyncState;
+    dumpSyncIncidents: typeof dumpSyncIncidents;
+    clearSyncIncidents: typeof clearSyncIncidents;
     productService: typeof productService;
   }
 }
 
 window.quickSyncCheck = quickSyncCheck;
 window.dumpSyncState = dumpSyncState;
+window.dumpSyncIncidents = dumpSyncIncidents;
+window.clearSyncIncidents = clearSyncIncidents;
 window.productService = productService;
 
-console.log('[SyncDiagnostics] Diagnostic tools loaded. Run quickSyncCheck() and dumpSyncState() in console.');
+console.log('[SyncDiagnostics] Diagnostic tools loaded. Run quickSyncCheck(), dumpSyncState(), and dumpSyncIncidents() in console.');

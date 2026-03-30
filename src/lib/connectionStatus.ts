@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { logSyncIncident } from './syncIncidentLogger';
 
 /**
  * Connection status manager
@@ -6,6 +7,8 @@ import { supabase } from './supabase';
  */
 class ConnectionStatusManager {
   private readonly DEBUG_LOGS_ENABLED = true;
+  private readonly CONNECTIVITY_TIMEOUT_MS = 5_000;
+  private readonly SESSION_REFRESH_RETRY_WINDOW_MS = 120_000;
   private listeners: Set<(status: ConnectionStatus) => void> = new Set();
   private currentStatus: ConnectionStatus = {
     isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -32,24 +35,125 @@ class ConnectionStatusManager {
 
     window.addEventListener('online', () => {
       this.logDebug('Browser online event');
+      logSyncIncident('info', 'browser_online', 'Browser reported online state');
       this.updateStatus({ isOnline: true });
     });
     window.addEventListener('offline', () => {
       this.logDebug('Browser offline event');
+      logSyncIncident('warn', 'browser_offline', 'Browser reported offline state');
       this.updateStatus({ isOnline: false });
     });
 
-    // When PWA returns from background, immediately re-check connection
-    // This triggers syncManager's subscription → flushes pending queue
+    const runForegroundCheck = (source: string) => {
+      this.logDebug(`${source}: checking Supabase connectivity`);
+      this.checkSupabaseConnection();
+    };
+
+    // Re-check aggressively when users return to the app after idle/sleep.
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
-        this.logDebug('Visibility change: app is foreground, checking Supabase connectivity');
-        this.checkSupabaseConnection();
+        runForegroundCheck('Visibility change');
       }
     });
+    window.addEventListener('focus', () => runForegroundCheck('Window focus'));
+    window.addEventListener('pageshow', () => runForegroundCheck('Page show'));
 
     this.checkSupabaseConnection();
-    setInterval(() => this.checkSupabaseConnection(), 30000); // Check every 30s
+    setInterval(() => this.checkSupabaseConnection(), 30_000); // Check every 30s
+  }
+
+  private isLikelyAuthError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+
+    const err = error as {
+      code?: string;
+      message?: string;
+      details?: string;
+      hint?: string;
+      status?: number;
+    };
+
+    const text = [err.message, err.details, err.hint]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const code = (err.code || '').toLowerCase();
+    const status = Number(err.status || 0);
+
+    return (
+      status === 401 ||
+      status === 403 ||
+      code === 'pgrst301' ||
+      code === 'jwt_expired' ||
+      text.includes('jwt') ||
+      text.includes('token') ||
+      text.includes('not authenticated') ||
+      text.includes('permission denied')
+    );
+  }
+
+  private async tryRefreshSession(reason: string): Promise<boolean> {
+    if (!supabase) return false;
+
+    try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        this.logDebug('Session check failed before refresh', {
+          reason,
+          error: sessionError,
+        });
+        return false;
+      }
+
+      const session = sessionData.session;
+      if (!session) {
+        this.logDebug('No session available for refresh attempt', { reason });
+        return false;
+      }
+
+      const expiresAtMs =
+        typeof session.expires_at === 'number'
+          ? session.expires_at * 1000
+          : null;
+      const expiresSoon =
+        expiresAtMs !== null &&
+        expiresAtMs - Date.now() <= this.SESSION_REFRESH_RETRY_WINDOW_MS;
+      const shouldForceRefresh =
+        reason.includes('auth') || reason.includes('connectivity_probe');
+
+      if (!expiresSoon && !shouldForceRefresh) {
+        this.logDebug('Session still valid; skipping explicit refresh', {
+          reason,
+          expiresAt: session.expires_at,
+        });
+        return true;
+      }
+
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error || !data.session) {
+        this.logDebug('Session refresh failed', {
+          reason,
+          error,
+        });
+        logSyncIncident('warn', 'session_refresh_failed', 'Session refresh failed during connectivity recovery', {
+          reason,
+          error,
+        });
+        return false;
+      }
+
+      this.logDebug('Session refresh succeeded', {
+        reason,
+        newExpiresAt: data.session.expires_at,
+      });
+      return true;
+    } catch (error) {
+      this.logDebug('Session refresh threw', {
+        reason,
+        error,
+      });
+      return false;
+    }
   }
 
   private async checkSupabaseConnection() {
@@ -62,19 +166,44 @@ class ConnectionStatusManager {
       return;
     }
 
-    // AbortController prevents health check from hanging forever
-    // if the Supabase client is in a stuck state (zombie connections)
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5_000);
+    const client = supabase;
     const startedAt = Date.now();
     this.logDebug('Supabase connectivity check started');
 
+    const runProbe = async () => {
+      // AbortController prevents health check from hanging forever
+      // if the Supabase client is in a stuck state (zombie connections)
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(),
+        this.CONNECTIVITY_TIMEOUT_MS
+      );
+      try {
+        const { error } = await client
+          .from('products')
+          .select('id')
+          .limit(1)
+          .abortSignal(controller.signal);
+        return { error };
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
     try {
-      const { error } = await supabase
-        .from('products')
-        .select('id')
-        .limit(1)
-        .abortSignal(controller.signal);
+      let { error } = await runProbe();
+
+      if (error && this.isLikelyAuthError(error)) {
+        this.logDebug('Connectivity probe returned auth-like error, attempting session recovery', {
+          error,
+        });
+        const refreshed = await this.tryRefreshSession('connectivity_probe');
+        if (refreshed) {
+          const retry = await runProbe();
+          error = retry.error;
+        }
+      }
+
       this.logDebug('Supabase connectivity check completed', {
         elapsedMs: Date.now() - startedAt,
         hasError: !!error,
@@ -89,9 +218,10 @@ class ConnectionStatusManager {
         elapsedMs: Date.now() - startedAt,
         error,
       });
-      this.updateStatus({ isSupabaseConnected: false, lastChecked: new Date() });
-    } finally {
-      clearTimeout(timer);
+      this.updateStatus({
+        isSupabaseConnected: false,
+        lastChecked: new Date(),
+      });
     }
   }
 
@@ -106,6 +236,25 @@ class ConnectionStatusManager {
         previous,
         next: this.currentStatus,
       });
+      if (
+        previous.isOnline &&
+        previous.isSupabaseConnected &&
+        (!this.currentStatus.isOnline || !this.currentStatus.isSupabaseConnected)
+      ) {
+        logSyncIncident('warn', 'connection_degraded', 'Connection changed from healthy to degraded', {
+          previous,
+          next: this.currentStatus,
+        });
+      } else if (
+        (!previous.isOnline || !previous.isSupabaseConnected) &&
+        this.currentStatus.isOnline &&
+        this.currentStatus.isSupabaseConnected
+      ) {
+        logSyncIncident('info', 'connection_recovered', 'Connection recovered and Supabase is reachable', {
+          previous,
+          next: this.currentStatus,
+        });
+      }
     }
     this.notifyListeners();
   }

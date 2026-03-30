@@ -2,6 +2,7 @@ import { supabase, getSupabaseClient } from './supabase';
 import { syncQueue, SyncOperation } from './syncQueue';
 import { connectionStatus } from './connectionStatus';
 import { isMissingDatabaseFunction, syncRecordedSale } from './saleSync';
+import { logSyncIncident } from './syncIncidentLogger';
 
 /**
  * Sync Manager
@@ -40,6 +41,9 @@ class SyncManager {
   private syncStartTime: number | null = null;
   private readonly MAX_RETRIES = 3;
   private readonly DEBUG_LOGS_ENABLED = true;
+  private readonly STALLED_QUEUE_THRESHOLD_MS = 90_000;
+  private lastObservedQueueSize = syncQueue.size();
+  private queueUnchangedSince = Date.now();
   private syncListeners: Set<(status: SyncStatus) => void> = new Set();
   private currentStatus: SyncStatus = {
     isSyncing: false,
@@ -112,6 +116,49 @@ class SyncManager {
     return { error };
   }
 
+  private markQueueObservation(reason: string) {
+    this.lastObservedQueueSize = syncQueue.size();
+    this.queueUnchangedSince = Date.now();
+    this.logDebug('Queue observation updated', {
+      reason,
+      queueSize: this.lastObservedQueueSize,
+    });
+  }
+
+  private checkStalledQueue() {
+    const queueSize = syncQueue.size();
+
+    if (queueSize !== this.lastObservedQueueSize) {
+      this.lastObservedQueueSize = queueSize;
+      this.queueUnchangedSince = Date.now();
+      return;
+    }
+
+    if (queueSize === 0) return;
+    if (this.isSyncing) return;
+    if (this.currentStatus.error) return;
+
+    const connection = connectionStatus.getStatus();
+    if (!connection.isOnline || !connection.isSupabaseConnected) return;
+
+    const stalledForMs = Date.now() - this.queueUnchangedSince;
+    if (stalledForMs < this.STALLED_QUEUE_THRESHOLD_MS) return;
+
+    this.logDebug('Detected stalled queue while online, forcing recovery sync', {
+      queueSize,
+      stalledForMs,
+      connection: this.getConnectionSnapshot(),
+    });
+    logSyncIncident('warn', 'sync_stalled_queue', 'Queue appears stalled while online; forcing recovery sync', {
+      queueSize,
+      stalledForMs,
+      connection: this.getConnectionSnapshot(),
+    });
+
+    this.queueUnchangedSince = Date.now();
+    this.forceSync();
+  }
+
   private initialize() {
     connectionStatus.subscribe((status) => {
       this.logDebug('Connection status event', {
@@ -128,9 +175,9 @@ class SyncManager {
     // SYNC TIMING NOTE FOR THE TEAM:
     // This interval fires every 10 seconds. A sale recorded by User A will be
     // visible on User B's Products page in roughly:
-    //   - Best case  (~3–4s):  A's queue flushed immediately + realtime event + 2s debounce
-    //   - Typical    (~7–8s):  Queue was already syncing; waits for next flush
-    //   - Worst case (~13–15s): This timer just reset; full 10s wait + realtime + 2s debounce
+    //   - Best case  (~3-4s):  A's queue flushed immediately + realtime event + 2s debounce
+    //   - Typical    (~7-8s):  Queue was already syncing; waits for next flush
+    //   - Worst case (~13-15s): This timer just reset; full 10s wait + realtime + 2s debounce
     setInterval(() => {
       const status = connectionStatus.getStatus();
       if (status.isOnline && status.isSupabaseConnected && !this.isSyncing && !syncQueue.isEmpty()) {
@@ -148,10 +195,15 @@ class SyncManager {
         console.warn('[SyncManager] Sync stuck >2min, force-resetting');
         this.isSyncing = false;
         this.syncStartTime = null;
-        this.updateStatus({ isSyncing: false, error: 'Sync timeout — reintentando...' });
+        this.updateStatus({ isSyncing: false, error: 'Sync timeout - reintentando...' });
         this.syncPendingOperations();
       }
     }, 30_000);
+
+    // If queue size remains unchanged for too long while online, force a recovery sync.
+    setInterval(() => {
+      this.checkStalledQueue();
+    }, 15_000);
   }
 
   /**
@@ -191,6 +243,12 @@ class SyncManager {
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
       });
+      if (!syncQueue.isEmpty()) {
+        logSyncIncident('warn', 'sync_skipped_offline', 'Sync skipped because browser is offline while queue has pending operations', {
+          queueSize: syncQueue.size(),
+          connection: this.getConnectionSnapshot(),
+        });
+      }
       return;
     }
 
@@ -227,6 +285,10 @@ class SyncManager {
       this.updateStatus({
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
+      });
+      logSyncIncident('warn', 'sync_skipped_connection_not_ready', 'Sync skipped because Supabase connection is not ready after forceCheck', {
+        queueSize: syncQueue.size(),
+        connection: this.getConnectionSnapshot(),
       });
       return;
     }
@@ -314,6 +376,13 @@ class SyncManager {
             error: this.toErrorMeta(error),
             connection: this.getConnectionSnapshot(),
           });
+          logSyncIncident('warn', 'sync_operation_failed', 'Queued operation failed during sync processing', {
+            ...opSummary,
+            isTimeoutError,
+            elapsedMs: Date.now() - opStartedAt,
+            error: this.toErrorMeta(error),
+            connection: this.getConnectionSnapshot(),
+          });
 
           // On flaky mobile networks, a request can time out locally even if it committed remotely.
           // Before retrying, verify whether the row now exists and dequeue if already applied.
@@ -347,8 +416,12 @@ class SyncManager {
                 ...opSummary,
                 refreshed: this.getConnectionSnapshot(),
               });
+              logSyncIncident('warn', 'sync_timeout_disconnected', 'Operation timed out and connection degraded; leaving operation queued', {
+                ...opSummary,
+                refreshed: this.getConnectionSnapshot(),
+              });
               this.updateStatus({
-                error: 'Sin conexión con Supabase. Reintentaremos al reconectar.',
+                error: 'Sin conexion con Supabase. Reintentaremos al reconectar.',
               });
               break;
             }
@@ -361,6 +434,10 @@ class SyncManager {
             if (!shouldRetry) {
               console.error('[SyncManager] Max retries reached, moving to dead letter:', operation.id);
               this.logDebug('Operation exceeded retry limit; moving to dead letter', opSummary);
+              logSyncIncident('error', 'sync_operation_dead_letter', 'Operation exceeded retry limit and moved to dead-letter queue', {
+                ...opSummary,
+                queueSize: syncQueue.size(),
+              });
               try {
                 syncQueue.moveToDeadLetter(operation);
                 syncQueue.remove(operation.id);
@@ -370,7 +447,7 @@ class SyncManager {
                 throw new Error('LocalStorage quota exceeded - cannot manage sync queue');
               }
               this.updateStatus({
-                error: `Falló sincronizar ${operation.type} ${operation.action} después de ${this.MAX_RETRIES} intentos. Datos guardados localmente.`,
+                error: `Fallo sincronizar ${operation.type} ${operation.action} despues de ${this.MAX_RETRIES} intentos. Datos guardados localmente.`,
               });
               consecutiveErrors = 0; // Reset after removing failed operation
             } else {
@@ -404,6 +481,10 @@ class SyncManager {
           } catch (queueError) {
             console.error('[SyncManager] Queue operation failed:', queueError);
             // If we can't manage the queue due to localStorage issues, stop sync
+            logSyncIncident('error', 'sync_queue_storage_error', 'Failed to update sync queue state in localStorage', {
+              ...opSummary,
+              queueError: this.toErrorMeta(queueError),
+            });
             this.updateStatus({
               error: 'LocalStorage quota exceeded. Please clear sync queue.',
             });
@@ -418,6 +499,13 @@ class SyncManager {
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
       });
+      if (syncQueue.size() > 0 || syncQueue.getDeadLetterCount() > 0) {
+        logSyncIncident('warn', 'sync_finished_with_pending', 'Sync loop ended with pending or failed operations', {
+          processed,
+          pendingCount: syncQueue.size(),
+          deadLetterCount: syncQueue.getDeadLetterCount(),
+        });
+      }
 
       this.updateStatus({
         isSyncing: false,
@@ -425,12 +513,17 @@ class SyncManager {
         deadLetterCount: syncQueue.getDeadLetterCount(),
         lastSync: new Date(),
         error: syncQueue.getDeadLetterCount() > 0
-          ? `${syncQueue.getDeadLetterCount()} operación(es) fallaron. Datos guardados localmente.`
+          ? `${syncQueue.getDeadLetterCount()} operacion(es) fallaron. Datos guardados localmente.`
           : null,
       });
     } catch (error) {
       console.error('[SyncManager] Sync error:', error);
       this.logDebug('Unhandled sync error', {
+        error: this.toErrorMeta(error),
+        pendingCount: syncQueue.size(),
+        deadLetterCount: syncQueue.getDeadLetterCount(),
+      });
+      logSyncIncident('error', 'sync_unhandled_error', 'Unhandled sync loop error', {
         error: this.toErrorMeta(error),
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
@@ -457,6 +550,7 @@ class SyncManager {
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
       });
+      this.markQueueObservation('sync-finally');
     }
   }
 
@@ -667,12 +761,12 @@ class SyncManager {
         break;
 
       case 'sale_update': {
-        // Atomic stock decrement via RPC — avoids race condition when two devices sell the same product.
+        // Atomic stock decrement via RPC - avoids race condition when two devices sell the same product.
         // The DB function: UPDATE products SET available_qty = available_qty - qty, sold_qty = sold_qty + qty
         //                  WHERE id = product_id AND available_qty >= qty
         // data shape: { id: string, qty: number }
         // Cast needed until decrement_stock is added to Supabase generated types
-        // Note: RPC calls don't reliably support .abortSignal() — outer Promise.race handles timeout
+        // Note: RPC calls do not reliably support .abortSignal() - outer Promise.race handles timeout
         const { error: rpcError } = await (client as any).rpc('decrement_stock', {
           product_id: data.id,
           qty: data.qty,
@@ -1034,10 +1128,11 @@ class SyncManager {
    * syncPendingOperations() is called (either on reconnect or the 10s timer).
    *
    * Immediate flush path: if connected right now, this triggers an upload
-   * within milliseconds → Supabase realtime fires → other clients reload in ~2–4s.
+   * within milliseconds -> Supabase realtime fires -> other clients reload in ~2-4s.
    */
   public queueOperation(operation: Omit<SyncOperation, 'id' | 'timestamp' | 'retryCount'>) {
     const id = syncQueue.enqueue(operation);
+    this.markQueueObservation('enqueue');
     this.updateStatus({ pendingCount: syncQueue.size() });
     this.logDebug('Operation enqueued', {
       id,
@@ -1069,7 +1164,7 @@ class SyncManager {
   /**
    * Record a failed operation directly into the dead-letter queue without going
    * through the normal retry cycle. Used by stores when the localStorage queue is
-   * full and a direct-Supabase fallback also fails — ensures the orange warning
+   * full and a direct-Supabase fallback also fails - ensures the orange warning
    * badge appears instead of the failure being swallowed silently.
    */
   public addToDeadLetter(operation: Omit<SyncOperation, 'id' | 'timestamp' | 'retryCount'>) {
@@ -1085,9 +1180,18 @@ class SyncManager {
       console.error('[SyncManager] Could not persist to dead-letter (localStorage full):', e);
     }
     const count = syncQueue.getDeadLetterCount();
+    logSyncIncident('error', 'direct_sync_dead_letter', 'Direct-sync fallback failed and operation was recorded in dead-letter queue', {
+      type: operation.type,
+      action: operation.action,
+      deadLetterCount: count,
+      rowId:
+        operation.action === 'record_sale'
+          ? operation.data?.transaction?.id
+          : operation.data?.id,
+    });
     this.updateStatus({
       deadLetterCount: count,
-      error: `${count} operación(es) fallaron. Datos guardados localmente.`,
+      error: `${count} operacion(es) fallaron. Datos guardados localmente.`,
     });
   }
 

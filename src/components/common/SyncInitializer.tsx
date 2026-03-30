@@ -79,27 +79,43 @@ export function SyncInitializer() {
   // When app returns from background, flush pending queue then reload all data
   // This ensures changes from other devices are picked up immediately
   useEffect(() => {
+    let lastForegroundRunAt = 0;
+    const triggerForegroundSync = (source: string) => {
+      if (!isAuthenticated || isOfflineMode) return;
+
+      // Avoid duplicate runs when browsers emit multiple foreground events in quick succession.
+      const now = Date.now();
+      if (now - lastForegroundRunAt < 1500) return;
+      lastForegroundRunAt = now;
+
+      // Delay 500 ms so connectionStatus.forceCheck() can finish before flush attempt.
+      setTimeout(() => {
+        console.log(`[Sync] Foreground trigger (${source}), flushing queue and reloading...`);
+        console.log('[Sync] Status before foreground flush:', syncManager.getStatus());
+        syncManager.syncPendingOperations().then(() => {
+          console.log('[Sync] Status after foreground flush:', syncManager.getStatus());
+          const { pendingCount } = syncManager.getStatus();
+          if (pendingCount > 0) {
+            console.log('[Sync] Foreground reload deferred because queue still has pending operations');
+            return;
+          }
+          return Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
+        });
+      }, 500);
+    };
+
     const handleVisibility = () => {
-      if (!document.hidden && isAuthenticated && !isOfflineMode) {
-        // Bug 3: delay 500 ms so connectionStatus.forceCheck() (which also fires on
-        // visibilitychange inside connectionStatus.ts) can finish before we attempt
-        // to flush. Without the delay, syncPendingOperations() may see stale
-        // isSupabaseConnected=false from before the screen was unlocked and return
-        // early, leaving the queue unprocessed until the next 10 s tick.
-        setTimeout(() => {
-          console.log('[Sync] App returned to foreground, flushing queue and reloading...');
-          console.log('[Sync] Status before foreground flush:', syncManager.getStatus());
-          syncManager.syncPendingOperations().then(() => {
-            console.log('[Sync] Status after foreground flush:', syncManager.getStatus());
-            const { pendingCount } = syncManager.getStatus();
-            if (pendingCount > 0) {
-              console.log('[Sync] Foreground reload deferred because queue still has pending operations');
-              return;
-            }
-            return Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
-          });
-        }, 500);
+      if (!document.hidden) {
+        triggerForegroundSync('visibilitychange');
       }
+    };
+
+    const handleWindowFocus = () => {
+      triggerForegroundSync('focus');
+    };
+
+    const handlePageShow = () => {
+      triggerForegroundSync('pageshow');
     };
 
     // Bug 2: pagehide fires on iOS when the user swipes the PWA closed from the
@@ -114,9 +130,13 @@ export function SyncInitializer() {
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('pageshow', handlePageShow);
     window.addEventListener('pagehide', handlePageHide);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('pageshow', handlePageShow);
       window.removeEventListener('pagehide', handlePageHide);
     };
   }, [isAuthenticated, isOfflineMode, loadProducts, loadCustomers, loadTransactions]);

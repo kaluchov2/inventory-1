@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/((?!assets/).*)", "destination": "/" }
+    { "source": "/((?!api/|assets/).*)", "destination": "/" }
   ],
   "headers": [
     {

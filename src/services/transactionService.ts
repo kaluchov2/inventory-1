@@ -6,6 +6,39 @@ import { Transaction, TransactionItem } from '../types';
  * Handles CRUD operations for transactions with Supabase
  */
 
+export interface ModifySaleTransactionItemInput {
+  productId: string | null;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  category?: string;
+  brand?: string;
+  color?: string;
+  size?: string;
+}
+
+export interface ModifySaleTransactionPayload {
+  transactionId: string;
+  items: ModifySaleTransactionItemInput[];
+  discount?: number;
+  discountNote?: string;
+  notes?: string;
+  date?: string;
+  paymentDate?: string | null;
+}
+
+export interface ModifySaleTransactionResult {
+  transactionId: string;
+  oldTotal: number;
+  newTotal: number;
+  paidAmount: number;
+  oldUnpaid: number;
+  newUnpaid: number;
+  deltaUnpaid: number;
+  itemCount: number;
+}
+
 export const transactionService = {
   async getAll(): Promise<Transaction[]> {
     const client = getSupabaseClient();
@@ -225,7 +258,46 @@ export const transactionService = {
 
     if (error) throw error;
   },
+
+  async modifySaleTransaction(
+    payload: ModifySaleTransactionPayload
+  ): Promise<{ result: ModifySaleTransactionResult; transaction: Transaction }> {
+    const client = getSupabaseClient();
+
+    const { data, error } = await (client as any).rpc('modify_sale_transaction', {
+      edit_payload: payload,
+    });
+
+    if (error) throw error;
+
+    const result = parseModifySaleResult(data);
+    const transaction = await this.getById(payload.transactionId);
+
+    if (!transaction) {
+      throw new Error('modified_transaction_not_found');
+    }
+
+    return { result, transaction };
+  },
 };
+
+function parseModifySaleResult(data: any): ModifySaleTransactionResult {
+  const raw = Array.isArray(data) ? data[0] : data;
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('modify_sale_transaction_invalid_response');
+  }
+
+  return {
+    transactionId: String(raw.transactionId ?? ''),
+    oldTotal: Number(raw.oldTotal ?? 0),
+    newTotal: Number(raw.newTotal ?? 0),
+    paidAmount: Number(raw.paidAmount ?? 0),
+    oldUnpaid: Number(raw.oldUnpaid ?? 0),
+    newUnpaid: Number(raw.newUnpaid ?? 0),
+    deltaUnpaid: Number(raw.deltaUnpaid ?? 0),
+    itemCount: Number(raw.itemCount ?? 0),
+  };
+}
 
 function convertFromDbFormat(data: any): Transaction {
   const items: TransactionItem[] = data.transaction_items?.map((item: any) => ({

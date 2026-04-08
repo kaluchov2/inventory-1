@@ -1,5 +1,9 @@
 import { getSupabaseClient } from '../lib/supabase';
 import { Transaction, TransactionItem } from '../types';
+import {
+  isWalkInCustomerName,
+  WALK_IN_CUSTOMER_LABELS,
+} from '../utils/customerNameUtils';
 
 /**
  * Transaction Service
@@ -37,6 +41,19 @@ export interface ModifySaleTransactionResult {
   newUnpaid: number;
   deltaUnpaid: number;
   itemCount: number;
+}
+
+export interface UndoSaleTransactionPayload {
+  transactionId: string;
+  reason?: string;
+}
+
+export interface UndoSaleTransactionResult {
+  transactionId: string;
+  total: number;
+  paidAmount: number;
+  unpaidReverted: number;
+  restoredProductRows: number;
 }
 
 export const transactionService = {
@@ -141,25 +158,29 @@ export const transactionService = {
 
     if (byNullCustomerError) throw byNullCustomerError;
 
+    const candidates = new Set<string>(WALK_IN_CUSTOMER_LABELS);
     const trimmedName = (walkInName || '').trim();
-    if (!trimmedName) {
-      return byNullCustomerData.map(convertFromDbFormat);
+    if (trimmedName && !isWalkInCustomerName(trimmedName)) {
+      candidates.add(trimmedName);
     }
 
-    const namePattern = `%${trimmedName}%`;
-    const { data: byNameData, error: byNameError } = await client
-      .from('transactions')
-      .select('*, transaction_items(*)')
-      .ilike('customer_name', namePattern)
-      .eq('type', 'sale')
-      .eq('is_deleted', false)
-      .order('date', { ascending: false });
-
-    if (byNameError) throw byNameError;
+    const byNameResults = await Promise.all(
+      Array.from(candidates).map((candidate) =>
+        client
+          .from('transactions')
+          .select('*, transaction_items(*)')
+          .ilike('customer_name', `%${candidate}%`)
+          .eq('type', 'sale')
+          .eq('is_deleted', false)
+          .order('date', { ascending: false })
+      )
+    );
 
     const unique = new Map<string, any>();
-    [...byNullCustomerData, ...byNameData].forEach((row) => {
-      unique.set(row.id, row);
+    byNullCustomerData.forEach((row) => unique.set(row.id, row));
+    byNameResults.forEach(({ data, error }) => {
+      if (error) throw error;
+      (data || []).forEach((row) => unique.set(row.id, row));
     });
 
     return Array.from(unique.values())
@@ -279,6 +300,20 @@ export const transactionService = {
 
     return { result, transaction };
   },
+
+  async undoSaleTransaction(
+    payload: UndoSaleTransactionPayload
+  ): Promise<UndoSaleTransactionResult> {
+    const client = getSupabaseClient();
+
+    const { data, error } = await (client as any).rpc('undo_sale_transaction', {
+      undo_payload: payload,
+    });
+
+    if (error) throw error;
+
+    return parseUndoSaleResult(data);
+  },
 };
 
 function parseModifySaleResult(data: any): ModifySaleTransactionResult {
@@ -296,6 +331,21 @@ function parseModifySaleResult(data: any): ModifySaleTransactionResult {
     newUnpaid: Number(raw.newUnpaid ?? 0),
     deltaUnpaid: Number(raw.deltaUnpaid ?? 0),
     itemCount: Number(raw.itemCount ?? 0),
+  };
+}
+
+function parseUndoSaleResult(data: any): UndoSaleTransactionResult {
+  const raw = Array.isArray(data) ? data[0] : data;
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('undo_sale_transaction_invalid_response');
+  }
+
+  return {
+    transactionId: String(raw.transactionId ?? ''),
+    total: Number(raw.total ?? 0),
+    paidAmount: Number(raw.paidAmount ?? 0),
+    unpaidReverted: Number(raw.unpaidReverted ?? 0),
+    restoredProductRows: Number(raw.restoredProductRows ?? 0),
   };
 }
 

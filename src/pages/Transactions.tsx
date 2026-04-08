@@ -30,17 +30,14 @@ import { transactionService } from "../services/transactionService";
 import { useCustomerStore } from "../store/customerStore";
 import { useTransactionStore } from "../store/transactionStore";
 import { Transaction } from "../types";
+import {
+  isWalkInCustomerName,
+  normalizeCustomerKey,
+  WALK_IN_CUSTOMER_LABELS,
+} from "../utils/customerNameUtils";
 import { formatCurrency, formatDateTime } from "../utils/formatters";
 
 const WALK_IN_OPTION_VALUE = "__WALK_IN__";
-
-const normalizeCustomerKey = (value: string | undefined | null) =>
-  (value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
 
 function getLocalDateKey(value: string): string {
   const parsed = new Date(value);
@@ -124,7 +121,7 @@ export function Transactions() {
 
     try {
       const remoteQuery = isWalkIn
-        ? transactionService.getWalkInSales(es.customers.walkIn)
+        ? transactionService.getWalkInSales(WALK_IN_CUSTOMER_LABELS[0])
         : Promise.all([
             transactionService.getByCustomer(selectedCustomerId),
             transactionService.getSalesForCustomer(
@@ -164,8 +161,7 @@ export function Transactions() {
         if (isWalkIn) {
           return (
             !tx.customerId &&
-            normalizeCustomerKey(tx.customerName) ===
-              normalizeCustomerKey(es.customers.walkIn)
+            isWalkInCustomerName(tx.customerName)
           );
         }
         return (

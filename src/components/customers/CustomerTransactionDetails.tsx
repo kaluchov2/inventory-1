@@ -12,34 +12,35 @@ import {
   Alert,
   AlertIcon,
   Spinner,
+  useDisclosure,
+  useToast,
 } from '@chakra-ui/react';
-import { FiDollarSign, FiEdit2 } from 'react-icons/fi';
+import { FiDollarSign, FiEdit2, FiRotateCcw } from 'react-icons/fi';
 import { Customer, Transaction } from '../../types';
 import { useTransactionStore } from '../../store/transactionStore';
 import { formatCurrency, formatDate, formatDateTime } from '../../utils/formatters';
 import { es } from '../../i18n/es';
 import { transactionService } from '../../services/transactionService';
 import { EditSaleTransactionModal } from './EditSaleTransactionModal';
+import { ConfirmDialog } from '../common';
+import { connectionStatus } from '../../lib/connectionStatus';
+import { syncManager } from '../../lib/syncManager';
+import { isMissingDatabaseFunction } from '../../lib/saleSync';
+import { useProductStore } from '../../store/productStore';
+import { useCustomerStore } from '../../store/customerStore';
+import { normalizeCustomerKey } from '../../utils/customerNameUtils';
 
 interface CustomerTransactionDetailsProps {
   customer: Customer;
   onReceivePayment: (customer: Customer) => void;
 }
 
-const LATEST_LIMIT = 10;
-
-const normalizeCustomerKey = (value: string | undefined | null) =>
-  (value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+const PAGE_SIZE = 5;
 
 const mergeTransactions = (remote: Transaction[], local: Transaction[]) => {
   const merged = new Map<string, Transaction>();
-  remote.forEach((tx) => merged.set(tx.id, tx));
   local.forEach((tx) => merged.set(tx.id, tx));
+  remote.forEach((tx) => merged.set(tx.id, tx));
   return Array.from(merged.values());
 };
 
@@ -79,21 +80,35 @@ function getLatestTransactionsForCustomer(
         tx.customerId === customerId ||
         normalizeCustomerKey(tx.customerName) === customerNameKey,
     )
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .slice(0, LATEST_LIMIT);
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
 export function CustomerTransactionDetails({
   customer,
   onReceivePayment,
 }: CustomerTransactionDetailsProps) {
-  const { transactions, getUnpaidTransactionsByCustomer, getEffectivePendingMap } =
-    useTransactionStore();
+  const toast = useToast();
+  const {
+    transactions,
+    getUnpaidTransactionsByCustomer,
+    getEffectivePendingMap,
+    loadFromSupabase: loadTransactions,
+  } = useTransactionStore();
+  const loadProducts = useProductStore((state) => state.loadFromSupabase);
+  const loadCustomers = useCustomerStore((state) => state.loadFromSupabase);
+  const {
+    isOpen: isUndoConfirmOpen,
+    onOpen: onUndoConfirmOpen,
+    onClose: onUndoConfirmClose,
+  } = useDisclosure();
 
   const [latestTransactions, setLatestTransactions] = useState<Transaction[]>([]);
   const [isLoadingLatest, setIsLoadingLatest] = useState(false);
   const [latestError, setLatestError] = useState<string | null>(null);
   const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
+  const [transactionToUndo, setTransactionToUndo] = useState<Transaction | null>(null);
+  const [isUndoing, setIsUndoing] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const unpaidTransactions = useMemo(
     () => getUnpaidTransactionsByCustomer(customer.id),
@@ -114,10 +129,18 @@ export function CustomerTransactionDetails({
     [unpaidTransactions, effectivePendingMap]
   );
 
+  const visibleTransactions = useMemo(
+    () => latestTransactions.slice(0, visibleCount),
+    [latestTransactions, visibleCount]
+  );
+
+  const canLoadMore = visibleCount < latestTransactions.length;
+
   useEffect(() => {
     setLatestTransactions(
       getLatestTransactionsForCustomer(transactions, customer.id, customer.name)
     );
+    setVisibleCount(PAGE_SIZE);
   }, [customer.id, customer.name, transactions]);
 
   useEffect(() => {
@@ -147,6 +170,7 @@ export function CustomerTransactionDetails({
         setLatestTransactions(
           getLatestTransactionsForCustomer(merged, customer.id, customer.name)
         );
+        setVisibleCount(PAGE_SIZE);
       } catch (error) {
         console.warn(
           '[CustomerTransactionDetails] Remote query failed, using local cache:',
@@ -165,6 +189,126 @@ export function CustomerTransactionDetails({
       isMounted = false;
     };
   }, [customer.id, customer.name]);
+
+  const handleUndoClick = (transaction: Transaction) => {
+    setTransactionToUndo(transaction);
+    onUndoConfirmOpen();
+  };
+
+  const handleConfirmUndo = async () => {
+    if (!transactionToUndo) return;
+
+    setIsUndoing(true);
+    try {
+      const conn = connectionStatus.getStatus();
+      if (!conn.isOnline || !conn.isSupabaseConnected) {
+        toast({
+          title: es.errors.transactionUndoRequiresOnline,
+          status: 'error',
+          duration: 4000,
+          isClosable: true,
+        });
+        return;
+      }
+
+      await syncManager.syncPendingOperations();
+      const syncStatus = syncManager.getStatus();
+      if (syncStatus.pendingCount > 0) {
+        toast({
+          title: es.errors.transactionUndoPendingSync,
+          description: `${syncStatus.pendingCount} ${es.transactions.pendingSyncSuffix}`,
+          status: 'error',
+          duration: 4500,
+          isClosable: true,
+        });
+        return;
+      }
+
+      if (syncStatus.deadLetterCount > 0) {
+        toast({
+          title: es.errors.transactionUndoDeadLetter,
+          description: `${syncStatus.deadLetterCount} ${es.transactions.failedSyncSuffix}`,
+          status: 'error',
+          duration: 4500,
+          isClosable: true,
+        });
+        return;
+      }
+
+      const undoResult = await transactionService.undoSaleTransaction({
+        transactionId: transactionToUndo.id,
+        reason: 'Undo requested from Clientes',
+      });
+
+      let refreshFailed = false;
+      try {
+        await Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
+      } catch (refreshError) {
+        refreshFailed = true;
+        console.warn(
+          '[CustomerTransactionDetails] Undo committed but refresh failed:',
+          refreshError
+        );
+      }
+
+      setLatestTransactions((current) =>
+        current.filter((tx) => tx.id !== transactionToUndo.id)
+      );
+      setVisibleCount(PAGE_SIZE);
+
+      toast({
+        title: es.success.transactionUndone,
+        description: refreshFailed
+          ? `${formatCurrency(undoResult.total)} revertido. ${es.errors.transactionUndoRefreshWarning}`
+          : `${formatCurrency(undoResult.total)} revertido`,
+        status: refreshFailed ? 'warning' : 'success',
+        duration: 4500,
+        isClosable: true,
+      });
+    } catch (error) {
+      const message =
+        error && typeof error === 'object' && 'message' in error
+          ? String((error as any).message || '')
+          : String(error || '');
+      const lower = message.toLowerCase();
+
+      if (isMissingDatabaseFunction(error, 'undo_sale_transaction')) {
+        toast({
+          title: es.errors.transactionUndoRpcMissing,
+          status: 'error',
+          duration: 4500,
+          isClosable: true,
+        });
+      } else if (lower.includes('sold_qty_underflow')) {
+        toast({
+          title: es.errors.transactionUndoSoldUnderflow,
+          description: message,
+          status: 'error',
+          duration: 4500,
+          isClosable: true,
+        });
+      } else if (lower.includes('transaction_not_found')) {
+        toast({
+          title: es.errors.transactionUndoNotFound,
+          status: 'error',
+          duration: 4500,
+          isClosable: true,
+        });
+      } else {
+        toast({
+          title: es.errors.saveError,
+          description: message || es.errors.genericError,
+          status: 'error',
+          duration: 4500,
+          isClosable: true,
+        });
+      }
+    } finally {
+      setIsUndoing(false);
+      setTransactionToUndo(null);
+      onUndoConfirmClose();
+    }
+  };
 
   const pendingSection =
     customer.balance > 0 && unpaidTransactions.length === 0 ? (
@@ -329,7 +473,7 @@ export function CustomerTransactionDetails({
         <VStack align="stretch" spacing={3}>
           <HStack justify="space-between" align="center">
             <Text fontWeight="semibold" color="gray.700">
-              Ultimas {LATEST_LIMIT} transacciones
+              Transacciones recientes ({latestTransactions.length})
             </Text>
             {isLoadingLatest && (
               <HStack spacing={2}>
@@ -356,7 +500,7 @@ export function CustomerTransactionDetails({
             </Box>
           ) : (
             <VStack align="stretch" spacing={3}>
-              {latestTransactions.map((transaction) => (
+              {visibleTransactions.map((transaction) => (
                 <Box
                   key={transaction.id}
                   bg="white"
@@ -390,6 +534,16 @@ export function CustomerTransactionDetails({
                             variant="ghost"
                             colorScheme="brand"
                             onClick={() => setTransactionToEdit(transaction)}
+                          />
+                        )}
+                        {transaction.type === 'sale' && (
+                          <IconButton
+                            aria-label={es.actions.undo}
+                            icon={<Icon as={FiRotateCcw} />}
+                            size="xs"
+                            variant="ghost"
+                            colorScheme="red"
+                            onClick={() => handleUndoClick(transaction)}
                           />
                         )}
                       </HStack>
@@ -457,6 +611,17 @@ export function CustomerTransactionDetails({
                   </VStack>
                 </Box>
               ))}
+
+              {canLoadMore && (
+                <Button
+                  alignSelf="center"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+                >
+                  {es.transactions.loadMoreTransactions}
+                </Button>
+              )}
             </VStack>
           )}
         </VStack>
@@ -471,7 +636,24 @@ export function CustomerTransactionDetails({
             const merged = mergeTransactions([updatedTransaction], current);
             return getLatestTransactionsForCustomer(merged, customer.id, customer.name);
           });
+          setVisibleCount(PAGE_SIZE);
         }}
+      />
+
+      <ConfirmDialog
+        isOpen={isUndoConfirmOpen}
+        onClose={() => {
+          if (isUndoing) return;
+          onUndoConfirmClose();
+          setTransactionToUndo(null);
+        }}
+        onConfirm={handleConfirmUndo}
+        title={es.transactions.undoConfirmTitle}
+        message={es.transactions.undoConfirmMessage}
+        confirmText={es.actions.undo}
+        cancelText={es.actions.cancel}
+        colorScheme="red"
+        isLoading={isUndoing}
       />
     </VStack>
   );

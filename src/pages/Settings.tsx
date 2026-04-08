@@ -58,6 +58,11 @@ import { UPS_BATCH_OPTIONS } from "../constants/colors";
 import { AutocompleteSelect } from "../components/common";
 import { syncQueue } from "../lib/syncQueue";
 import { syncManager } from "../lib/syncManager";
+import {
+  isWalkInCustomerName,
+  normalizeCustomerKey,
+  WALK_IN_CUSTOMER_LABELS,
+} from "../utils/customerNameUtils";
 
 const WALK_IN_OPTION_VALUE = "__WALK_IN__";
 
@@ -88,14 +93,6 @@ export function Settings() {
   const [isExportingTransactions, setIsExportingTransactions] = useState(false);
   const [importMode, setImportMode] = useState<"full" | "by_ups">("full");
   const [importUpsScope, setImportUpsScope] = useState<string | null>(null);
-
-  const normalizeCustomerKey = (value: string | undefined | null) =>
-    (value || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
 
   const withTimeout = async <T,>(
     promise: Promise<T>,
@@ -218,7 +215,7 @@ export function Settings() {
     try {
       const fetchCustomerTransactions = () =>
         isWalkIn
-          ? transactionService.getWalkInSales(customerName)
+          ? transactionService.getWalkInSales(WALK_IN_CUSTOMER_LABELS[0])
           : transactionService.getSalesForCustomer(exportCustomerId, customerName);
 
       let remoteTransactions: Transaction[] = [];
@@ -273,7 +270,7 @@ export function Settings() {
       (t) =>
         String(t.type).toLowerCase() === "sale" &&
         (isWalkIn
-          ? !t.customerId && normalizeCustomerKey(t.customerName) === targetName
+          ? !t.customerId && isWalkInCustomerName(t.customerName)
           : t.customerId === exportCustomerId ||
             normalizeCustomerKey(t.customerName) === targetName),
     ).length;

@@ -465,15 +465,20 @@ function mergeTransactions(local: Transaction[], remote: Transaction[]): Transac
   const remoteMap = new Map(remote.map(t => [t.id, t]));
   const localMap = new Map(local.map(t => [t.id, t]));
   const merged = new Map<string, Transaction>();
+  const pendingIds = new Set(
+    syncQueue.getAll()
+      .filter((op: any) => op.type === 'transactions' && (op.action === 'create' || op.action === 'update' || op.action === 'record_sale'))
+      .map((op: any) => op.action === 'record_sale' ? op.data?.transaction?.id : op.data?.id)
+      .filter(Boolean)
+  );
 
   for (const [id, localTrans] of localMap) {
     const remoteTrans = remoteMap.get(id);
     if (!remoteTrans) {
       merged.set(id, localTrans);
     } else {
-      const localTime = new Date(localTrans.createdAt).getTime();
-      const remoteTime = new Date(remoteTrans.createdAt).getTime();
-      merged.set(id, remoteTime > localTime ? remoteTrans : localTrans);
+      // Server is source of truth unless this transaction still has a pending local mutation.
+      merged.set(id, pendingIds.has(id) ? localTrans : remoteTrans);
     }
   }
 
@@ -485,13 +490,6 @@ function mergeTransactions(local: Transaction[], remote: Transaction[]): Transac
 
   // Remove local-only records that aren't pending in the sync queue
   // These are ghost records from localStorage that were deleted on the server
-  const pendingIds = new Set(
-    syncQueue.getAll()
-      .filter((op: any) => op.type === 'transactions' && (op.action === 'create' || op.action === 'update' || op.action === 'record_sale'))
-      .map((op: any) => op.action === 'record_sale' ? op.data?.transaction?.id : op.data?.id)
-      .filter(Boolean)
-  );
-
   for (const [id] of merged) {
     if (!remoteMap.has(id) && !pendingIds.has(id)) {
       merged.delete(id);

@@ -18,6 +18,7 @@ export const es = {
     add: 'Agregar',
     edit: 'Editar',
     modify: 'Modificar',
+    undo: 'Deshacer',
     delete: 'Eliminar',
     save: 'Guardar',
     cancel: 'Cancelar',
@@ -145,12 +146,16 @@ export const es = {
     unregisteredLineLabel: 'Sin registrar',
     unitPriceLabel: 'Precio unitario',
     lineTotalLabel: 'Total de linea',
-    atLeastOneItemRequired: 'La transaccion debe tener al menos un producto.',
+    atLeastOneItemRequired: 'La transacción debe tener al menos un producto.',
     paidLabel: 'Pagado',
     pendingLabel: 'Pendiente',
-    modifyConfirmTitle: 'Modificar transaccion',
+    loadMoreTransactions: 'Cargar 5 mas',
+    modifyConfirmTitle: 'Modificar transacción',
     modifyConfirmMessage:
-      '¿Seguro que deseas modificar esta transaccion? Esto actualizara inventario y saldos.',
+      '¿Seguro que deseas modificar esta transacción? Esto actualizará inventario y saldos.',
+    undoConfirmTitle: 'Deshacer transacción',
+    undoConfirmMessage:
+      '¿Seguro que deseas deshacer esta transacción? Esto restaurará inventario y saldos.',
     pendingSyncSuffix: 'cambio(s) pendiente(s) de sincronizar antes de modificar.',
     failedSyncSuffix: 'operacion(es) fallida(s). Reintenta sincronizar antes de modificar.',
   },
@@ -221,7 +226,8 @@ export const es = {
     customerDeleted: '¡Cliente eliminado exitosamente!',
     saleCompleted: '¡Venta registrada exitosamente!',
     paymentReceived: '¡Pago recibido exitosamente!',
-    transactionModified: '¡Transaccion modificada exitosamente!',
+    transactionModified: '¡Transacción modificada exitosamente!',
+    transactionUndone: '¡Transacción deshecha exitosamente!',
   },
 
   // Error messages
@@ -245,11 +251,25 @@ export const es = {
     transactionModifyInvalidPayload:
       'La modificacion contiene datos invalidos o no permitidos.',
     transactionModifyRequiresOnline:
-      'Necesitas conexion activa para modificar una transaccion.',
+      'Necesitas conexión activa para modificar una transacción.',
     transactionModifyPendingSync:
       'Hay cambios pendientes por sincronizar. Intenta de nuevo en unos segundos.',
     transactionModifyDeadLetter:
       'Hay operaciones fallidas de sincronizacion. Reintenta antes de modificar.',
+    transactionUndoRpcMissing:
+      'La funcion para deshacer transacciones no existe en la base de datos. Aplica migraciones.',
+    transactionUndoSoldUnderflow:
+      'No se puede deshacer: la cantidad vendida actual es menor a la de la transacción.',
+    transactionUndoNotFound:
+      'La transacción ya no existe o ya fue deshecha.',
+    transactionUndoRequiresOnline:
+      'Necesitas conexión activa para deshacer una transacción.',
+    transactionUndoPendingSync:
+      'Hay cambios pendientes por sincronizar. Intenta de nuevo en unos segundos.',
+    transactionUndoDeadLetter:
+      'Hay operaciones fallidas de sincronizacion. Reintenta antes de deshacer.',
+    transactionUndoRefreshWarning:
+      'No se pudo recargar todo desde la base de datos; actualiza la vista para verificar.',
   },
 
   // Confirmations

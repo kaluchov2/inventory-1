@@ -1,4 +1,4 @@
-import { useState, useMemo, Fragment } from 'react';
+﻿import { useState, useMemo, Fragment } from 'react';
 import {
   Box,
   Heading,
@@ -40,6 +40,9 @@ import { useTransactionStore } from '../store/transactionStore';
 import { Customer } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { es } from '../i18n/es';
+import { normalizeCustomerKey, WALK_IN_CUSTOMER_LABELS } from '../utils/customerNameUtils';
+
+type CustomerListItem = Customer & { isVirtualWalkIn?: boolean };
 
 export function Customers() {
   const toast = useToast();
@@ -55,7 +58,7 @@ export function Customers() {
     getFilteredCustomers,
   } = useCustomerStore();
 
-  useTransactionStore();
+  const { transactions } = useTransactionStore();
 
   const {
     isOpen: isFormOpen,
@@ -81,7 +84,56 @@ export function Customers() {
   const [isLoading, setIsLoading] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
-  const filteredCustomers = useMemo(() => getFilteredCustomers(), [customers, searchQuery]);
+  const filteredRealCustomers = useMemo(
+    () => getFilteredCustomers(),
+    [customers, searchQuery, getFilteredCustomers]
+  );
+
+  const virtualWalkInCustomers = useMemo<CustomerListItem[]>(() => {
+    const realCustomerKeys = new Set(customers.map((customer) => normalizeCustomerKey(customer.name)));
+    const now = new Date().toISOString();
+
+    return WALK_IN_CUSTOMER_LABELS
+      .filter((label) => !realCustomerKeys.has(normalizeCustomerKey(label)))
+      .map((label) => {
+        const labelKey = normalizeCustomerKey(label);
+        const relatedSales = transactions.filter(
+          (tx) =>
+            !tx.customerId &&
+            tx.type === 'sale' &&
+            normalizeCustomerKey(tx.customerName) === labelKey
+        );
+
+        return {
+          id: `virtual_walkin_${labelKey.replace(/\s+/g, '_')}`,
+          name: label,
+          balance: 0,
+          totalPurchases: relatedSales.reduce((sum, tx) => {
+            const paidAmount = tx.cashAmount + tx.transferAmount + tx.cardAmount;
+            return sum + Math.max(tx.total - paidAmount, 0);
+          }, 0),
+          createdAt: now,
+          updatedAt: now,
+          isVirtualWalkIn: true,
+        };
+      });
+  }, [customers, transactions]);
+
+  const filteredVirtualWalkIns = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return virtualWalkInCustomers;
+    return virtualWalkInCustomers.filter(
+      (customer) =>
+        customer.name.toLowerCase().includes(query) ||
+        (customer.phone && customer.phone.includes(query)) ||
+        (customer.email && customer.email.toLowerCase().includes(query))
+    );
+  }, [searchQuery, virtualWalkInCustomers]);
+
+  const filteredCustomers = useMemo<CustomerListItem[]>(
+    () => [...filteredVirtualWalkIns, ...filteredRealCustomers],
+    [filteredRealCustomers, filteredVirtualWalkIns]
+  );
 
   const toggleExpandRow = (customerId: string) => {
     setExpandedRows((prev) => {
@@ -237,41 +289,47 @@ export function Customers() {
                       </Text>
                     )}
                   </VStack>
-                  <Box onClick={(e) => e.stopPropagation()}>
-                    <Menu>
-                      <MenuButton
-                        as={IconButton}
-                        icon={<Icon as={FiMoreVertical} />}
-                        variant="ghost"
-                        size="sm"
-                        aria-label="Acciones"
-                      />
-                      <MenuList>
-                        <MenuItem
-                          icon={<Icon as={FiEdit2} />}
-                          onClick={() => handleEditCustomer(customer)}
-                        >
-                          {es.actions.edit}
-                        </MenuItem>
-                        {customer.balance > 0 && (
+                  {!customer.isVirtualWalkIn ? (
+                    <Box onClick={(e) => e.stopPropagation()}>
+                      <Menu>
+                        <MenuButton
+                          as={IconButton}
+                          icon={<Icon as={FiMoreVertical} />}
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Acciones"
+                        />
+                        <MenuList>
                           <MenuItem
-                            icon={<Icon as={FiDollarSign} />}
-                            color="green.500"
-                            onClick={() => handleInstallmentClick(customer)}
+                            icon={<Icon as={FiEdit2} />}
+                            onClick={() => handleEditCustomer(customer)}
                           >
-                            {es.sales.receiveInstallment}
+                            {es.actions.edit}
                           </MenuItem>
-                        )}
-                        <MenuItem
-                          icon={<Icon as={FiTrash2} />}
-                          color="red.500"
-                          onClick={() => handleDeleteClick(customer)}
-                        >
-                          {es.actions.delete}
-                        </MenuItem>
-                      </MenuList>
-                    </Menu>
-                  </Box>
+                          {customer.balance > 0 && (
+                            <MenuItem
+                              icon={<Icon as={FiDollarSign} />}
+                              color="green.500"
+                              onClick={() => handleInstallmentClick(customer)}
+                            >
+                              {es.sales.receiveInstallment}
+                            </MenuItem>
+                          )}
+                          <MenuItem
+                            icon={<Icon as={FiTrash2} />}
+                            color="red.500"
+                            onClick={() => handleDeleteClick(customer)}
+                          >
+                            {es.actions.delete}
+                          </MenuItem>
+                        </MenuList>
+                      </Menu>
+                    </Box>
+                  ) : (
+                    <Badge colorScheme="purple" fontSize="xs">
+                      Walk-in
+                    </Badge>
+                  )}
                 </Flex>
                 <HStack justify="space-between" ml={6}>
                   {customer.balance > 0 ? (
@@ -353,38 +411,44 @@ export function Customers() {
                       {formatCurrency(customer.totalPurchases)}
                     </Td>
                     <Td onClick={(e) => e.stopPropagation()}>
-                      <Menu>
-                        <MenuButton
-                          as={IconButton}
-                          icon={<Icon as={FiMoreVertical} />}
-                          variant="ghost"
-                          aria-label="Acciones"
-                        />
-                        <MenuList>
-                          <MenuItem
-                            icon={<Icon as={FiEdit2} />}
-                            onClick={() => handleEditCustomer(customer)}
-                          >
-                            {es.actions.edit}
-                          </MenuItem>
-                          {customer.balance > 0 && (
+                      {!customer.isVirtualWalkIn ? (
+                        <Menu>
+                          <MenuButton
+                            as={IconButton}
+                            icon={<Icon as={FiMoreVertical} />}
+                            variant="ghost"
+                            aria-label="Acciones"
+                          />
+                          <MenuList>
                             <MenuItem
-                              icon={<Icon as={FiDollarSign} />}
-                              color="green.500"
-                              onClick={() => handleInstallmentClick(customer)}
+                              icon={<Icon as={FiEdit2} />}
+                              onClick={() => handleEditCustomer(customer)}
                             >
-                              {es.sales.receiveInstallment}
+                              {es.actions.edit}
                             </MenuItem>
-                          )}
-                          <MenuItem
-                            icon={<Icon as={FiTrash2} />}
-                            color="red.500"
-                            onClick={() => handleDeleteClick(customer)}
-                          >
-                            {es.actions.delete}
-                          </MenuItem>
-                        </MenuList>
-                      </Menu>
+                            {customer.balance > 0 && (
+                              <MenuItem
+                                icon={<Icon as={FiDollarSign} />}
+                                color="green.500"
+                                onClick={() => handleInstallmentClick(customer)}
+                              >
+                                {es.sales.receiveInstallment}
+                              </MenuItem>
+                            )}
+                            <MenuItem
+                              icon={<Icon as={FiTrash2} />}
+                              color="red.500"
+                              onClick={() => handleDeleteClick(customer)}
+                            >
+                              {es.actions.delete}
+                            </MenuItem>
+                          </MenuList>
+                        </Menu>
+                      ) : (
+                        <Badge colorScheme="purple" variant="subtle">
+                          Walk-in
+                        </Badge>
+                      )}
                     </Td>
                   </Tr>
                   {/* Expanded Row Details */}

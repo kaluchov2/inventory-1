@@ -96,6 +96,11 @@ export function Sales() {
     onOpen: onUnregisteredModalOpen,
     onClose: onUnregisteredModalClose,
   } = useDisclosure();
+  const {
+    isOpen: isSaleConfirmOpen,
+    onOpen: onSaleConfirmOpen,
+    onClose: onSaleConfirmClose,
+  } = useDisclosure();
   const [unregName, setUnregName] = useState("");
   const [unregPrice, setUnregPrice] = useState(0);
   const [unregQty, setUnregQty] = useState(1);
@@ -160,6 +165,12 @@ export function Sales() {
   // Cart totals
   const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
   const total = subtotal - discount;
+  const saleLineCount = cart.length;
+  const saleUnitsCount = useMemo(
+    () => cart.reduce((sum, item) => sum + item.quantity, 0),
+    [cart],
+  );
+  const saleCustomerName = selectedCustomer?.name || es.customers.walkIn;
 
   // Sync amountToPay with total when cart/discount changes
   useEffect(() => {
@@ -339,8 +350,7 @@ export function Sales() {
     return true;
   }, [cart.length, hasPendingBalance, selectedCustomerId]);
 
-  // Process sale
-  const handleCompleteSale = () => {
+  const handleRequestCompleteSale = () => {
     if (!canCompleteSale) {
       if (hasPendingBalance && !selectedCustomerId) {
         toast({
@@ -357,6 +367,13 @@ export function Sales() {
       }
       return;
     }
+    onSaleConfirmOpen();
+  };
+
+  // Process sale
+  const handleCompleteSale = () => {
+    if (!canCompleteSale) return;
+    onSaleConfirmClose();
 
     // Calculate final amounts
     let finalCash = 0;
@@ -1148,7 +1165,7 @@ export function Sales() {
                     h={{ base: "50px", md: "60px" }}
                     fontSize={{ base: "md", md: "xl" }}
                     leftIcon={<Icon as={FiShoppingCart} />}
-                    onClick={handleCompleteSale}
+                    onClick={handleRequestCompleteSale}
                     isDisabled={!canCompleteSale}
                   >
                     {hasPendingBalance
@@ -1388,6 +1405,53 @@ export function Sales() {
           </TabPanel>
         </TabPanels>
       </Tabs>
+
+      {/* Sale Confirmation Modal */}
+      <Modal isOpen={isSaleConfirmOpen} onClose={onSaleConfirmClose} isCentered>
+        <ModalOverlay />
+        <ModalContent mx={4}>
+          <ModalHeader>Confirmar venta</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack spacing={3} align="stretch">
+              <HStack justify="space-between">
+                <Text color="gray.600">Cliente</Text>
+                <Text fontWeight="semibold" textAlign="right">
+                  {saleCustomerName}
+                </Text>
+              </HStack>
+              <HStack justify="space-between">
+                <Text color="gray.600">Productos</Text>
+                <Text fontWeight="semibold">
+                  {saleLineCount} en carrito ({saleUnitsCount} pieza(s))
+                </Text>
+              </HStack>
+              <HStack justify="space-between">
+                <Text color="gray.600">Total</Text>
+                <Text fontWeight="bold" color="green.600" fontSize="lg">
+                  {formatCurrency(total)}
+                </Text>
+              </HStack>
+              {hasPendingBalance && (
+                <HStack justify="space-between">
+                  <Text color="orange.700">Saldo pendiente</Text>
+                  <Text fontWeight="bold" color="orange.700">
+                    {formatCurrency(effectivePendingBalance)}
+                  </Text>
+                </HStack>
+              )}
+            </VStack>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={onSaleConfirmClose}>
+              Cancelar
+            </Button>
+            <Button colorScheme="green" onClick={handleCompleteSale}>
+              Confirmar venta
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       {/* Unregistered Product Modal */}
       <Modal

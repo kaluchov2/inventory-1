@@ -31,9 +31,10 @@ import { getReviewQty } from "../utils/productHelpers";
 import { UPS_BATCH_OPTIONS } from "../constants/colors";
 
 const whatsNewItems = [
-  "Correccion en boton color para agregar product",
-  "Impresion de QR disponible desde Productos",
-  "Clientes: ahora muestra las ultimas 10 transacciones de cada cliente sin filtro por fecha",
+  "Ventas: nuevo modal de confirmacion antes de registrar (cliente, productos y total).",
+  "Clientes: ahora puedes modificar ventas y deshacer ventas con confirmacion.",
+  "Clientes: historial de transacciones con paginacion (carga de 5 en 5).",
+  "Ajuste: se elimino alias temporal Cliente Mostrador; se usa Cliente de Paso.",
 ];
 
 export function Home() {

@@ -71,6 +71,11 @@ const faqSections: FaqSection[] = [
           'Se guarda como Cliente de Paso. Para validarla o exportarla, usa la opcion Cliente de Paso en Transacciones o en Configuracion > Exportar ventas por cliente.',
       },
       {
+        question: 'Como modifico o deshago una transaccion de venta?',
+        answer:
+          'Ve a Clientes, abre el detalle del cliente y busca la venta. Usa el icono de editar para modificar productos o el icono de deshacer para revertirla. Confirma la accion en el modal. Si la venta tiene productos sin registrar, se deshace la transaccion y saldos, pero no hay ajuste de inventario para esos renglones.',
+      },
+      {
         question: 'Que hago si un item no sincroniza y ya presione Reintentar?',
         answer:
           'Revisa cola pendiente y dead letter en Configuracion. Si sigue fallando, intenta cerrar/abrir la app y forzar sincronizacion. Si persiste, reporta el caso con hora, cliente y monto para revisarlo rapido.',

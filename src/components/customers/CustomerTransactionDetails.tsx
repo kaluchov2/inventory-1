@@ -255,12 +255,16 @@ export function CustomerTransactionDetails({
         current.filter((tx) => tx.id !== transactionToUndo.id)
       );
       setVisibleCount(PAGE_SIZE);
+      const skippedRefsNote =
+        undoResult.skippedProductRefs && undoResult.skippedProductRefs > 0
+          ? ` ${undoResult.skippedProductRefs} referencia(s) sin inventario fueron omitidas.`
+          : '';
 
       toast({
         title: es.success.transactionUndone,
         description: refreshFailed
-          ? `${formatCurrency(undoResult.total)} revertido. ${es.errors.transactionUndoRefreshWarning}`
-          : `${formatCurrency(undoResult.total)} revertido`,
+          ? `${formatCurrency(undoResult.total)} revertido.${skippedRefsNote} ${es.errors.transactionUndoRefreshWarning}`
+          : `${formatCurrency(undoResult.total)} revertido.${skippedRefsNote}`,
         status: refreshFailed ? 'warning' : 'success',
         duration: 4500,
         isClosable: true,

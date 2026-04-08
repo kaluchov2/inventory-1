@@ -54,6 +54,7 @@ export interface UndoSaleTransactionResult {
   paidAmount: number;
   unpaidReverted: number;
   restoredProductRows: number;
+  skippedProductRefs?: number;
 }
 
 export const transactionService = {
@@ -346,6 +347,10 @@ function parseUndoSaleResult(data: any): UndoSaleTransactionResult {
     paidAmount: Number(raw.paidAmount ?? 0),
     unpaidReverted: Number(raw.unpaidReverted ?? 0),
     restoredProductRows: Number(raw.restoredProductRows ?? 0),
+    skippedProductRefs:
+      raw.skippedProductRefs === undefined
+        ? undefined
+        : Number(raw.skippedProductRefs ?? 0),
   };
 }
 

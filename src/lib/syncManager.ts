@@ -1,8 +1,8 @@
-import { supabase, getSupabaseClient } from './supabase';
-import { syncQueue, SyncOperation } from './syncQueue';
-import { connectionStatus } from './connectionStatus';
-import { isMissingDatabaseFunction, syncRecordedSale } from './saleSync';
-import { logSyncIncident } from './syncIncidentLogger';
+import { supabase, getSupabaseClient } from "./supabase";
+import { syncQueue, SyncOperation } from "./syncQueue";
+import { connectionStatus } from "./connectionStatus";
+import { isMissingDatabaseFunction, syncRecordedSale } from "./saleSync";
+import { logSyncIncident } from "./syncIncidentLogger";
 
 /**
  * Sync Manager
@@ -81,7 +81,7 @@ class SyncManager {
 
   private summarizeOperation(operation: SyncOperation) {
     const payload =
-      operation.action === 'record_sale'
+      operation.action === "record_sale"
         ? (operation.data?.transaction as Record<string, any> | undefined)
         : (operation.data as Record<string, any> | undefined);
 
@@ -119,7 +119,7 @@ class SyncManager {
   private markQueueObservation(reason: string) {
     this.lastObservedQueueSize = syncQueue.size();
     this.queueUnchangedSince = Date.now();
-    this.logDebug('Queue observation updated', {
+    this.logDebug("Queue observation updated", {
       reason,
       queueSize: this.lastObservedQueueSize,
     });
@@ -144,16 +144,24 @@ class SyncManager {
     const stalledForMs = Date.now() - this.queueUnchangedSince;
     if (stalledForMs < this.STALLED_QUEUE_THRESHOLD_MS) return;
 
-    this.logDebug('Detected stalled queue while online, forcing recovery sync', {
-      queueSize,
-      stalledForMs,
-      connection: this.getConnectionSnapshot(),
-    });
-    logSyncIncident('warn', 'sync_stalled_queue', 'Queue appears stalled while online; forcing recovery sync', {
-      queueSize,
-      stalledForMs,
-      connection: this.getConnectionSnapshot(),
-    });
+    this.logDebug(
+      "Detected stalled queue while online, forcing recovery sync",
+      {
+        queueSize,
+        stalledForMs,
+        connection: this.getConnectionSnapshot(),
+      },
+    );
+    logSyncIncident(
+      "warn",
+      "sync_stalled_queue",
+      "Queue appears stalled while online; forcing recovery sync",
+      {
+        queueSize,
+        stalledForMs,
+        connection: this.getConnectionSnapshot(),
+      },
+    );
 
     this.queueUnchangedSince = Date.now();
     this.forceSync();
@@ -161,13 +169,17 @@ class SyncManager {
 
   private initialize() {
     connectionStatus.subscribe((status) => {
-      this.logDebug('Connection status event', {
+      this.logDebug("Connection status event", {
         status: this.getConnectionSnapshot(),
         queueSize: syncQueue.size(),
         isSyncing: this.isSyncing,
       });
-      if (status.isOnline && status.isSupabaseConnected && !syncQueue.isEmpty()) {
-        this.logDebug('Connection event triggered sync attempt');
+      if (
+        status.isOnline &&
+        status.isSupabaseConnected &&
+        !syncQueue.isEmpty()
+      ) {
+        this.logDebug("Connection event triggered sync attempt");
         this.syncPendingOperations();
       }
     });
@@ -180,22 +192,34 @@ class SyncManager {
     //   - Worst case (~13-15s): This timer just reset; full 10s wait + realtime + 2s debounce
     setInterval(() => {
       const status = connectionStatus.getStatus();
-      if (status.isOnline && status.isSupabaseConnected && !this.isSyncing && !syncQueue.isEmpty()) {
-        this.logDebug('Interval triggered sync attempt', {
+      if (
+        status.isOnline &&
+        status.isSupabaseConnected &&
+        !this.isSyncing &&
+        !syncQueue.isEmpty()
+      ) {
+        this.logDebug("Interval triggered sync attempt", {
           queueSize: syncQueue.size(),
           connection: this.getConnectionSnapshot(),
         });
         this.syncPendingOperations();
       }
-    }, 10000); // Flush queue to Supabase every 10 seconds when online
+    }, 15000); // Flush queue to Supabase every 10 seconds when online
 
     // Watchdog: if sync has been stuck for >2 minutes, force-reset and retry
     setInterval(() => {
-      if (this.isSyncing && this.syncStartTime && Date.now() - this.syncStartTime > 120_000) {
-        console.warn('[SyncManager] Sync stuck >2min, force-resetting');
+      if (
+        this.isSyncing &&
+        this.syncStartTime &&
+        Date.now() - this.syncStartTime > 120_000
+      ) {
+        console.warn("[SyncManager] Sync stuck >2min, force-resetting");
         this.isSyncing = false;
         this.syncStartTime = null;
-        this.updateStatus({ isSyncing: false, error: 'Sync timeout - reintentando...' });
+        this.updateStatus({
+          isSyncing: false,
+          error: "Sync timeout - reintentando...",
+        });
         this.syncPendingOperations();
       }
     }, 30_000);
@@ -219,7 +243,7 @@ class SyncManager {
    * then calls loadFromSupabase() to refresh the local store.
    */
   public async syncPendingOperations() {
-    this.logDebug('syncPendingOperations called', {
+    this.logDebug("syncPendingOperations called", {
       isSyncing: this.isSyncing,
       hasSupabase: !!supabase,
       queueSize: syncQueue.size(),
@@ -227,33 +251,40 @@ class SyncManager {
     });
 
     if (this.isSyncing) {
-      this.logDebug('Skipping sync because another sync is already in progress');
+      this.logDebug(
+        "Skipping sync because another sync is already in progress",
+      );
       return;
     }
 
     if (!supabase) {
-      this.logDebug('Skipping sync because Supabase is not configured');
+      this.logDebug("Skipping sync because Supabase is not configured");
       return;
     }
 
     let status = connectionStatus.getStatus();
     if (!status.isOnline) {
-      this.logDebug('Skipping sync because browser reports offline');
+      this.logDebug("Skipping sync because browser reports offline");
       this.updateStatus({
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
       });
       if (!syncQueue.isEmpty()) {
-        logSyncIncident('warn', 'sync_skipped_offline', 'Sync skipped because browser is offline while queue has pending operations', {
-          queueSize: syncQueue.size(),
-          connection: this.getConnectionSnapshot(),
-        });
+        logSyncIncident(
+          "warn",
+          "sync_skipped_offline",
+          "Sync skipped because browser is offline while queue has pending operations",
+          {
+            queueSize: syncQueue.size(),
+            connection: this.getConnectionSnapshot(),
+          },
+        );
       }
       return;
     }
 
     if (syncQueue.isEmpty()) {
-      this.logDebug('Skipping sync because queue is empty');
+      this.logDebug("Skipping sync because queue is empty");
       this.updateStatus({
         pendingCount: 0,
         deadLetterCount: syncQueue.getDeadLetterCount(),
@@ -263,33 +294,43 @@ class SyncManager {
 
     // Force a fresh connectivity probe so we don't rely on stale 30s status.
     // This avoids "stuck syncing" loops after background/foreground transitions.
-    this.logDebug('Running forceCheck before sync', {
+    this.logDebug("Running forceCheck before sync", {
       before: this.getConnectionSnapshot(),
     });
     await connectionStatus.forceCheck();
     status = connectionStatus.getStatus();
-    this.logDebug('forceCheck completed', {
+    this.logDebug("forceCheck completed", {
       after: this.getConnectionSnapshot(),
     });
 
     // A concurrent sync could have started while we awaited the probe.
     if (this.isSyncing) {
-      this.logDebug('Aborting this sync start because another sync began during forceCheck');
+      this.logDebug(
+        "Aborting this sync start because another sync began during forceCheck",
+      );
       return;
     }
 
     if (!status.isOnline || !status.isSupabaseConnected) {
-      this.logDebug('Skipping sync because connection is not ready after forceCheck', {
-        connection: this.getConnectionSnapshot(),
-      });
+      this.logDebug(
+        "Skipping sync because connection is not ready after forceCheck",
+        {
+          connection: this.getConnectionSnapshot(),
+        },
+      );
       this.updateStatus({
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
       });
-      logSyncIncident('warn', 'sync_skipped_connection_not_ready', 'Sync skipped because Supabase connection is not ready after forceCheck', {
-        queueSize: syncQueue.size(),
-        connection: this.getConnectionSnapshot(),
-      });
+      logSyncIncident(
+        "warn",
+        "sync_skipped_connection_not_ready",
+        "Sync skipped because Supabase connection is not ready after forceCheck",
+        {
+          queueSize: syncQueue.size(),
+          connection: this.getConnectionSnapshot(),
+        },
+      );
       return;
     }
 
@@ -297,8 +338,8 @@ class SyncManager {
     this.syncStartTime = Date.now();
     this.updateStatus({ isSyncing: true, error: null });
 
-    console.log('[SyncManager] Starting sync, queue size:', syncQueue.size());
-    this.logDebug('Sync lock acquired', {
+    console.log("[SyncManager] Starting sync, queue size:", syncQueue.size());
+    this.logDebug("Sync lock acquired", {
       queueInfo: syncQueue.getQueueInfo(),
       connection: this.getConnectionSnapshot(),
     });
@@ -314,17 +355,23 @@ class SyncManager {
 
         // Safety check: If too many consecutive errors, stop sync
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          console.error('[SyncManager] Too many consecutive errors, stopping sync');
+          console.error(
+            "[SyncManager] Too many consecutive errors, stopping sync",
+          );
           this.updateStatus({
             error: `Sync stopped after ${MAX_CONSECUTIVE_ERRORS} consecutive errors`,
           });
           break;
         }
 
-        console.log(`[SyncManager] Processing operation ${processed + 1}/${syncQueue.size()}:`, operation.type, operation.action);
+        console.log(
+          `[SyncManager] Processing operation ${processed + 1}/${syncQueue.size()}:`,
+          operation.type,
+          operation.action,
+        );
         const opSummary = this.summarizeOperation(operation);
         const timeoutMs = this.getOperationTimeoutMs(operation);
-        this.logDebug('Processing queued operation', {
+        this.logDebug("Processing queued operation", {
           ...opSummary,
           timeoutMs,
           pendingBefore: syncQueue.size(),
@@ -332,16 +379,17 @@ class SyncManager {
         const opStartedAt = Date.now();
 
         try {
-          const { signal, cleanup, timeoutPromise } = this.createAbortableTimeout(
-            timeoutMs,
-            `${operation.type}/${operation.action}/${operation.id}`
-          );
+          const { signal, cleanup, timeoutPromise } =
+            this.createAbortableTimeout(
+              timeoutMs,
+              `${operation.type}/${operation.action}/${operation.id}`,
+            );
           try {
             await Promise.race([
               this.executeOperation(operation, signal),
               timeoutPromise,
             ]);
-            this.logDebug('Operation completed before timeout', {
+            this.logDebug("Operation completed before timeout", {
               ...opSummary,
               elapsedMs: Date.now() - opStartedAt,
             });
@@ -352,9 +400,14 @@ class SyncManager {
           try {
             syncQueue.remove(operation.id);
           } catch (queueError) {
-            console.error('[SyncManager] Failed to remove operation from queue (localStorage issue):', queueError);
+            console.error(
+              "[SyncManager] Failed to remove operation from queue (localStorage issue):",
+              queueError,
+            );
             // Queue operation failed but sync succeeded - this is a localStorage quota issue
-            throw new Error('LocalStorage quota exceeded - cannot update sync queue');
+            throw new Error(
+              "LocalStorage quota exceeded - cannot update sync queue",
+            );
           }
 
           processed++;
@@ -362,44 +415,60 @@ class SyncManager {
 
           // Update pending count after each operation
           this.updateStatus({ pendingCount: syncQueue.size() });
-          this.logDebug('Operation removed from queue after success', {
+          this.logDebug("Operation removed from queue after success", {
             ...opSummary,
             pendingAfter: syncQueue.size(),
           });
         } catch (error) {
-          console.error('[SyncManager] Sync operation failed:', error);
+          console.error("[SyncManager] Sync operation failed:", error);
           const isTimeoutError =
-            error instanceof Error && error.message.includes('timed out');
-          this.logDebug('Operation failed', {
+            error instanceof Error && error.message.includes("timed out");
+          this.logDebug("Operation failed", {
             ...opSummary,
             elapsedMs: Date.now() - opStartedAt,
             error: this.toErrorMeta(error),
             connection: this.getConnectionSnapshot(),
           });
-          logSyncIncident('warn', 'sync_operation_failed', 'Queued operation failed during sync processing', {
-            ...opSummary,
-            isTimeoutError,
-            elapsedMs: Date.now() - opStartedAt,
-            error: this.toErrorMeta(error),
-            connection: this.getConnectionSnapshot(),
-          });
+          logSyncIncident(
+            "warn",
+            "sync_operation_failed",
+            "Queued operation failed during sync processing",
+            {
+              ...opSummary,
+              isTimeoutError,
+              elapsedMs: Date.now() - opStartedAt,
+              error: this.toErrorMeta(error),
+              connection: this.getConnectionSnapshot(),
+            },
+          );
 
           // On flaky mobile networks, a request can time out locally even if it committed remotely.
           // Before retrying, verify whether the row now exists and dequeue if already applied.
           if (isTimeoutError) {
-            this.logDebug('Timeout detected, verifying whether operation was applied remotely', opSummary);
+            this.logDebug(
+              "Timeout detected, verifying whether operation was applied remotely",
+              opSummary,
+            );
             const alreadyApplied = await this.verifyOperationApplied(operation);
-            this.logDebug('Timeout verification result', {
+            this.logDebug("Timeout verification result", {
               ...opSummary,
               alreadyApplied,
             });
             if (alreadyApplied) {
-              console.warn('[SyncManager] Timed out locally but operation is already persisted. Removing from queue:', operation.id);
+              console.warn(
+                "[SyncManager] Timed out locally but operation is already persisted. Removing from queue:",
+                operation.id,
+              );
               try {
                 syncQueue.remove(operation.id);
               } catch (queueError) {
-                console.error('[SyncManager] Failed to remove already-applied operation from queue:', queueError);
-                throw new Error('LocalStorage quota exceeded - cannot update sync queue');
+                console.error(
+                  "[SyncManager] Failed to remove already-applied operation from queue:",
+                  queueError,
+                );
+                throw new Error(
+                  "LocalStorage quota exceeded - cannot update sync queue",
+                );
               }
               processed++;
               consecutiveErrors = 0;
@@ -411,17 +480,28 @@ class SyncManager {
             await connectionStatus.forceCheck();
             const refreshed = connectionStatus.getStatus();
             if (!refreshed.isOnline || !refreshed.isSupabaseConnected) {
-              console.warn('[SyncManager] Timeout while disconnected. Pausing queue without consuming retries.');
-              this.logDebug('Timeout happened while disconnected; leaving operation queued', {
-                ...opSummary,
-                refreshed: this.getConnectionSnapshot(),
-              });
-              logSyncIncident('warn', 'sync_timeout_disconnected', 'Operation timed out and connection degraded; leaving operation queued', {
-                ...opSummary,
-                refreshed: this.getConnectionSnapshot(),
-              });
+              console.warn(
+                "[SyncManager] Timeout while disconnected. Pausing queue without consuming retries.",
+              );
+              this.logDebug(
+                "Timeout happened while disconnected; leaving operation queued",
+                {
+                  ...opSummary,
+                  refreshed: this.getConnectionSnapshot(),
+                },
+              );
+              logSyncIncident(
+                "warn",
+                "sync_timeout_disconnected",
+                "Operation timed out and connection degraded; leaving operation queued",
+                {
+                  ...opSummary,
+                  refreshed: this.getConnectionSnapshot(),
+                },
+              );
               this.updateStatus({
-                error: 'Sin conexion con Supabase. Reintentaremos al reconectar.',
+                error:
+                  "Sin conexion con Supabase. Reintentaremos al reconectar.",
               });
               break;
             }
@@ -432,29 +512,49 @@ class SyncManager {
           try {
             const shouldRetry = syncQueue.incrementRetry(operation.id);
             if (!shouldRetry) {
-              console.error('[SyncManager] Max retries reached, moving to dead letter:', operation.id);
-              this.logDebug('Operation exceeded retry limit; moving to dead letter', opSummary);
-              logSyncIncident('error', 'sync_operation_dead_letter', 'Operation exceeded retry limit and moved to dead-letter queue', {
-                ...opSummary,
-                queueSize: syncQueue.size(),
-              });
+              console.error(
+                "[SyncManager] Max retries reached, moving to dead letter:",
+                operation.id,
+              );
+              this.logDebug(
+                "Operation exceeded retry limit; moving to dead letter",
+                opSummary,
+              );
+              logSyncIncident(
+                "error",
+                "sync_operation_dead_letter",
+                "Operation exceeded retry limit and moved to dead-letter queue",
+                {
+                  ...opSummary,
+                  queueSize: syncQueue.size(),
+                },
+              );
               try {
                 syncQueue.moveToDeadLetter(operation);
                 syncQueue.remove(operation.id);
               } catch (removeError) {
-                console.error('[SyncManager] Failed to remove operation (localStorage issue):', removeError);
+                console.error(
+                  "[SyncManager] Failed to remove operation (localStorage issue):",
+                  removeError,
+                );
                 // Can't remove from queue - localStorage is full
-                throw new Error('LocalStorage quota exceeded - cannot manage sync queue');
+                throw new Error(
+                  "LocalStorage quota exceeded - cannot manage sync queue",
+                );
               }
               this.updateStatus({
                 error: `Fallo sincronizar ${operation.type} ${operation.action} despues de ${this.MAX_RETRIES} intentos. Datos guardados localmente.`,
               });
               consecutiveErrors = 0; // Reset after removing failed operation
             } else {
-              if (isTimeoutError && operation.action === 'record_sale' && syncQueue.size() > 1) {
+              if (
+                isTimeoutError &&
+                operation.action === "record_sale" &&
+                syncQueue.size() > 1
+              ) {
                 const movedToBack = syncQueue.moveToBack(operation.id);
                 this.logDebug(
-                  'Moved timed-out record_sale operation to queue tail to avoid blocking later writes',
+                  "Moved timed-out record_sale operation to queue tail to avoid blocking later writes",
                   {
                     ...opSummary,
                     movedToBack,
@@ -469,42 +569,55 @@ class SyncManager {
               }
 
               // Add exponential backoff delay before retrying
-              const delay = Math.min(1000 * Math.pow(2, operation.retryCount - 1), 10000);
+              const delay = Math.min(
+                1000 * Math.pow(2, operation.retryCount - 1),
+                10000,
+              );
               console.log(`[SyncManager] Retrying in ${delay}ms...`);
-              this.logDebug('Operation scheduled for retry', {
+              this.logDebug("Operation scheduled for retry", {
                 ...opSummary,
                 nextRetryCount: operation.retryCount,
                 delayMs: delay,
               });
-              await new Promise(resolve => setTimeout(resolve, delay));
+              await new Promise((resolve) => setTimeout(resolve, delay));
             }
           } catch (queueError) {
-            console.error('[SyncManager] Queue operation failed:', queueError);
+            console.error("[SyncManager] Queue operation failed:", queueError);
             // If we can't manage the queue due to localStorage issues, stop sync
-            logSyncIncident('error', 'sync_queue_storage_error', 'Failed to update sync queue state in localStorage', {
-              ...opSummary,
-              queueError: this.toErrorMeta(queueError),
-            });
+            logSyncIncident(
+              "error",
+              "sync_queue_storage_error",
+              "Failed to update sync queue state in localStorage",
+              {
+                ...opSummary,
+                queueError: this.toErrorMeta(queueError),
+              },
+            );
             this.updateStatus({
-              error: 'LocalStorage quota exceeded. Please clear sync queue.',
+              error: "LocalStorage quota exceeded. Please clear sync queue.",
             });
             break;
           }
         }
       }
 
-      console.log('[SyncManager] Sync complete, processed:', processed);
-      this.logDebug('Sync loop complete', {
+      console.log("[SyncManager] Sync complete, processed:", processed);
+      this.logDebug("Sync loop complete", {
         processed,
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
       });
       if (syncQueue.size() > 0 || syncQueue.getDeadLetterCount() > 0) {
-        logSyncIncident('warn', 'sync_finished_with_pending', 'Sync loop ended with pending or failed operations', {
-          processed,
-          pendingCount: syncQueue.size(),
-          deadLetterCount: syncQueue.getDeadLetterCount(),
-        });
+        logSyncIncident(
+          "warn",
+          "sync_finished_with_pending",
+          "Sync loop ended with pending or failed operations",
+          {
+            processed,
+            pendingCount: syncQueue.size(),
+            deadLetterCount: syncQueue.getDeadLetterCount(),
+          },
+        );
       }
 
       this.updateStatus({
@@ -512,33 +625,39 @@ class SyncManager {
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
         lastSync: new Date(),
-        error: syncQueue.getDeadLetterCount() > 0
-          ? `${syncQueue.getDeadLetterCount()} operacion(es) fallaron. Datos guardados localmente.`
-          : null,
+        error:
+          syncQueue.getDeadLetterCount() > 0
+            ? `${syncQueue.getDeadLetterCount()} operacion(es) fallaron. Datos guardados localmente.`
+            : null,
       });
     } catch (error) {
-      console.error('[SyncManager] Sync error:', error);
-      this.logDebug('Unhandled sync error', {
+      console.error("[SyncManager] Sync error:", error);
+      this.logDebug("Unhandled sync error", {
         error: this.toErrorMeta(error),
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
       });
-      logSyncIncident('error', 'sync_unhandled_error', 'Unhandled sync loop error', {
-        error: this.toErrorMeta(error),
-        pendingCount: syncQueue.size(),
-        deadLetterCount: syncQueue.getDeadLetterCount(),
-      });
+      logSyncIncident(
+        "error",
+        "sync_unhandled_error",
+        "Unhandled sync loop error",
+        {
+          error: this.toErrorMeta(error),
+          pendingCount: syncQueue.size(),
+          deadLetterCount: syncQueue.getDeadLetterCount(),
+        },
+      );
       this.updateStatus({
         isSyncing: false,
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
-        error: error instanceof Error ? error.message : 'Unknown sync error',
+        error: error instanceof Error ? error.message : "Unknown sync error",
       });
     } finally {
       this.isSyncing = false;
       this.syncStartTime = null;
-      console.log('[SyncManager] Finally block - ensuring UI status updated');
-      this.logDebug('Sync lock released in finally', {
+      console.log("[SyncManager] Finally block - ensuring UI status updated");
+      this.logDebug("Sync lock released in finally", {
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
         connection: this.getConnectionSnapshot(),
@@ -550,11 +669,14 @@ class SyncManager {
         pendingCount: syncQueue.size(),
         deadLetterCount: syncQueue.getDeadLetterCount(),
       });
-      this.markQueueObservation('sync-finally');
+      this.markQueueObservation("sync-finally");
     }
   }
 
-  private createAbortableTimeout(ms: number, label = 'sync operation'): {
+  private createAbortableTimeout(
+    ms: number,
+    label = "sync operation",
+  ): {
     signal: AbortSignal;
     cleanup: () => void;
     timeoutPromise: Promise<never>;
@@ -565,8 +687,8 @@ class SyncManager {
       controller.abort();
     }, ms);
     const timeoutPromise = new Promise<never>((_, reject) => {
-      controller.signal.addEventListener('abort', () =>
-        reject(new Error(`Sync operation timed out after ${ms}ms`))
+      controller.signal.addEventListener("abort", () =>
+        reject(new Error(`Sync operation timed out after ${ms}ms`)),
       );
     });
     return {
@@ -577,43 +699,59 @@ class SyncManager {
   }
 
   private getOperationTimeoutMs(operation: SyncOperation): number {
-    if (operation.type === 'products') {
-      if (operation.action === 'batch_create' || operation.action === 'batch_update') return 60_000;
-      if (operation.action === 'create' || operation.action === 'update') return 30_000;
+    if (operation.type === "products") {
+      if (
+        operation.action === "batch_create" ||
+        operation.action === "batch_update"
+      )
+        return 60_000;
+      if (operation.action === "create" || operation.action === "update")
+        return 30_000;
     }
-    if (operation.type === 'transactions' && operation.action === 'record_sale') {
+    if (
+      operation.type === "transactions" &&
+      operation.action === "record_sale"
+    ) {
       return 45_000;
     }
     return 30_000;
   }
 
-  private async verifyOperationApplied(operation: SyncOperation): Promise<boolean> {
+  private async verifyOperationApplied(
+    operation: SyncOperation,
+  ): Promise<boolean> {
     const { type, action, data } = operation;
-    if (action !== 'create' && action !== 'update' && action !== 'delete' && action !== 'record_sale') return false;
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+    if (
+      action !== "create" &&
+      action !== "update" &&
+      action !== "delete" &&
+      action !== "record_sale"
+    )
+      return false;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return false;
 
     const client = getSupabaseClient();
     const row =
-      action === 'record_sale'
+      action === "record_sale"
         ? (data as Record<string, any>).transaction
         : (data as Record<string, any>);
-    if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
 
     const tableMap: Record<string, string> = {
-      products: 'products',
-      customers: 'customers',
-      transactions: 'transactions',
-      drops: 'drops',
-      staff: 'staff',
+      products: "products",
+      customers: "customers",
+      transactions: "transactions",
+      drops: "drops",
+      staff: "staff",
     };
 
     const table = tableMap[type];
     if (!table) return false;
 
-    const lookupColumn = type === 'drops' ? 'drop_number' : 'id';
-    const lookupValue = type === 'drops' ? row.dropNumber : row.id;
+    const lookupColumn = type === "drops" ? "drop_number" : "id";
+    const lookupValue = type === "drops" ? row.dropNumber : row.id;
     if (!lookupValue) return false;
-    this.logDebug('verifyOperationApplied lookup', {
+    this.logDebug("verifyOperationApplied lookup", {
       operation: this.summarizeOperation(operation),
       table,
       lookupColumn,
@@ -628,28 +766,32 @@ class SyncManager {
     try {
       let verifyQuery: any = client
         .from(table as any)
-        .select(action === 'delete' ? `is_deleted,${lookupColumn}` : lookupColumn)
+        .select(
+          action === "delete" ? `is_deleted,${lookupColumn}` : lookupColumn,
+        )
         .eq(lookupColumn, lookupValue)
         .limit(1)
         .abortSignal(controller.signal);
 
-      if (action === 'delete') {
+      if (action === "delete") {
         const { data: existingRows, error } = await verifyQuery;
         if (error) return false;
-        const existing = Array.isArray(existingRows) ? existingRows[0] : existingRows;
+        const existing = Array.isArray(existingRows)
+          ? existingRows[0]
+          : existingRows;
         return !!existing && !!existing.is_deleted;
       }
 
       const { data: existing, error } = await verifyQuery.maybeSingle();
 
       if (error) return false;
-      this.logDebug('verifyOperationApplied result', {
+      this.logDebug("verifyOperationApplied result", {
         operationId: operation.id,
         found: !!existing,
       });
       return !!existing;
     } catch (error) {
-      this.logDebug('verifyOperationApplied failed', {
+      this.logDebug("verifyOperationApplied failed", {
         operationId: operation.id,
         error: this.toErrorMeta(error),
       });
@@ -659,32 +801,32 @@ class SyncManager {
     }
   }
 
-  private async executeOperation(operation: SyncOperation, signal: AbortSignal) {
+  private async executeOperation(
+    operation: SyncOperation,
+    signal: AbortSignal,
+  ) {
     // Validate client is available before delegating to specific sync methods
     getSupabaseClient();
 
     const { type, action, data } = operation;
-    this.logDebug('Dispatching operation to entity sync handler', {
+    this.logDebug("Dispatching operation to entity sync handler", {
       id: operation.id,
       type,
       action,
-      rowId:
-        action === 'record_sale'
-          ? data?.transaction?.id
-          : data?.id,
+      rowId: action === "record_sale" ? data?.transaction?.id : data?.id,
     });
 
     switch (type) {
-      case 'products':
+      case "products":
         return this.syncProduct(action, data, signal);
-      case 'customers':
+      case "customers":
         return this.syncCustomer(action, data, signal);
-      case 'transactions':
+      case "transactions":
         return this.syncTransaction(action, data, signal);
       // V2: New entity types
-      case 'drops':
+      case "drops":
         return this.syncDrop(action, data, signal);
-      case 'staff':
+      case "staff":
         return this.syncStaff(action, data, signal);
       default:
         throw new Error(`Unknown sync type: ${type}`);
@@ -695,90 +837,100 @@ class SyncManager {
     const client = getSupabaseClient();
 
     switch (action) {
-      case 'create':
-      case 'update':
+      case "create":
+      case "update":
         // Single product upsert
-        this.logDebug('syncProduct upsert start', {
+        this.logDebug("syncProduct upsert start", {
           action,
           productId: data?.id,
           name: data?.name,
         });
         const singleStart = Date.now();
-        const dbData = this.convertToDbFormat(data, 'product');
+        const dbData = this.convertToDbFormat(data, "product");
         const { error: upsertError } = await client
-          .from('products')
-          .upsert(dbData, { onConflict: 'id' })
+          .from("products")
+          .upsert(dbData, { onConflict: "id" })
           .abortSignal(signal);
         if (upsertError) {
-          this.logDebug('syncProduct upsert error', {
+          this.logDebug("syncProduct upsert error", {
             action,
             productId: data?.id,
             error: this.toErrorMeta(upsertError),
           });
           throw upsertError;
         }
-        this.logDebug('syncProduct upsert success', {
+        this.logDebug("syncProduct upsert success", {
           action,
           productId: data?.id,
           elapsedMs: Date.now() - singleStart,
         });
         break;
 
-      case 'batch_create':
-      case 'batch_update':
+      case "batch_create":
+      case "batch_update":
         // Batch upsert - data is array of products
         // CRITICAL: Deduplicate by ID before sending to Supabase
         // This prevents "ON CONFLICT DO UPDATE command cannot affect row a second time" error
         const deduplicatedData = this.deduplicateById(data);
         if (deduplicatedData.length !== data.length) {
-          console.warn(`[SyncManager] Removed ${data.length - deduplicatedData.length} duplicate product IDs from batch`);
+          console.warn(
+            `[SyncManager] Removed ${data.length - deduplicatedData.length} duplicate product IDs from batch`,
+          );
         }
         const batchData = deduplicatedData.map((p: any) =>
-          this.convertToDbFormat(p, 'product')
+          this.convertToDbFormat(p, "product"),
         );
-        this.logDebug('syncProduct batch upsert start', {
+        this.logDebug("syncProduct batch upsert start", {
           action,
           requested: data.length,
           deduplicated: deduplicatedData.length,
         });
         const batchStart = Date.now();
         const { error: batchUpsertError } = await client
-          .from('products')
-          .upsert(batchData, { onConflict: 'id' })
+          .from("products")
+          .upsert(batchData, { onConflict: "id" })
           .abortSignal(signal);
         if (batchUpsertError) {
-          this.logDebug('syncProduct batch upsert error', {
+          this.logDebug("syncProduct batch upsert error", {
             action,
             error: this.toErrorMeta(batchUpsertError),
           });
           throw batchUpsertError;
         }
-        this.logDebug('syncProduct batch upsert success', {
+        this.logDebug("syncProduct batch upsert success", {
           action,
           elapsedMs: Date.now() - batchStart,
           count: deduplicatedData.length,
         });
         break;
 
-      case 'sale_update': {
+      case "sale_update": {
         // Atomic stock decrement via RPC - avoids race condition when two devices sell the same product.
         // The DB function: UPDATE products SET available_qty = available_qty - qty, sold_qty = sold_qty + qty
         //                  WHERE id = product_id AND available_qty >= qty
         // data shape: { id: string, qty: number }
         // Cast needed until decrement_stock is added to Supabase generated types
         // Note: RPC calls do not reliably support .abortSignal() - outer Promise.race handles timeout
-        const { error: rpcError } = await (client as any).rpc('decrement_stock', {
-          product_id: data.id,
-          qty: data.qty,
-        });
+        const { error: rpcError } = await (client as any).rpc(
+          "decrement_stock",
+          {
+            product_id: data.id,
+            qty: data.qty,
+          },
+        );
         if (rpcError) {
-          if (!data.snapshot || !isMissingDatabaseFunction(rpcError, 'decrement_stock')) {
+          if (
+            !data.snapshot ||
+            !isMissingDatabaseFunction(rpcError, "decrement_stock")
+          ) {
             throw rpcError;
           }
 
           const { error: fallbackError } = await client
-            .from('products')
-            .upsert(this.convertToDbFormat(data.snapshot, 'product'), { onConflict: 'id' })
+            .from("products")
+            .upsert(this.convertToDbFormat(data.snapshot, "product"), {
+              onConflict: "id",
+            })
             .abortSignal(signal);
           if (fallbackError) throw fallbackError;
           break;
@@ -786,37 +938,45 @@ class SyncManager {
 
         if (data.snapshot) {
           const { error: metadataError } = await client
-            .from('products')
+            .from("products")
             .update({
               sold_to: data.snapshot.soldTo || null,
               sold_at: data.snapshot.soldAt || null,
               status: data.snapshot.status,
               updated_at: data.snapshot.updatedAt,
             })
-            .eq('id', data.id)
+            .eq("id", data.id)
             .abortSignal(signal);
           if (metadataError) throw metadataError;
         }
         break;
       }
 
-      case 'delete':
+      case "delete":
         // Single delete (soft delete)
         const { error: deleteError } = await client
-          .from('products')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('id', data.id)
+          .from("products")
+          .update({
+            is_deleted: true,
+            deleted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", data.id)
           .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
 
-      case 'batch_delete':
+      case "batch_delete":
         // Batch delete - data is array of {id: ...}
         const ids = data.map((item: any) => item.id);
         const { error: batchDeleteError } = await client
-          .from('products')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .in('id', ids)
+          .from("products")
+          .update({
+            is_deleted: true,
+            deleted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .in("id", ids)
           .abortSignal(signal);
         if (batchDeleteError) throw batchDeleteError;
         break;
@@ -829,23 +989,27 @@ class SyncManager {
   private async syncCustomer(action: string, data: any, signal: AbortSignal) {
     const client = getSupabaseClient();
 
-    const dbData = this.convertToDbFormat(data, 'customer');
+    const dbData = this.convertToDbFormat(data, "customer");
 
     switch (action) {
-      case 'create':
-      case 'update':
+      case "create":
+      case "update":
         const { error: upsertError } = await client
-          .from('customers')
-          .upsert(dbData, { onConflict: 'id' })
+          .from("customers")
+          .upsert(dbData, { onConflict: "id" })
           .abortSignal(signal);
         if (upsertError) throw upsertError;
         break;
 
-      case 'delete':
+      case "delete":
         const { error: deleteError } = await client
-          .from('customers')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('id', data.id)
+          .from("customers")
+          .update({
+            is_deleted: true,
+            deleted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", data.id)
           .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
@@ -855,26 +1019,30 @@ class SyncManager {
     }
   }
 
-  private async syncTransaction(action: string, data: any, signal: AbortSignal) {
+  private async syncTransaction(
+    action: string,
+    data: any,
+    signal: AbortSignal,
+  ) {
     const client = getSupabaseClient();
 
     const { items, ...transactionData } = data;
-    const dbData = this.convertToDbFormat(transactionData, 'transaction');
+    const dbData = this.convertToDbFormat(transactionData, "transaction");
 
     switch (action) {
-      case 'create':
-      case 'update':
+      case "create":
+      case "update":
         const { error: upsertError } = await client
-          .from('transactions')
-          .upsert(dbData, { onConflict: 'id' })
+          .from("transactions")
+          .upsert(dbData, { onConflict: "id" })
           .abortSignal(signal);
         if (upsertError) throw upsertError;
 
         if (items && items.length > 0) {
           const { error: deleteItemsError } = await client
-            .from('transaction_items')
+            .from("transaction_items")
             .delete()
-            .eq('transaction_id', data.id)
+            .eq("transaction_id", data.id)
             .abortSignal(signal);
           if (deleteItemsError) throw deleteItemsError;
 
@@ -892,23 +1060,27 @@ class SyncManager {
           }));
 
           const { error: insertItemsError } = await client
-            .from('transaction_items')
+            .from("transaction_items")
             .insert(itemsData)
             .abortSignal(signal);
           if (insertItemsError) throw insertItemsError;
         }
         break;
 
-      case 'delete':
+      case "delete":
         const { error: deleteError } = await client
-          .from('transactions')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('id', data.id)
+          .from("transactions")
+          .update({
+            is_deleted: true,
+            deleted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", data.id)
           .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
 
-      case 'record_sale':
+      case "record_sale":
         await syncRecordedSale(data, signal);
         break;
 
@@ -921,26 +1093,30 @@ class SyncManager {
   private async syncDrop(action: string, data: any, signal: AbortSignal) {
     const client = getSupabaseClient();
 
-    const dbData = this.convertToDbFormat(data, 'drop');
+    const dbData = this.convertToDbFormat(data, "drop");
 
     switch (action) {
-      case 'create':
-      case 'update':
+      case "create":
+      case "update":
         // Conflict on drop_number (business key) not id (technical key)
         // This prevents duplicate constraint violations when re-importing
         const { error: upsertError } = await client
-          .from('drops')
-          .upsert(dbData, { onConflict: 'drop_number' })
+          .from("drops")
+          .upsert(dbData, { onConflict: "drop_number" })
           .abortSignal(signal);
         if (upsertError) throw upsertError;
         break;
 
-      case 'delete':
+      case "delete":
         // Delete by drop_number for consistency
         const { error: deleteError } = await client
-          .from('drops')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('drop_number', data.dropNumber)
+          .from("drops")
+          .update({
+            is_deleted: true,
+            deleted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("drop_number", data.dropNumber)
           .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
@@ -954,23 +1130,27 @@ class SyncManager {
   private async syncStaff(action: string, data: any, signal: AbortSignal) {
     const client = getSupabaseClient();
 
-    const dbData = this.convertToDbFormat(data, 'staff');
+    const dbData = this.convertToDbFormat(data, "staff");
 
     switch (action) {
-      case 'create':
-      case 'update':
+      case "create":
+      case "update":
         const { error: upsertError } = await client
-          .from('staff')
-          .upsert(dbData, { onConflict: 'id' })
+          .from("staff")
+          .upsert(dbData, { onConflict: "id" })
           .abortSignal(signal);
         if (upsertError) throw upsertError;
         break;
 
-      case 'delete':
+      case "delete":
         const { error: deleteError } = await client
-          .from('staff')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('id', data.id)
+          .from("staff")
+          .update({
+            is_deleted: true,
+            deleted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", data.id)
           .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;
@@ -981,7 +1161,7 @@ class SyncManager {
   }
 
   private convertToDbFormat(data: any, type: string): any {
-    if (type === 'product') {
+    if (type === "product") {
       return {
         id: data.id,
         name: data.name,
@@ -1012,12 +1192,13 @@ class SyncManager {
         sold_by: data.soldBy || null,
         sold_to: data.soldTo || null,
         sold_at: data.soldAt || null,
-        barcode: data.barcode && data.barcode.trim() !== '' ? data.barcode : null,
+        barcode:
+          data.barcode && data.barcode.trim() !== "" ? data.barcode : null,
         created_at: data.createdAt,
         updated_at: data.updatedAt,
         is_deleted: false,
       };
-    } else if (type === 'customer') {
+    } else if (type === "customer") {
       return {
         id: data.id,
         name: data.name,
@@ -1029,7 +1210,7 @@ class SyncManager {
         updated_at: data.updatedAt,
         is_deleted: false,
       };
-    } else if (type === 'transaction') {
+    } else if (type === "transaction") {
       return {
         id: data.id,
         customer_id: data.customerId || null,
@@ -1055,7 +1236,7 @@ class SyncManager {
         created_at: data.createdAt,
         is_deleted: false,
       };
-    } else if (type === 'drop') {
+    } else if (type === "drop") {
       return {
         id: data.id,
         drop_number: data.dropNumber,
@@ -1071,7 +1252,7 @@ class SyncManager {
         updated_at: data.updatedAt,
         is_deleted: false,
       };
-    } else if (type === 'staff') {
+    } else if (type === "staff") {
       return {
         id: data.id,
         name: data.name,
@@ -1130,16 +1311,18 @@ class SyncManager {
    * Immediate flush path: if connected right now, this triggers an upload
    * within milliseconds -> Supabase realtime fires -> other clients reload in ~2-4s.
    */
-  public queueOperation(operation: Omit<SyncOperation, 'id' | 'timestamp' | 'retryCount'>) {
+  public queueOperation(
+    operation: Omit<SyncOperation, "id" | "timestamp" | "retryCount">,
+  ) {
     const id = syncQueue.enqueue(operation);
-    this.markQueueObservation('enqueue');
+    this.markQueueObservation("enqueue");
     this.updateStatus({ pendingCount: syncQueue.size() });
-    this.logDebug('Operation enqueued', {
+    this.logDebug("Operation enqueued", {
       id,
       type: operation.type,
       action: operation.action,
       rowId:
-        operation.action === 'record_sale'
+        operation.action === "record_sale"
           ? operation.data?.transaction?.id
           : operation.data?.id,
       queueSize: syncQueue.size(),
@@ -1148,10 +1331,10 @@ class SyncManager {
 
     const status = connectionStatus.getStatus();
     if (status.isOnline && !this.isSyncing) {
-      this.logDebug('Triggering immediate sync after enqueue', { id });
+      this.logDebug("Triggering immediate sync after enqueue", { id });
       this.syncPendingOperations();
     } else {
-      this.logDebug('Queueing operation without immediate sync', {
+      this.logDebug("Queueing operation without immediate sync", {
         id,
         isOnline: status.isOnline,
         isSyncing: this.isSyncing,
@@ -1167,7 +1350,9 @@ class SyncManager {
    * full and a direct-Supabase fallback also fails - ensures the orange warning
    * badge appears instead of the failure being swallowed silently.
    */
-  public addToDeadLetter(operation: Omit<SyncOperation, 'id' | 'timestamp' | 'retryCount'>) {
+  public addToDeadLetter(
+    operation: Omit<SyncOperation, "id" | "timestamp" | "retryCount">,
+  ) {
     const deadOp: SyncOperation = {
       id: `${operation.type}_${operation.action}_${Date.now()}_direct`,
       ...operation,
@@ -1177,18 +1362,26 @@ class SyncManager {
     try {
       syncQueue.moveToDeadLetter(deadOp);
     } catch (e) {
-      console.error('[SyncManager] Could not persist to dead-letter (localStorage full):', e);
+      console.error(
+        "[SyncManager] Could not persist to dead-letter (localStorage full):",
+        e,
+      );
     }
     const count = syncQueue.getDeadLetterCount();
-    logSyncIncident('error', 'direct_sync_dead_letter', 'Direct-sync fallback failed and operation was recorded in dead-letter queue', {
-      type: operation.type,
-      action: operation.action,
-      deadLetterCount: count,
-      rowId:
-        operation.action === 'record_sale'
-          ? operation.data?.transaction?.id
-          : operation.data?.id,
-    });
+    logSyncIncident(
+      "error",
+      "direct_sync_dead_letter",
+      "Direct-sync fallback failed and operation was recorded in dead-letter queue",
+      {
+        type: operation.type,
+        action: operation.action,
+        deadLetterCount: count,
+        rowId:
+          operation.action === "record_sale"
+            ? operation.data?.transaction?.id
+            : operation.data?.id,
+      },
+    );
     this.updateStatus({
       deadLetterCount: count,
       error: `${count} operacion(es) fallaron. Datos guardados localmente.`,
@@ -1200,7 +1393,7 @@ class SyncManager {
    * Use when sync appears stuck (e.g. a fetch hung indefinitely).
    */
   public forceSync() {
-    this.logDebug('forceSync requested', {
+    this.logDebug("forceSync requested", {
       pendingCount: syncQueue.size(),
       connection: this.getConnectionSnapshot(),
     });
@@ -1214,7 +1407,7 @@ class SyncManager {
    * Called when the user clicks "Retry" on failed operations.
    */
   public retryDeadLetter() {
-    this.logDebug('retryDeadLetter requested', {
+    this.logDebug("retryDeadLetter requested", {
       deadLetterCount: syncQueue.getDeadLetterCount(),
     });
     syncQueue.retryDeadLetter();

@@ -1,5 +1,10 @@
 import { useState, useMemo, useEffect } from "react";
 import {
+  Accordion,
+  AccordionButton,
+  AccordionIcon,
+  AccordionItem,
+  AccordionPanel,
   Box,
   Heading,
   VStack,
@@ -39,12 +44,16 @@ import {
   AlertIcon,
 } from "@chakra-ui/react";
 import {
+  FiCamera,
+  FiEdit3,
   FiPlus,
+  FiPackage,
   FiTrash2,
   FiShoppingCart,
   FiDollarSign,
   FiHelpCircle,
 } from "react-icons/fi";
+import { Scanner as QRScanner } from "@yudiel/react-qr-scanner";
 import { useNavigate } from "react-router-dom";
 import { AutocompleteSelect, CurrencyInput } from "../components/common";
 import { ProductFilterPanel } from "../components/sales";
@@ -66,8 +75,16 @@ import { es } from "../i18n/es";
 
 interface CartItem extends TransactionItem {
   productId: string;
+  barcode?: string;
   maxQuantity: number;
   isUnregistered?: boolean;
+}
+
+interface ScanResult {
+  barcode: string;
+  product: Product | null;
+  status: "found" | "sold" | "out_of_stock" | "not_found";
+  message: string;
 }
 
 const PENDING_BALANCE_EPSILON = 0.01;
@@ -76,7 +93,8 @@ export function Sales() {
   const toast = useToast();
   const navigate = useNavigate();
 
-  const { products, updateProductFromSale } = useProductStore();
+  const { products, updateProductFromSale, getProductByBarcode } =
+    useProductStore();
   const { customers, addPurchase, receivePayment } = useCustomerStore();
   const { addTransaction, queueSaleSync } = useTransactionStore();
 
@@ -101,11 +119,20 @@ export function Sales() {
     onOpen: onSaleConfirmOpen,
     onClose: onSaleConfirmClose,
   } = useDisclosure();
+  const {
+    isOpen: isScannerModalOpen,
+    onOpen: onScannerModalOpen,
+    onClose: onScannerModalClose,
+  } = useDisclosure();
   const [unregName, setUnregName] = useState("");
   const [unregPrice, setUnregPrice] = useState(0);
   const [unregQty, setUnregQty] = useState(1);
   const [unregCategory, setUnregCategory] = useState<CategoryCode | "">("");
   const [unregBrand, setUnregBrand] = useState("");
+  const [manualScanBarcode, setManualScanBarcode] = useState("");
+  const [lastScan, setLastScan] = useState<ScanResult | null>(null);
+  const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [isScannerProcessing, setIsScannerProcessing] = useState(false);
 
   // Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -242,6 +269,113 @@ export function Sales() {
     onQuantityModalOpen();
   };
 
+  const resetScannerState = () => {
+    setManualScanBarcode("");
+    setLastScan(null);
+    setCameraEnabled(false);
+    setIsScannerProcessing(false);
+  };
+
+  const handleOpenScanner = () => {
+    resetScannerState();
+    onScannerModalOpen();
+  };
+
+  const handleCloseScanner = () => {
+    resetScannerState();
+    onScannerModalClose();
+  };
+
+  const processScannedBarcode = (barcode: string) => {
+    if (isScannerProcessing) return;
+
+    const trimmedBarcode = barcode.trim();
+    if (!trimmedBarcode) return;
+
+    setIsScannerProcessing(true);
+
+    const product = getProductByBarcode(trimmedBarcode);
+
+    if (!product) {
+      setLastScan({
+        barcode: trimmedBarcode,
+        product: null,
+        status: "not_found",
+        message: "No se encontro producto con este codigo.",
+      });
+      toast({
+        title: "Codigo no encontrado",
+        description: "Revise el codigo o intente escanear nuevamente.",
+        status: "error",
+        duration: 3000,
+      });
+    } else if (product.availableQty <= 0 && product.soldQty > 0) {
+      setLastScan({
+        barcode: trimmedBarcode,
+        product,
+        status: "sold",
+        message: "Este producto ya fue vendido.",
+      });
+      toast({
+        title: "Producto ya vendido",
+        description: `${product.name} ya fue vendido.`,
+        status: "warning",
+        duration: 3000,
+      });
+    } else if (product.availableQty <= 0) {
+      setLastScan({
+        barcode: trimmedBarcode,
+        product,
+        status: "out_of_stock",
+        message: "Este producto no tiene stock disponible.",
+      });
+      toast({
+        title: "Sin stock disponible",
+        description: `${product.name} no tiene unidades disponibles.`,
+        status: "warning",
+        duration: 3000,
+      });
+    } else {
+      setLastScan({
+        barcode: trimmedBarcode,
+        product,
+        status: "found",
+        message: "Producto listo para agregar al carrito.",
+      });
+    }
+
+    setCameraEnabled(false);
+    window.setTimeout(() => setIsScannerProcessing(false), 800);
+  };
+
+  const handleScanAgain = () => {
+    setLastScan(null);
+    setCameraEnabled(true);
+  };
+
+  const handleScannerScan = (result: { rawValue: string }[]) => {
+    if (result && result.length > 0 && result[0].rawValue) {
+      processScannedBarcode(result[0].rawValue);
+    }
+  };
+
+  const handleManualScanSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualScanBarcode.trim()) return;
+
+    processScannedBarcode(manualScanBarcode);
+    setManualScanBarcode("");
+  };
+
+  const handleAddScannedProduct = () => {
+    if (!lastScan?.product || lastScan.status !== "found") return;
+
+    handleCloseScanner();
+    setSelectedProductForQuantity(lastScan.product);
+    setQuantityToAdd(1);
+    onQuantityModalOpen();
+  };
+
   // Confirm quantity modal
   const handleConfirmQuantity = () => {
     if (selectedProductForQuantity && quantityToAdd > 0) {
@@ -320,6 +454,7 @@ export function Sales() {
         quantity,
         unitPrice: product.unitPrice,
         totalPrice: quantity * product.unitPrice,
+        barcode: product.barcode,
         category: product.category,
         brand: product.brand,
         color: product.color,
@@ -740,21 +875,46 @@ export function Sales() {
                 </Box>
 
                 <Box>
-                  <Text
-                    fontSize="sm"
-                    fontWeight="bold"
-                    color="brand.600"
-                    mb={1}
+                  <Flex
+                    direction={{ base: "column", md: "row" }}
+                    align={{ base: "stretch", md: "center" }}
+                    justify="space-between"
+                    gap={3}
                     px={1}
+                    mb={3}
                   >
-                    Paso 2
-                  </Text>
-                  <Heading size={{ base: "sm", md: "md" }} px={1} mb={1}>
-                    Filtrar y agregar productos
-                  </Heading>
-                  <Text fontSize="sm" color="gray.500" px={1} mb={3}>
-                    Use filtros para mantener la lista corta y encontrar rapido.
-                  </Text>
+                    <Box>
+                      <Text
+                        fontSize="sm"
+                        fontWeight="bold"
+                        color="brand.600"
+                        mb={1}
+                      >
+                        Paso 2
+                      </Text>
+                      <Heading size={{ base: "sm", md: "md" }} mb={1}>
+                        Filtrar o escanear productos
+                      </Heading>
+                      <Text fontSize="sm" color="gray.500">
+                        Use filtros para mantener la lista corta o escanee para
+                        agregar rapido.
+                      </Text>
+                    </Box>
+                    <Button
+                      colorScheme="green"
+                      variant="outline"
+                      leftIcon={<Icon as={FiCamera} />}
+                      onClick={handleOpenScanner}
+                      w={{ base: "full", md: "auto" }}
+                      minH={{ base: "14", md: "11" }}
+                      h="auto"
+                      py={{ base: 2, md: 3 }}
+                      whiteSpace="normal"
+                      lineHeight="short"
+                    >
+                      Escanear articulo
+                    </Button>
+                  </Flex>
                   <ProductFilterPanel
                     onSelectProduct={handleSelectProduct}
                     onAddMultiple={handleAddMultiple}
@@ -1406,47 +1566,485 @@ export function Sales() {
         </TabPanels>
       </Tabs>
 
-      {/* Sale Confirmation Modal */}
-      <Modal isOpen={isSaleConfirmOpen} onClose={onSaleConfirmClose} isCentered>
+      {/* Scanner Modal */}
+      <Modal
+        isOpen={isScannerModalOpen}
+        onClose={handleCloseScanner}
+        isCentered
+        size="xl"
+        scrollBehavior="inside"
+      >
         <ModalOverlay />
-        <ModalContent mx={4}>
-          <ModalHeader>Confirmar venta</ModalHeader>
+        <ModalContent
+          mx={4}
+          maxW={{ base: "calc(100vw - 2rem)", md: "760px" }}
+        >
+          <ModalHeader>Escanear articulo</ModalHeader>
           <ModalCloseButton />
-          <ModalBody>
-            <VStack spacing={3} align="stretch">
-              <HStack justify="space-between">
-                <Text color="gray.600">Cliente</Text>
-                <Text fontWeight="semibold" textAlign="right">
-                  {saleCustomerName}
+          <ModalBody pb={6}>
+            <VStack spacing={4} align="stretch">
+              <Alert status="info" borderRadius="lg">
+                <AlertIcon />
+                <Text fontSize={{ base: "sm", md: "md" }}>
+                  Escanee o escriba el codigo para agregar el articulo al
+                  carrito sin salir de Ventas.
                 </Text>
-              </HStack>
-              <HStack justify="space-between">
-                <Text color="gray.600">Productos</Text>
-                <Text fontWeight="semibold">
-                  {saleLineCount} en carrito ({saleUnitsCount} pieza(s))
-                </Text>
-              </HStack>
-              <HStack justify="space-between">
-                <Text color="gray.600">Total</Text>
-                <Text fontWeight="bold" color="green.600" fontSize="lg">
-                  {formatCurrency(total)}
-                </Text>
-              </HStack>
-              {hasPendingBalance && (
-                <HStack justify="space-between">
-                  <Text color="orange.700">Saldo pendiente</Text>
-                  <Text fontWeight="bold" color="orange.700">
-                    {formatCurrency(effectivePendingBalance)}
-                  </Text>
-                </HStack>
+              </Alert>
+
+              <Button
+                leftIcon={<Icon as={FiCamera} />}
+                onClick={() => {
+                  setLastScan(null);
+                  setCameraEnabled((prev) => !prev);
+                }}
+                colorScheme={cameraEnabled ? "green" : "gray"}
+                size="lg"
+                w="full"
+                h="auto"
+                minH={{ base: "14", md: "11" }}
+                py={{ base: 2, md: 3 }}
+                whiteSpace="normal"
+              >
+                {cameraEnabled ? "Camara activa" : "Activar camara"}
+              </Button>
+
+              {cameraEnabled && (
+                <Box
+                  w="full"
+                  maxW="420px"
+                  mx="auto"
+                  borderRadius="xl"
+                  overflow="hidden"
+                  border="3px solid"
+                  borderColor="green.400"
+                >
+                  <QRScanner
+                    onScan={handleScannerScan}
+                    onError={(error) =>
+                      console.error("Sales scanner error:", error)
+                    }
+                    constraints={{ facingMode: "environment" }}
+                    styles={{
+                      container: { width: "100%" },
+                      video: { width: "100%" },
+                    }}
+                  />
+                </Box>
+              )}
+
+              <Divider />
+
+              <Box as="form" onSubmit={handleManualScanSubmit}>
+                <VStack spacing={3} align="stretch">
+                  <FormControl>
+                    <FormLabel fontWeight="semibold" mb={2}>
+                      <HStack spacing={2}>
+                        <Icon as={FiEdit3} />
+                        <Text>Escribir codigo manualmente</Text>
+                      </HStack>
+                    </FormLabel>
+                    <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+                      <Input
+                        value={manualScanBarcode}
+                        onChange={(e) =>
+                          setManualScanBarcode(e.target.value)
+                        }
+                        placeholder="Ej: D15-0042"
+                        autoFocus={!cameraEnabled}
+                      />
+                      <Button
+                        type="submit"
+                        colorScheme="blue"
+                        variant="outline"
+                        isDisabled={!manualScanBarcode.trim()}
+                      >
+                        Buscar codigo
+                      </Button>
+                    </SimpleGrid>
+                  </FormControl>
+                </VStack>
+              </Box>
+
+              {lastScan && (
+                <Box
+                  borderWidth="1px"
+                  borderRadius="xl"
+                  p={{ base: 4, md: 5 }}
+                  borderColor={
+                    lastScan.status === "found"
+                      ? "green.200"
+                      : lastScan.status === "not_found"
+                        ? "red.200"
+                        : "orange.200"
+                  }
+                  bg={
+                    lastScan.status === "found"
+                      ? "green.50"
+                      : lastScan.status === "not_found"
+                        ? "red.50"
+                        : "orange.50"
+                  }
+                >
+                  <VStack spacing={4} align="stretch">
+                    <Flex
+                      direction={{ base: "column", sm: "row" }}
+                      justify="space-between"
+                      align={{ base: "flex-start", sm: "center" }}
+                      gap={2}
+                    >
+                      <Box>
+                        <Text
+                          fontSize="sm"
+                          fontWeight="bold"
+                          color={
+                            lastScan.status === "found"
+                              ? "green.700"
+                              : lastScan.status === "not_found"
+                                ? "red.700"
+                                : "orange.700"
+                          }
+                        >
+                          {lastScan.status === "found"
+                            ? "Producto encontrado"
+                            : lastScan.status === "not_found"
+                              ? "Codigo no encontrado"
+                              : lastScan.status === "sold"
+                                ? "Producto ya vendido"
+                                : "Sin stock disponible"}
+                        </Text>
+                        <Text color="gray.700">{lastScan.message}</Text>
+                      </Box>
+                      <Text
+                        fontFamily="mono"
+                        fontSize="sm"
+                        color="gray.600"
+                        wordBreak="break-all"
+                      >
+                        {lastScan.barcode}
+                      </Text>
+                    </Flex>
+
+                    {lastScan.product ? (
+                      <Box bg="white" p={4} borderRadius="lg">
+                        <VStack spacing={3} align="stretch">
+                          <Flex
+                            direction={{ base: "column", sm: "row" }}
+                            justify="space-between"
+                            gap={2}
+                          >
+                            <Box minW={0}>
+                              <Text
+                                fontWeight="bold"
+                                fontSize={{ base: "md", md: "lg" }}
+                                noOfLines={2}
+                              >
+                                {lastScan.product.name}
+                              </Text>
+                              <Text
+                                fontSize="sm"
+                                color="gray.500"
+                                wordBreak="break-all"
+                              >
+                                Codigo:{" "}
+                                {lastScan.product.barcode || lastScan.barcode}
+                              </Text>
+                            </Box>
+                            <Text
+                              fontWeight="bold"
+                              fontSize={{ base: "lg", md: "xl" }}
+                              color="green.600"
+                            >
+                              {formatCurrency(lastScan.product.unitPrice)}
+                            </Text>
+                          </Flex>
+                          <HStack spacing={2} flexWrap="wrap">
+                            <Badge colorScheme="blue">
+                              UPS {lastScan.product.upsBatch}
+                            </Badge>
+                            <Badge
+                              colorScheme={
+                                lastScan.product.availableQty > 0
+                                  ? "green"
+                                  : "orange"
+                              }
+                            >
+                              {lastScan.product.availableQty} disponibles
+                            </Badge>
+                          </HStack>
+                        </VStack>
+                      </Box>
+                    ) : (
+                      <HStack spacing={3} align="start">
+                        <Icon as={FiPackage} boxSize={6} color="gray.500" />
+                        <Text color="gray.600">
+                          No se encontro un articulo registrado con ese codigo.
+                        </Text>
+                      </HStack>
+                    )}
+
+                    <Flex
+                      direction={{ base: "column", sm: "row" }}
+                      gap={3}
+                    >
+                      {lastScan.product && lastScan.status === "found" && (
+                        <Button
+                          colorScheme="green"
+                          leftIcon={<Icon as={FiShoppingCart} />}
+                          onClick={handleAddScannedProduct}
+                          w={{ base: "full", sm: "auto" }}
+                        >
+                          Agregar al carrito
+                        </Button>
+                      )}
+                      <Button
+                        variant={
+                          lastScan.product && lastScan.status === "found"
+                            ? "outline"
+                            : "solid"
+                        }
+                        colorScheme="blue"
+                        leftIcon={<Icon as={FiCamera} />}
+                        onClick={handleScanAgain}
+                        w={{ base: "full", sm: "auto" }}
+                      >
+                        Escanear otro
+                      </Button>
+                    </Flex>
+                  </VStack>
+                </Box>
               )}
             </VStack>
           </ModalBody>
           <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={onSaleConfirmClose}>
+            <Button variant="ghost" onClick={handleCloseScanner}>
+              Cerrar
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Sale Confirmation Modal */}
+      <Modal
+        isOpen={isSaleConfirmOpen}
+        onClose={onSaleConfirmClose}
+        isCentered
+        size="xl"
+        scrollBehavior="inside"
+      >
+        <ModalOverlay />
+        <ModalContent
+          mx={4}
+          maxW={{ base: "calc(100vw - 2rem)", md: "720px" }}
+        >
+          <ModalHeader>Revision final de venta</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody pb={6}>
+            <VStack spacing={4} align="stretch">
+              <Alert status="info" borderRadius="lg">
+                <AlertIcon />
+                <Text fontSize={{ base: "sm", md: "md" }}>
+                  Revise cliente, monto y productos antes de confirmar la venta.
+                </Text>
+              </Alert>
+
+              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+                <Box bg="gray.50" borderRadius="lg" p={4}>
+                  <Text fontSize="sm" color="gray.500" mb={1}>
+                    Cliente
+                  </Text>
+                  <Text fontWeight="bold" wordBreak="break-word">
+                    {saleCustomerName}
+                  </Text>
+                </Box>
+                <Box bg="green.50" borderRadius="lg" p={4}>
+                  <Text fontSize="sm" color="green.700" mb={1}>
+                    Total
+                  </Text>
+                  <Text
+                    fontWeight="bold"
+                    color="green.700"
+                    fontSize={{ base: "xl", md: "2xl" }}
+                  >
+                    {formatCurrency(total)}
+                  </Text>
+                </Box>
+                <Box bg="blue.50" borderRadius="lg" p={4}>
+                  <Text fontSize="sm" color="blue.700" mb={1}>
+                    Productos
+                  </Text>
+                  <Text
+                    fontWeight="bold"
+                    color="blue.700"
+                    fontSize={{ base: "xl", md: "2xl" }}
+                  >
+                    {saleUnitsCount} pieza(s)
+                  </Text>
+                  <Text fontSize="sm" color="blue.700">
+                    {saleLineCount} renglones en carrito
+                  </Text>
+                </Box>
+              </SimpleGrid>
+
+              <Box
+                borderWidth="1px"
+                borderColor="gray.200"
+                borderRadius="xl"
+                p={{ base: 4, md: 5 }}
+              >
+                <Flex
+                  direction={{ base: "column", sm: "row" }}
+                  justify="space-between"
+                  align={{ base: "stretch", sm: "center" }}
+                  gap={3}
+                  mb={4}
+                >
+                  <Box>
+                    <Text fontWeight="semibold">Productos de la venta</Text>
+                    <Text fontSize="sm" color="gray.500">
+                      Expanda cada producto para revisar nombre y codigo antes
+                      de guardar.
+                    </Text>
+                  </Box>
+                  <Badge
+                    alignSelf={{ base: "flex-start", sm: "center" }}
+                    colorScheme="green"
+                    px={3}
+                    py={1}
+                    borderRadius="full"
+                  >
+                    {saleLineCount} renglones
+                  </Badge>
+                </Flex>
+
+                <Accordion allowToggle>
+                  {cart.map((item) => (
+                    <AccordionItem
+                      key={`${item.productId}-${item.productName}`}
+                      border="1px solid"
+                      borderColor="gray.200"
+                      borderRadius="lg"
+                      mb={3}
+                      overflow="hidden"
+                    >
+                      <h2>
+                        <AccordionButton px={{ base: 3, md: 4 }} py={3}>
+                          <Flex
+                            flex="1"
+                            justify="space-between"
+                            align={{ base: "flex-start", sm: "center" }}
+                            direction={{ base: "column", sm: "row" }}
+                            gap={2}
+                            textAlign="left"
+                          >
+                            <Box flex={1} minW={0}>
+                              <HStack spacing={2} flexWrap="wrap" mb={1}>
+                                <Text fontWeight="semibold" noOfLines={2}>
+                                  {item.productName}
+                                </Text>
+                                {item.isUnregistered && (
+                                  <Badge colorScheme="orange">UPS 0</Badge>
+                                )}
+                              </HStack>
+                              <Text fontSize="sm" color="gray.500">
+                                {item.quantity} x {formatCurrency(item.unitPrice)}
+                              </Text>
+                            </Box>
+                            <Text fontWeight="bold" color="green.600">
+                              {formatCurrency(item.totalPrice)}
+                            </Text>
+                          </Flex>
+                          <AccordionIcon ml={3} />
+                        </AccordionButton>
+                      </h2>
+                      <AccordionPanel
+                        bg="gray.50"
+                        px={{ base: 3, md: 4 }}
+                        py={3}
+                      >
+                        <VStack spacing={2} align="stretch">
+                          <Flex
+                            direction={{ base: "column", sm: "row" }}
+                            justify="space-between"
+                            gap={1}
+                          >
+                            <Text fontSize="sm" color="gray.600">
+                              Nombre
+                            </Text>
+                            <Text fontWeight="medium" wordBreak="break-word">
+                              {item.productName}
+                            </Text>
+                          </Flex>
+                          <Flex
+                            direction={{ base: "column", sm: "row" }}
+                            justify="space-between"
+                            gap={1}
+                          >
+                            <Text fontSize="sm" color="gray.600">
+                              Codigo
+                            </Text>
+                            <Text
+                              fontFamily="mono"
+                              fontSize="sm"
+                              fontWeight="medium"
+                              wordBreak="break-all"
+                            >
+                              {item.barcode || "Sin codigo / UPS 0"}
+                            </Text>
+                          </Flex>
+                          <Flex
+                            direction={{ base: "column", sm: "row" }}
+                            justify="space-between"
+                            gap={1}
+                          >
+                            <Text fontSize="sm" color="gray.600">
+                              Cantidad
+                            </Text>
+                            <Text fontWeight="medium">
+                              {item.quantity} pieza(s)
+                            </Text>
+                          </Flex>
+                        </VStack>
+                      </AccordionPanel>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              </Box>
+
+              {hasPendingBalance && (
+                <Box bg="orange.50" borderRadius="lg" p={4}>
+                  <Flex
+                    direction={{ base: "column", sm: "row" }}
+                    justify="space-between"
+                    gap={2}
+                  >
+                    <Text color="orange.700" fontWeight="semibold">
+                      Saldo pendiente
+                    </Text>
+                    <Text fontWeight="bold" color="orange.700" fontSize="lg">
+                      {formatCurrency(effectivePendingBalance)}
+                    </Text>
+                  </Flex>
+                </Box>
+              )}
+            </VStack>
+          </ModalBody>
+          <ModalFooter
+            flexDirection={{ base: "column-reverse", sm: "row" }}
+            gap={3}
+          >
+            <Button
+              variant="ghost"
+              onClick={onSaleConfirmClose}
+              w={{ base: "full", sm: "auto" }}
+            >
               Cancelar
             </Button>
-            <Button colorScheme="green" onClick={handleCompleteSale}>
+            <Button
+              colorScheme="green"
+              onClick={handleCompleteSale}
+              w={{ base: "full", sm: "auto" }}
+              leftIcon={<Icon as={FiShoppingCart} />}
+            >
               Confirmar venta
             </Button>
           </ModalFooter>
@@ -1571,6 +2169,11 @@ export function Sales() {
                   <Text fontWeight="bold">
                     {selectedProductForQuantity.name}
                   </Text>
+                  {selectedProductForQuantity.barcode && (
+                    <Text fontSize="sm" color="gray.500" wordBreak="break-all">
+                      Codigo: {selectedProductForQuantity.barcode}
+                    </Text>
+                  )}
                   <Text fontSize="sm" color="gray.500">
                     {formatCurrency(selectedProductForQuantity.unitPrice)} c/u
                   </Text>

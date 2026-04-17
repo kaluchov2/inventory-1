@@ -31,7 +31,7 @@ import { getReviewQty } from "../utils/productHelpers";
 import { UPS_BATCH_OPTIONS } from "../constants/colors";
 
 const whatsNewItems = [
-  "Ventas: nuevo modal de confirmacion antes de registrar (cliente, productos y total).",
+  "Ventas: ahora puedes escanear articulos desde Ventas y revisar cliente, productos y total antes de registrar.",
   "Clientes: ahora puedes modificar ventas y deshacer ventas con confirmacion.",
   "Clientes: historial de transacciones con paginacion (carga de 5 en 5).",
   "Ajuste: se elimino alias temporal Cliente Mostrador; se usa Cliente de Paso.",

@@ -42,7 +42,10 @@ import { formatCurrency } from '../utils/formatters';
 import { es } from '../i18n/es';
 import { normalizeCustomerKey, WALK_IN_CUSTOMER_LABELS } from '../utils/customerNameUtils';
 
-type CustomerListItem = Customer & { isVirtualWalkIn?: boolean };
+type CustomerListItem = Customer & {
+  isVirtualWalkIn?: boolean;
+  displaySalesTotal: number;
+};
 
 export function Customers() {
   const toast = useToast();
@@ -84,10 +87,27 @@ export function Customers() {
   const [isLoading, setIsLoading] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
-  const filteredRealCustomers = useMemo(
-    () => getFilteredCustomers(),
-    [customers, searchQuery, getFilteredCustomers]
+  const saleTransactions = useMemo(
+    () => transactions.filter((tx) => tx.type === 'sale'),
+    [transactions]
   );
+
+  const filteredRealCustomers = useMemo<CustomerListItem[]>(() => {
+    return getFilteredCustomers().map((customer) => {
+      const customerNameKey = normalizeCustomerKey(customer.name);
+      const displaySalesTotal = saleTransactions.reduce((sum, tx) => {
+        const matchesCustomer =
+          tx.customerId === customer.id ||
+          normalizeCustomerKey(tx.customerName) === customerNameKey;
+        return matchesCustomer ? sum + tx.total : sum;
+      }, 0);
+
+      return {
+        ...customer,
+        displaySalesTotal,
+      };
+    });
+  }, [getFilteredCustomers, saleTransactions, customers, searchQuery]);
 
   const virtualWalkInCustomers = useMemo<CustomerListItem[]>(() => {
     const realCustomerKeys = new Set(customers.map((customer) => normalizeCustomerKey(customer.name)));
@@ -97,10 +117,9 @@ export function Customers() {
       .filter((label) => !realCustomerKeys.has(normalizeCustomerKey(label)))
       .map((label) => {
         const labelKey = normalizeCustomerKey(label);
-        const relatedSales = transactions.filter(
+        const relatedSales = saleTransactions.filter(
           (tx) =>
             !tx.customerId &&
-            tx.type === 'sale' &&
             normalizeCustomerKey(tx.customerName) === labelKey
         );
 
@@ -108,16 +127,14 @@ export function Customers() {
           id: `virtual_walkin_${labelKey.replace(/\s+/g, '_')}`,
           name: label,
           balance: 0,
-          totalPurchases: relatedSales.reduce((sum, tx) => {
-            const paidAmount = tx.cashAmount + tx.transferAmount + tx.cardAmount;
-            return sum + Math.max(tx.total - paidAmount, 0);
-          }, 0),
+          totalPurchases: 0,
+          displaySalesTotal: relatedSales.reduce((sum, tx) => sum + tx.total, 0),
           createdAt: now,
           updatedAt: now,
           isVirtualWalkIn: true,
         };
       });
-  }, [customers, transactions]);
+  }, [customers, saleTransactions]);
 
   const filteredVirtualWalkIns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -342,7 +359,7 @@ export function Customers() {
                     </Text>
                   )}
                   <Text fontSize="sm" color="gray.500">
-                    Compras: {formatCurrency(customer.totalPurchases)}
+                    Compras: {formatCurrency(customer.displaySalesTotal)}
                   </Text>
                 </HStack>
               </Box>
@@ -408,7 +425,7 @@ export function Customers() {
                       )}
                     </Td>
                     <Td isNumeric fontWeight="medium">
-                      {formatCurrency(customer.totalPurchases)}
+                      {formatCurrency(customer.displaySalesTotal)}
                     </Td>
                     <Td onClick={(e) => e.stopPropagation()}>
                       {!customer.isVirtualWalkIn ? (

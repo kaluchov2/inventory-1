@@ -142,13 +142,17 @@ export const es = {
     saleTypeLabel: 'Venta',
     addProductsLabel: 'Agregar o quitar productos',
     productLabel: 'Producto',
+    selectUpsPlaceholder: 'Filtrar por UPS...',
     selectProductPlaceholder: 'Seleccionar producto...',
+    noProductsForUps: 'No hay productos disponibles para este UPS.',
+    onlyUpsProductsNote: 'Solo se muestran productos con número de UPS asignado.',
     unregisteredLineLabel: 'Sin registrar',
     unitPriceLabel: 'Precio unitario',
     lineTotalLabel: 'Total de linea',
     atLeastOneItemRequired: 'La transacción debe tener al menos un producto.',
     paidLabel: 'Pagado',
     pendingLabel: 'Pendiente',
+    autoSettlementNotice: 'Ajuste automatico para mantenerla liquidada:',
     loadMoreTransactions: 'Cargar 5 mas',
     modifyConfirmTitle: 'Modificar transacción',
     modifyConfirmMessage:
@@ -256,6 +260,8 @@ export const es = {
       'Hay cambios pendientes por sincronizar. Intenta de nuevo en unos segundos.',
     transactionModifyDeadLetter:
       'Hay operaciones fallidas de sincronizacion. Reintenta antes de modificar.',
+    transactionModifyRefreshWarning:
+      'La venta se modificó en la base de datos, pero no se pudo recargar toda la información. Actualiza la vista para verificar.',
     transactionUndoRpcMissing:
       'La funcion para deshacer transacciones no existe en la base de datos. Aplica migraciones.',
     transactionUndoSoldUnderflow:

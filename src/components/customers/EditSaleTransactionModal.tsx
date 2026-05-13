@@ -65,6 +65,18 @@ interface EditSaleTransactionModalProps {
 }
 
 const PENDING_BALANCE_EPSILON = 0.01;
+type AutoSettlementMethod = 'cash' | 'transfer' | 'card' | null;
+
+function pickMainPaymentMethod(
+  cashAmount: number,
+  transferAmount: number,
+  cardAmount: number
+): AutoSettlementMethod {
+  if (cashAmount >= transferAmount && cashAmount >= cardAmount) return 'cash';
+  if (transferAmount >= cashAmount && transferAmount >= cardAmount) return 'transfer';
+  if (cardAmount >= cashAmount && cardAmount >= transferAmount) return 'card';
+  return 'cash'; // unreachable: conditions above are exhaustive for non-negative amounts
+}
 
 export function EditSaleTransactionModal({
   transaction,
@@ -85,10 +97,11 @@ export function EditSaleTransactionModal({
   const [lines, setLines] = useState<EditableLine[]>([]);
   const [addProductId, setAddProductId] = useState<string | null>(null);
   const [addQuantity, setAddQuantity] = useState(1);
+  const [selectedUpsFilter, setSelectedUpsFilter] = useState<number | ''>('');
   const [isSaving, setIsSaving] = useState(false);
   const [lineSeed, setLineSeed] = useState(0);
 
-  const paidAmount = useMemo(() => {
+  const originalPaidAmount = useMemo(() => {
     if (!transaction) return 0;
     return transaction.cashAmount + transaction.transferAmount + transaction.cardAmount;
   }, [transaction]);
@@ -103,7 +116,32 @@ export function EditSaleTransactionModal({
 
   const discount = transaction?.discount || 0;
   const total = subtotal - discount;
-  const pending = Math.max(0, total - paidAmount);
+  const oldTotal = transaction?.total || 0;
+  const oldUnpaid = Math.max(0, oldTotal - originalPaidAmount);
+  const shouldAutoKeepPaid =
+    oldUnpaid <= PENDING_BALANCE_EPSILON && total > originalPaidAmount;
+  const autoSettlementDelta = shouldAutoKeepPaid
+    ? total - originalPaidAmount
+    : 0;
+
+  const mainPaymentMethod = useMemo<AutoSettlementMethod>(() => {
+    if (!transaction) return null;
+    return pickMainPaymentMethod(
+      transaction.cashAmount,
+      transaction.transferAmount,
+      transaction.cardAmount
+    );
+  }, [transaction]);
+
+  const effectiveCashAmount = (transaction?.cashAmount || 0) +
+    (shouldAutoKeepPaid && mainPaymentMethod === 'cash' ? autoSettlementDelta : 0);
+  const effectiveTransferAmount = (transaction?.transferAmount || 0) +
+    (shouldAutoKeepPaid && mainPaymentMethod === 'transfer' ? autoSettlementDelta : 0);
+  const effectiveCardAmount = (transaction?.cardAmount || 0) +
+    (shouldAutoKeepPaid && mainPaymentMethod === 'card' ? autoSettlementDelta : 0);
+  const effectivePaidAmount =
+    effectiveCashAmount + effectiveTransferAmount + effectiveCardAmount;
+  const pending = Math.max(0, total - effectivePaidAmount);
 
   const lineProductIds = useMemo(
     () => new Set(lines.map((line) => line.productId).filter(Boolean) as string[]),
@@ -113,25 +151,54 @@ export function EditSaleTransactionModal({
   const selectableProducts = useMemo(() => {
     return products
       .filter((product) => product.availableQty > 0 || lineProductIds.has(product.id))
+      .filter((product) => Number(product.upsBatch) > 0)
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [lineProductIds, products]);
 
+  const upsFilterOptions = useMemo(() => {
+    const uniqueUps = Array.from(
+      new Set(
+        selectableProducts
+          .map((product) => Number(product.upsBatch))
+          .filter((upsBatch) => Number.isFinite(upsBatch) && upsBatch > 0)
+      )
+    ).sort((a, b) => a - b);
+
+    return uniqueUps.map((upsBatch) => ({
+      value: upsBatch,
+      label: `UPS ${upsBatch}`,
+    }));
+  }, [selectableProducts]);
+
+  const filteredSelectableProducts = useMemo(() => {
+    if (selectedUpsFilter === '') return selectableProducts;
+    return selectableProducts.filter(
+      (product) => Number(product.upsBatch) === Number(selectedUpsFilter)
+    );
+  }, [selectableProducts, selectedUpsFilter]);
+
   const productOptions = useMemo(
     () =>
-      selectableProducts.map((product) => ({
+      filteredSelectableProducts.map((product) => ({
         value: product.id,
-        label: `${product.name} (${product.availableQty} disp.)`,
+        label: `${product.name} - UPS ${product.upsBatch} (${product.availableQty} disp.)`,
       })),
-    [selectableProducts]
+    [filteredSelectableProducts]
   );
 
   const selectedProduct = useMemo(
-    () => selectableProducts.find((product) => product.id === addProductId),
-    [addProductId, selectableProducts]
+    () => filteredSelectableProducts.find((product) => product.id === addProductId),
+    [addProductId, filteredSelectableProducts]
   );
 
-  const totalBelowPaidFloor = total + PENDING_BALANCE_EPSILON < paidAmount;
+  const totalBelowPaidFloor = total + PENDING_BALANCE_EPSILON < effectivePaidAmount;
   const canSave = !isSaving && lines.length > 0 && !totalBelowPaidFloor;
+  const autoSettlementMethodLabel =
+    mainPaymentMethod === 'transfer'
+      ? es.sales.transfer
+      : mainPaymentMethod === 'card'
+        ? es.sales.card
+        : es.sales.cash;
 
   useEffect(() => {
     if (!isOpen || !transaction) return;
@@ -152,8 +219,19 @@ export function EditSaleTransactionModal({
     setLines(initialLines);
     setAddProductId(null);
     setAddQuantity(1);
+    setSelectedUpsFilter('');
     setLineSeed((current) => current + 1);
   }, [isOpen, transaction]);
+
+  useEffect(() => {
+    if (!addProductId) return;
+    const existsInFilter = filteredSelectableProducts.some(
+      (product) => product.id === addProductId
+    );
+    if (!existsInFilter) {
+      setAddProductId(null);
+    }
+  }, [addProductId, filteredSelectableProducts]);
 
   const handleClose = () => {
     if (isSaving) return;
@@ -217,6 +295,7 @@ export function EditSaleTransactionModal({
 
     return {
       transactionId: transaction.id,
+      autoKeepPaidIfFullyPaid: true,
       discount: transaction.discount,
       discountNote: transaction.discountNote,
       items: lines.map((line) => ({
@@ -284,6 +363,7 @@ export function EditSaleTransactionModal({
 
     if (
       lower.includes('unregistered_item_add_not_allowed') ||
+      lower.includes('unregistered_item_quantity_immutable') ||
       lower.includes('transaction_not_sale') ||
       lower.includes('invalid_items_payload') ||
       lower.includes('transaction_requires_at_least_one_item')
@@ -351,17 +431,26 @@ export function EditSaleTransactionModal({
       const { result, transaction: updatedTransaction } =
         await transactionService.modifySaleTransaction(payload);
 
-      await Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
+      let refreshFailed = false;
+      try {
+        await Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
+      } catch {
+        refreshFailed = true;
+      }
 
       onSaved(updatedTransaction);
       onConfirmClose();
       onClose();
 
       toast({
-        title: es.success.transactionModified,
-        description: `${formatCurrency(result.oldTotal)} -> ${formatCurrency(result.newTotal)}`,
-        status: 'success',
-        duration: 4000,
+        title: refreshFailed
+          ? es.errors.transactionModifyRefreshWarning
+          : es.success.transactionModified,
+        description: refreshFailed
+          ? `${formatCurrency(result.oldTotal)} -> ${formatCurrency(result.newTotal)}. ${es.errors.transactionModifyRefreshWarning}`
+          : `${formatCurrency(result.oldTotal)} -> ${formatCurrency(result.newTotal)}`,
+        status: refreshFailed ? 'warning' : 'success',
+        duration: 4500,
         isClosable: true,
       });
     } catch (error) {
@@ -403,6 +492,17 @@ export function EditSaleTransactionModal({
                 <VStack align="stretch" spacing={3}>
                   <Text fontWeight="semibold">{es.transactions.addProductsLabel}</Text>
                   <HStack align="end" flexWrap="wrap">
+                    <FormControl minW="180px" maxW="220px">
+                      <FormLabel fontSize="sm">{es.products.upsBatch}</FormLabel>
+                      <AutocompleteSelect
+                        options={upsFilterOptions}
+                        value={selectedUpsFilter}
+                        onChange={(value) =>
+                          setSelectedUpsFilter(value === '' ? '' : Number(value))
+                        }
+                        placeholder={es.transactions.selectUpsPlaceholder}
+                      />
+                    </FormControl>
                     <FormControl minW="260px" flex={1}>
                       <FormLabel fontSize="sm">{es.transactions.productLabel}</FormLabel>
                       <AutocompleteSelect
@@ -435,6 +535,14 @@ export function EditSaleTransactionModal({
                       {es.actions.add}
                     </Button>
                   </HStack>
+                  {selectedUpsFilter !== '' && productOptions.length === 0 && (
+                    <Text fontSize="sm" color="gray.500">
+                      {es.transactions.noProductsForUps}
+                    </Text>
+                  )}
+                  <Text fontSize="xs" color="gray.400">
+                    {es.transactions.onlyUpsProductsNote}
+                  </Text>
                 </VStack>
               </Box>
 
@@ -530,8 +638,14 @@ export function EditSaleTransactionModal({
                   </HStack>
                   <HStack justify="space-between">
                     <Text>{es.transactions.paidLabel}</Text>
-                    <Text>{formatCurrency(paidAmount)}</Text>
+                    <Text>{formatCurrency(effectivePaidAmount)}</Text>
                   </HStack>
+                  {shouldAutoKeepPaid && (
+                    <Text fontSize="sm" color="blue.600">
+                      {es.transactions.autoSettlementNotice}{' '}
+                      +{formatCurrency(autoSettlementDelta)} ({autoSettlementMethodLabel})
+                    </Text>
+                  )}
                   <HStack justify="space-between">
                     <Text>{es.transactions.pendingLabel}</Text>
                     <Text color={pending > 0 ? 'orange.600' : 'green.600'}>

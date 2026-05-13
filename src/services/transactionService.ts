@@ -25,6 +25,7 @@ export interface ModifySaleTransactionItemInput {
 export interface ModifySaleTransactionPayload {
   transactionId: string;
   items: ModifySaleTransactionItemInput[];
+  autoKeepPaidIfFullyPaid?: boolean;
   discount?: number;
   discountNote?: string;
   notes?: string;
@@ -34,12 +35,19 @@ export interface ModifySaleTransactionPayload {
 
 export interface ModifySaleTransactionResult {
   transactionId: string;
+  oldPaidAmount: number;
   oldTotal: number;
   newTotal: number;
   paidAmount: number;
+  cashAmount: number;
+  transferAmount: number;
+  cardAmount: number;
   oldUnpaid: number;
   newUnpaid: number;
   deltaUnpaid: number;
+  autoSettlementApplied: boolean;
+  autoSettlementDelta: number;
+  autoSettlementMethod: 'cash' | 'transfer' | 'card' | null;
   itemCount: number;
 }
 
@@ -325,12 +333,24 @@ function parseModifySaleResult(data: any): ModifySaleTransactionResult {
 
   return {
     transactionId: String(raw.transactionId ?? ''),
+    oldPaidAmount: Number(raw.oldPaidAmount ?? 0),
     oldTotal: Number(raw.oldTotal ?? 0),
     newTotal: Number(raw.newTotal ?? 0),
     paidAmount: Number(raw.paidAmount ?? 0),
+    cashAmount: Number(raw.cashAmount ?? 0),
+    transferAmount: Number(raw.transferAmount ?? 0),
+    cardAmount: Number(raw.cardAmount ?? 0),
     oldUnpaid: Number(raw.oldUnpaid ?? 0),
     newUnpaid: Number(raw.newUnpaid ?? 0),
     deltaUnpaid: Number(raw.deltaUnpaid ?? 0),
+    autoSettlementApplied: Boolean(raw.autoSettlementApplied ?? false),
+    autoSettlementDelta: Number(raw.autoSettlementDelta ?? 0),
+    autoSettlementMethod:
+      raw.autoSettlementMethod === 'cash' ||
+      raw.autoSettlementMethod === 'transfer' ||
+      raw.autoSettlementMethod === 'card'
+        ? raw.autoSettlementMethod
+        : null,
     itemCount: Number(raw.itemCount ?? 0),
   };
 }

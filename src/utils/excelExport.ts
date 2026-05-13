@@ -28,6 +28,35 @@ function normalizeCustomerKey(value: string | undefined | null): string {
     .toLowerCase();
 }
 
+function applyCurrencyFormat(
+  worksheet: XLSX.WorkSheet,
+  headers: string[],
+  currencyColumns: string[]
+): void {
+  const ref = worksheet['!ref'];
+  if (!ref) return;
+
+  const range = XLSX.utils.decode_range(ref);
+  const headerToColumn = new Map<string, number>();
+
+  headers.forEach((header, index) => {
+    headerToColumn.set(header, index);
+  });
+
+  currencyColumns.forEach((header) => {
+    const columnIndex = headerToColumn.get(header);
+    if (columnIndex === undefined) return;
+
+    for (let row = 1; row <= range.e.r; row++) {
+      const cellAddress = XLSX.utils.encode_cell({ c: columnIndex, r: row });
+      const cell = worksheet[cellAddress];
+      if (!cell || typeof cell.v !== 'number') continue;
+      cell.t = 'n';
+      cell.z = '$#,##0.00';
+    }
+  });
+}
+
 // Export products to Excel
 export function exportProductsToExcel(products: Product[], filename?: string): void {
   const data = products.map(p => ({
@@ -340,6 +369,109 @@ export function exportTransactionsByCustomer(
   const safeName = customerName.replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, '_');
   const date = new Date().toISOString().split('T')[0];
   XLSX.writeFile(workbook, `ventas_cliente_${safeName}_${date}.xlsx`);
+}
+
+export function exportSingleTransactionToExcel(
+  transaction: Transaction,
+  soldByName?: string
+): void {
+  const paidAmount = transaction.cashAmount + transaction.transferAmount + transaction.cardAmount;
+  const pendingAmount = Math.max(transaction.total - paidAmount, 0);
+  const shouldIncludePending = pendingAmount > 0.01;
+
+  const paymentMethodLabel =
+    transaction.paymentMethod === 'cash' ? 'Efectivo' :
+    transaction.paymentMethod === 'transfer' ? 'Transferencia' :
+    transaction.paymentMethod === 'card' ? 'Tarjeta' :
+    transaction.paymentMethod === 'mixed' ? 'Mixto' : 'Credito';
+
+  const baseRows = (transaction.items.length > 0 ? transaction.items : [{
+    productId: '',
+    productName: transaction.type === 'installment_payment' ? 'Abono' : 'Sin detalle',
+    quantity: 1,
+    unitPrice: transaction.total,
+    totalPrice: transaction.total,
+    category: undefined,
+    brand: undefined,
+    color: undefined,
+    size: undefined,
+    upsBatch: undefined,
+  }]).map((item) => ({
+    'Fecha': formatDate(transaction.date),
+    'Cliente': transaction.customerName,
+    'Producto': item.productName,
+    'Cantidad': item.quantity,
+    'Precio Unitario': item.unitPrice,
+    'Total Linea': item.totalPrice,
+    'Total Transaccion': transaction.total,
+    'Vendido Por': soldByName || transaction.soldBy || '',
+    'Metodo de Pago': paymentMethodLabel,
+    'Notas': transaction.notes || '',
+  }));
+
+  const rows = baseRows.map((row) => (
+    shouldIncludePending
+      ? { ...row, 'Pendiente': pendingAmount }
+      : row
+  ));
+
+  const headers = [
+    'Fecha',
+    'Cliente',
+    'Producto',
+    'Cantidad',
+    'Precio Unitario',
+    'Total Linea',
+    'Total Transaccion',
+    'Vendido Por',
+    'Metodo de Pago',
+    'Notas',
+  ];
+  if (shouldIncludePending) {
+    headers.splice(headers.length - 1, 0, 'Pendiente');
+  }
+
+  const worksheet = XLSX.utils.json_to_sheet(rows, { header: headers });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Transaccion');
+
+  applyCurrencyFormat(worksheet, headers, [
+    'Precio Unitario',
+    'Total Linea',
+    'Total Transaccion',
+    'Pendiente',
+  ]);
+
+  worksheet['!cols'] = [
+    { wch: 14 }, // Fecha
+    { wch: 28 }, // Cliente
+    { wch: 36 }, // Producto
+    { wch: 10 }, // Cantidad
+    { wch: 14 }, // Precio Unitario
+    { wch: 12 }, // Total Linea
+    { wch: 16 }, // Total Transaccion
+    { wch: 22 }, // Vendido Por
+    { wch: 16 }, // Metodo de Pago
+    { wch: 30 }, // Notas
+  ];
+  if (shouldIncludePending) {
+    worksheet['!cols'] = [
+      { wch: 14 }, // Fecha
+      { wch: 28 }, // Cliente
+      { wch: 36 }, // Producto
+      { wch: 10 }, // Cantidad
+      { wch: 14 }, // Precio Unitario
+      { wch: 12 }, // Total Linea
+      { wch: 16 }, // Total Transaccion
+      { wch: 22 }, // Vendido Por
+      { wch: 16 }, // Metodo de Pago
+      { wch: 12 }, // Pendiente
+      { wch: 30 }, // Notas
+    ];
+  }
+
+  const date = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(workbook, `transaccion_${transaction.id}_${date}.xlsx`);
 }
 
 // Export all data to a single Excel file with multiple sheets

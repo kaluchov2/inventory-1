@@ -15,7 +15,7 @@ import {
   useDisclosure,
   useToast,
 } from '@chakra-ui/react';
-import { FiDollarSign, FiEdit2, FiRotateCcw } from 'react-icons/fi';
+import { FiDollarSign, FiDownload, FiEdit2, FiRotateCcw } from 'react-icons/fi';
 import { Customer, Transaction } from '../../types';
 import { useTransactionStore } from '../../store/transactionStore';
 import { formatCurrency, formatDate, formatDateTime } from '../../utils/formatters';
@@ -28,7 +28,9 @@ import { syncManager } from '../../lib/syncManager';
 import { isMissingDatabaseFunction } from '../../lib/saleSync';
 import { useProductStore } from '../../store/productStore';
 import { useCustomerStore } from '../../store/customerStore';
+import { useStaffStore } from '../../store/staffStore';
 import { normalizeCustomerKey } from '../../utils/customerNameUtils';
+import { exportSingleTransactionToExcel } from '../../utils/excelExport';
 
 interface CustomerTransactionDetailsProps {
   customer: Customer;
@@ -96,6 +98,7 @@ export function CustomerTransactionDetails({
   } = useTransactionStore();
   const loadProducts = useProductStore((state) => state.loadFromSupabase);
   const loadCustomers = useCustomerStore((state) => state.loadFromSupabase);
+  const staff = useStaffStore((state) => state.staff);
   const {
     isOpen: isUndoConfirmOpen,
     onOpen: onUndoConfirmOpen,
@@ -135,6 +138,10 @@ export function CustomerTransactionDetails({
   );
 
   const canLoadMore = visibleCount < latestTransactions.length;
+  const staffById = useMemo(
+    () => new Map(staff.map((member) => [member.id, member.name])),
+    [staff]
+  );
 
   useEffect(() => {
     setLatestTransactions(
@@ -177,7 +184,19 @@ export function CustomerTransactionDetails({
           error
         );
         if (!isMounted) return;
-        setLatestError('No se pudo completar consulta remota. Mostrando cache local.');
+        const localSnapshot = useTransactionStore.getState().transactions;
+        const localForCustomer = getLatestTransactionsForCustomer(
+          localSnapshot,
+          customer.id,
+          customer.name
+        );
+        setLatestTransactions(localForCustomer);
+        setVisibleCount(PAGE_SIZE);
+        setLatestError(
+          localForCustomer.length === 0
+            ? 'No se pudo completar consulta remota. Mostrando cache local.'
+            : null
+        );
       } finally {
         if (isMounted) setIsLoadingLatest(false);
       }
@@ -193,6 +212,30 @@ export function CustomerTransactionDetails({
   const handleUndoClick = (transaction: Transaction) => {
     setTransactionToUndo(transaction);
     onUndoConfirmOpen();
+  };
+
+  const handleExportTransaction = (transaction: Transaction) => {
+    try {
+      const soldByName = transaction.soldBy
+        ? (staffById.get(transaction.soldBy) || transaction.soldBy)
+        : undefined;
+      exportSingleTransactionToExcel(transaction, soldByName);
+      toast({
+        title: 'Transaccion descargada',
+        description: `${formatDate(transaction.date)} - ${transaction.customerName}`,
+        status: 'success',
+        duration: 3000,
+        isClosable: true,
+      });
+    } catch (error) {
+      toast({
+        title: es.errors.exportError,
+        description: String(error || es.errors.genericError),
+        status: 'error',
+        duration: 4000,
+        isClosable: true,
+      });
+    }
   };
 
   const handleConfirmUndo = async () => {
@@ -530,6 +573,14 @@ export function CustomerTransactionDetails({
                         <Badge colorScheme={paymentMethodColor[transaction.paymentMethod]}>
                           {paymentMethodLabel[transaction.paymentMethod]}
                         </Badge>
+                        <IconButton
+                          aria-label="Descargar Excel"
+                          icon={<Icon as={FiDownload} />}
+                          size="xs"
+                          variant="ghost"
+                          colorScheme="teal"
+                          onClick={() => handleExportTransaction(transaction)}
+                        />
                         {transaction.type === 'sale' && (
                           <IconButton
                             aria-label={es.actions.modify}

@@ -11,6 +11,7 @@ import {
   HStack,
   Icon,
   IconButton,
+  Input,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -40,7 +41,8 @@ import {
 import { useCustomerStore } from '../../store/customerStore';
 import { useProductStore } from '../../store/productStore';
 import { useTransactionStore } from '../../store/transactionStore';
-import { Transaction } from '../../types';
+import { CategoryCode, Transaction } from '../../types';
+import { CATEGORY_OPTIONS } from '../../constants/categories';
 import { es } from '../../i18n/es';
 import { formatCurrency } from '../../utils/formatters';
 
@@ -54,7 +56,7 @@ interface EditableLine {
   brand?: string;
   color?: string;
   size?: string;
-  isExistingUnregistered: boolean;
+  isUnregistered: boolean;
 }
 
 interface EditSaleTransactionModalProps {
@@ -93,11 +95,21 @@ export function EditSaleTransactionModal({
     onOpen: onConfirmOpen,
     onClose: onConfirmClose,
   } = useDisclosure();
+  const {
+    isOpen: isUnregisteredOpen,
+    onOpen: onUnregisteredOpen,
+    onClose: onUnregisteredClose,
+  } = useDisclosure();
 
   const [lines, setLines] = useState<EditableLine[]>([]);
   const [addProductId, setAddProductId] = useState<string | null>(null);
   const [addQuantity, setAddQuantity] = useState(1);
   const [selectedUpsFilter, setSelectedUpsFilter] = useState<number | ''>('');
+  const [unregName, setUnregName] = useState('');
+  const [unregPrice, setUnregPrice] = useState(0);
+  const [unregQty, setUnregQty] = useState(1);
+  const [unregCategory, setUnregCategory] = useState<CategoryCode | ''>('');
+  const [unregBrand, setUnregBrand] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [lineSeed, setLineSeed] = useState(0);
 
@@ -190,6 +202,10 @@ export function EditSaleTransactionModal({
     () => filteredSelectableProducts.find((product) => product.id === addProductId),
     [addProductId, filteredSelectableProducts]
   );
+  const unregisteredCategoryOptions = useMemo(
+    () => [{ value: '', label: es.transactions.unregisteredNoCategory }, ...CATEGORY_OPTIONS],
+    []
+  );
 
   const totalBelowPaidFloor = total + PENDING_BALANCE_EPSILON < effectivePaidAmount;
   const canSave = !isSaving && lines.length > 0 && !totalBelowPaidFloor;
@@ -213,13 +229,18 @@ export function EditSaleTransactionModal({
       brand: item.brand,
       color: item.color,
       size: item.size,
-      isExistingUnregistered: !item.productId,
+      isUnregistered: !item.productId,
     }));
 
     setLines(initialLines);
     setAddProductId(null);
     setAddQuantity(1);
     setSelectedUpsFilter('');
+    setUnregName('');
+    setUnregPrice(0);
+    setUnregQty(1);
+    setUnregCategory('');
+    setUnregBrand('');
     setLineSeed((current) => current + 1);
   }, [isOpen, transaction]);
 
@@ -244,7 +265,7 @@ export function EditSaleTransactionModal({
 
     setLines((current) => {
       const existingIdx = current.findIndex(
-        (line) => line.productId === selectedProduct.id && !line.isExistingUnregistered
+        (line) => line.productId === selectedProduct.id
       );
 
       if (existingIdx >= 0) {
@@ -268,13 +289,71 @@ export function EditSaleTransactionModal({
           brand: selectedProduct.brand,
           color: selectedProduct.color,
           size: selectedProduct.size,
-          isExistingUnregistered: false,
+          isUnregistered: false,
         },
       ];
     });
 
     setAddProductId(null);
     setAddQuantity(1);
+  };
+
+  const resetUnregisteredForm = () => {
+    setUnregName('');
+    setUnregPrice(0);
+    setUnregQty(1);
+    setUnregCategory('');
+    setUnregBrand('');
+  };
+
+  const handleCloseUnregistered = () => {
+    if (isSaving) return;
+    resetUnregisteredForm();
+    onUnregisteredClose();
+  };
+
+  const handleAddUnregisteredLine = () => {
+    if (isSaving) return;
+    const trimmedName = unregName.trim();
+    const trimmedBrand = unregBrand.trim();
+    if (!trimmedName || unregPrice <= 0 || unregQty < 1) return;
+
+    setLines((current) => {
+      const existingIdx = current.findIndex(
+        (line) =>
+          line.productId === null &&
+          line.productName.toLowerCase() === trimmedName.toLowerCase() &&
+          line.unitPrice === unregPrice
+      );
+
+      if (existingIdx >= 0) {
+        const next = [...current];
+        next[existingIdx] = {
+          ...next[existingIdx],
+          quantity: next[existingIdx].quantity + unregQty,
+        };
+        return next;
+      }
+
+      return [
+        ...current,
+        {
+          lineId: `unregistered-${lineSeed}-${Date.now()}`,
+          productId: null,
+          productName: trimmedName,
+          quantity: unregQty,
+          unitPrice: unregPrice,
+          category: unregCategory || undefined,
+          brand: trimmedBrand || undefined,
+          color: undefined,
+          size: undefined,
+          isUnregistered: true,
+        },
+      ];
+    });
+
+    resetUnregisteredForm();
+    onUnregisteredClose();
   };
 
   const handleQuantityChange = (lineId: string, quantity: number) => {
@@ -362,8 +441,6 @@ export function EditSaleTransactionModal({
     }
 
     if (
-      lower.includes('unregistered_item_add_not_allowed') ||
-      lower.includes('unregistered_item_quantity_immutable') ||
       lower.includes('transaction_not_sale') ||
       lower.includes('invalid_items_payload') ||
       lower.includes('transaction_requires_at_least_one_item')
@@ -534,6 +611,14 @@ export function EditSaleTransactionModal({
                     >
                       {es.actions.add}
                     </Button>
+                    <Button
+                      leftIcon={<Icon as={FiPlus} />}
+                      colorScheme="orange"
+                      variant="outline"
+                      onClick={onUnregisteredOpen}
+                    >
+                      {es.transactions.addUnregisteredLineButton}
+                    </Button>
                   </HStack>
                   {selectedUpsFilter !== '' && productOptions.length === 0 && (
                     <Text fontSize="sm" color="gray.500">
@@ -561,7 +646,7 @@ export function EditSaleTransactionModal({
                         <HStack justify="space-between" align="start">
                           <VStack align="start" spacing={0}>
                             <Text fontWeight="medium">{line.productName}</Text>
-                            {line.isExistingUnregistered && (
+                            {line.isUnregistered && (
                               <Badge colorScheme="orange" variant="outline">
                                 {es.transactions.unregisteredLineLabel}
                               </Badge>
@@ -585,7 +670,6 @@ export function EditSaleTransactionModal({
                               onChange={(_, valueNumber) =>
                                 handleQuantityChange(line.lineId, Math.max(1, valueNumber || 1))
                               }
-                              isDisabled={line.isExistingUnregistered}
                             >
                               <NumberInputField />
                               <NumberInputStepper>
@@ -675,6 +759,98 @@ export function EditSaleTransactionModal({
               isLoading={isSaving}
             >
               {es.actions.save}
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={isUnregisteredOpen} onClose={handleCloseUnregistered} isCentered>
+        <ModalOverlay />
+        <ModalContent mx={4}>
+          <ModalHeader>{es.transactions.addUnregisteredModalTitle}</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack spacing={4} align="stretch">
+              <FormControl isRequired>
+                <FormLabel>{es.transactions.unregisteredNameLabel}</FormLabel>
+                <Input
+                  value={unregName}
+                  onChange={(event) => setUnregName(event.target.value)}
+                  placeholder={es.transactions.unregisteredNamePlaceholder}
+                  autoFocus
+                />
+              </FormControl>
+
+              <FormControl isRequired>
+                <FormLabel>{es.transactions.unregisteredPriceLabel}</FormLabel>
+                <NumberInput
+                  min={0}
+                  precision={2}
+                  value={unregPrice}
+                  onChange={(_, valueNumber) => setUnregPrice(Math.max(0, valueNumber || 0))}
+                >
+                  <NumberInputField />
+                  <NumberInputStepper>
+                    <NumberIncrementStepper />
+                    <NumberDecrementStepper />
+                  </NumberInputStepper>
+                </NumberInput>
+              </FormControl>
+
+              <FormControl isRequired>
+                <FormLabel>{es.sales.quantity}</FormLabel>
+                <NumberInput
+                  min={1}
+                  value={unregQty}
+                  onChange={(_, valueNumber) => setUnregQty(Math.max(1, Math.trunc(valueNumber || 1)))}
+                >
+                  <NumberInputField />
+                  <NumberInputStepper>
+                    <NumberIncrementStepper />
+                    <NumberDecrementStepper />
+                  </NumberInputStepper>
+                </NumberInput>
+              </FormControl>
+
+              <FormControl>
+                <FormLabel>{es.transactions.unregisteredCategoryLabel}</FormLabel>
+                <AutocompleteSelect
+                  options={unregisteredCategoryOptions}
+                  value={unregCategory}
+                  onChange={(value) => setUnregCategory(value === '' ? '' : (value as CategoryCode))}
+                  placeholder={es.transactions.unregisteredNoCategory}
+                />
+              </FormControl>
+
+              <FormControl>
+                <FormLabel>{es.products.brand}</FormLabel>
+                <Input
+                  value={unregBrand}
+                  onChange={(event) => setUnregBrand(event.target.value)}
+                  placeholder={es.transactions.unregisteredBrandPlaceholder}
+                />
+              </FormControl>
+
+              {unregPrice > 0 && unregQty > 0 && (
+                <HStack justify="space-between" p={3} bg="orange.50" borderRadius="md">
+                  <Text fontWeight="medium">{es.sales.total}</Text>
+                  <Text fontWeight="bold" color="orange.700">
+                    {formatCurrency(unregPrice * unregQty)}
+                  </Text>
+                </HStack>
+              )}
+            </VStack>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={handleCloseUnregistered}>
+              {es.actions.cancel}
+            </Button>
+            <Button
+              colorScheme="orange"
+              onClick={handleAddUnregisteredLine}
+              isDisabled={!unregName.trim() || unregPrice <= 0 || unregQty < 1}
+            >
+              {es.transactions.addUnregisteredConfirm}
             </Button>
           </ModalFooter>
         </ModalContent>

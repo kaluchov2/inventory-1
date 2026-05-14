@@ -87,15 +87,15 @@ export function Customers() {
   const [isLoading, setIsLoading] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
-  const saleTransactions = useMemo(
-    () => transactions.filter((tx) => tx.type === 'sale'),
+  const commercialTransactions = useMemo(
+    () => transactions.filter((tx) => tx.type === 'sale' || tx.type === 'return'),
     [transactions]
   );
 
   const filteredRealCustomers = useMemo<CustomerListItem[]>(() => {
     return getFilteredCustomers().map((customer) => {
       const customerNameKey = normalizeCustomerKey(customer.name);
-      const displaySalesTotal = saleTransactions.reduce((sum, tx) => {
+      const displaySalesTotal = commercialTransactions.reduce((sum, tx) => {
         const matchesCustomer =
           tx.customerId === customer.id ||
           normalizeCustomerKey(tx.customerName) === customerNameKey;
@@ -107,7 +107,7 @@ export function Customers() {
         displaySalesTotal,
       };
     });
-  }, [getFilteredCustomers, saleTransactions, customers, searchQuery]);
+  }, [getFilteredCustomers, commercialTransactions, customers, searchQuery]);
 
   const virtualWalkInCustomers = useMemo<CustomerListItem[]>(() => {
     const realCustomerKeys = new Set(customers.map((customer) => normalizeCustomerKey(customer.name)));
@@ -117,7 +117,7 @@ export function Customers() {
       .filter((label) => !realCustomerKeys.has(normalizeCustomerKey(label)))
       .map((label) => {
         const labelKey = normalizeCustomerKey(label);
-        const relatedSales = saleTransactions.filter(
+        const relatedTransactions = commercialTransactions.filter(
           (tx) =>
             !tx.customerId &&
             normalizeCustomerKey(tx.customerName) === labelKey
@@ -128,13 +128,13 @@ export function Customers() {
           name: label,
           balance: 0,
           totalPurchases: 0,
-          displaySalesTotal: relatedSales.reduce((sum, tx) => sum + tx.total, 0),
+          displaySalesTotal: relatedTransactions.reduce((sum, tx) => sum + tx.total, 0),
           createdAt: now,
           updatedAt: now,
           isVirtualWalkIn: true,
         };
       });
-  }, [customers, saleTransactions]);
+  }, [customers, commercialTransactions]);
 
   const filteredVirtualWalkIns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();

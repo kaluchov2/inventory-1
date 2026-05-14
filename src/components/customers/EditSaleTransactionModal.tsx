@@ -36,6 +36,7 @@ import { syncManager } from '../../lib/syncManager';
 import { isMissingDatabaseFunction } from '../../lib/saleSync';
 import {
   ModifySaleTransactionPayload,
+  RefundSaleFromEditPayload,
   transactionService,
 } from '../../services/transactionService';
 import { useCustomerStore } from '../../store/customerStore';
@@ -44,7 +45,7 @@ import { useTransactionStore } from '../../store/transactionStore';
 import { CategoryCode, Transaction } from '../../types';
 import { CATEGORY_OPTIONS } from '../../constants/categories';
 import { es } from '../../i18n/es';
-import { formatCurrency } from '../../utils/formatters';
+import { formatCurrency, generateId } from '../../utils/formatters';
 
 interface EditableLine {
   lineId: string;
@@ -208,7 +209,10 @@ export function EditSaleTransactionModal({
   );
 
   const totalBelowPaidFloor = total + PENDING_BALANCE_EPSILON < effectivePaidAmount;
-  const canSave = !isSaving && lines.length > 0 && !totalBelowPaidFloor;
+  const canSave = !isSaving && lines.length > 0;
+  const refundAmount = totalBelowPaidFloor
+    ? Math.max(effectivePaidAmount - total, 0)
+    : 0;
   const autoSettlementMethodLabel =
     mainPaymentMethod === 'transfer'
       ? es.sales.transfer
@@ -391,6 +395,28 @@ export function EditSaleTransactionModal({
     };
   };
 
+  const buildRefundPayload = (): RefundSaleFromEditPayload | null => {
+    if (!transaction) return null;
+
+    return {
+      transactionId: transaction.id,
+      returnTransactionId: `${transaction.id}-refund-${generateId()}`,
+      reason: 'Refund from Clientes modify sale',
+      discount: transaction.discount,
+      items: lines.map((line) => ({
+        productId: line.productId,
+        productName: line.productName,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        totalPrice: line.quantity * line.unitPrice,
+        category: line.category,
+        brand: line.brand,
+        color: line.color,
+        size: line.size,
+      })),
+    };
+  };
+
   const notifyError = (error: unknown) => {
     const message =
       error && typeof error === 'object' && 'message' in error
@@ -401,6 +427,15 @@ export function EditSaleTransactionModal({
     if (isMissingDatabaseFunction(error, 'modify_sale_transaction')) {
       toast({
         title: es.errors.transactionModifyRpcMissing,
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+      return;
+    }
+    if (isMissingDatabaseFunction(error, 'refund_sale_transaction_from_edit')) {
+      toast({
+        title: es.errors.transactionRefundRpcMissing,
         status: 'error',
         duration: 4500,
         isClosable: true,
@@ -455,6 +490,24 @@ export function EditSaleTransactionModal({
       return;
     }
 
+    if (
+      lower.includes('refund_payload_add_not_allowed') ||
+      lower.includes('refund_payload_increase_not_allowed') ||
+      lower.includes('refund_payload_no_refund_change') ||
+      lower.includes('refund_payload_invalid_totals') ||
+      lower.includes('refund_not_required') ||
+      lower.includes('refund_total_invalid')
+    ) {
+      toast({
+        title: es.errors.transactionRefundInvalidPayload,
+        description: message,
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+      return;
+    }
+
     toast({
       title: es.errors.saveError,
       description: message || es.errors.genericError,
@@ -466,7 +519,8 @@ export function EditSaleTransactionModal({
 
   const handleConfirmSave = async () => {
     const payload = buildPayload();
-    if (!payload || !transaction) return;
+    const refundPayload = buildRefundPayload();
+    if (!payload || !refundPayload || !transaction) return;
     if (!canSave) return;
 
     setIsSaving(true);
@@ -505,8 +559,27 @@ export function EditSaleTransactionModal({
         return;
       }
 
-      const { result, transaction: updatedTransaction } =
-        await transactionService.modifySaleTransaction(payload);
+      let updatedTransaction = transaction;
+      let successTitle = es.success.transactionModified;
+      let successDescription = '';
+
+      if (totalBelowPaidFloor) {
+        const refundResult =
+          await transactionService.refundSaleTransactionFromEdit(refundPayload);
+        const sourceAfterRefund = await transactionService.getById(transaction.id);
+        if (sourceAfterRefund) {
+          updatedTransaction = sourceAfterRefund;
+        }
+        successTitle = es.success.transactionRefunded;
+        successDescription =
+          `${formatCurrency(refundResult.refundTotal)} (${refundResult.refundedItemCount} ${es.transactions.refundedLinesLabel})`;
+      } else {
+        const modifyResult =
+          await transactionService.modifySaleTransaction(payload);
+        updatedTransaction = modifyResult.transaction;
+        successDescription =
+          `${formatCurrency(modifyResult.result.oldTotal)} -> ${formatCurrency(modifyResult.result.newTotal)}`;
+      }
 
       let refreshFailed = false;
       try {
@@ -522,10 +595,10 @@ export function EditSaleTransactionModal({
       toast({
         title: refreshFailed
           ? es.errors.transactionModifyRefreshWarning
-          : es.success.transactionModified,
+          : successTitle,
         description: refreshFailed
-          ? `${formatCurrency(result.oldTotal)} -> ${formatCurrency(result.newTotal)}. ${es.errors.transactionModifyRefreshWarning}`
-          : `${formatCurrency(result.oldTotal)} -> ${formatCurrency(result.newTotal)}`,
+          ? `${successDescription}. ${es.errors.transactionModifyRefreshWarning}`
+          : successDescription,
         status: refreshFailed ? 'warning' : 'success',
         duration: 4500,
         isClosable: true,
@@ -740,9 +813,10 @@ export function EditSaleTransactionModal({
               </Box>
 
               {totalBelowPaidFloor && (
-                <Alert status="error" borderRadius="md">
+                <Alert status="warning" borderRadius="md">
                   <AlertIcon />
-                  {es.errors.transactionModifyPaidFloor}
+                  {es.transactions.refundModeWarning}{' '}
+                  {formatCurrency(refundAmount)}.
                 </Alert>
               )}
             </VStack>
@@ -860,8 +934,16 @@ export function EditSaleTransactionModal({
         isOpen={isConfirmOpen}
         onClose={onConfirmClose}
         onConfirm={handleConfirmSave}
-        title={es.transactions.modifyConfirmTitle}
-        message={es.transactions.modifyConfirmMessage}
+        title={
+          totalBelowPaidFloor
+            ? es.transactions.refundConfirmTitle
+            : es.transactions.modifyConfirmTitle
+        }
+        message={
+          totalBelowPaidFloor
+            ? `${es.transactions.refundConfirmMessage} ${formatCurrency(refundAmount)}.`
+            : es.transactions.modifyConfirmMessage
+        }
         confirmText={es.actions.confirm}
         cancelText={es.actions.cancel}
         colorScheme="brand"

@@ -62,7 +62,12 @@ export function Reports() {
   const filteredTransactions = useMemo(() => {
     const { from, to } = getDateRange();
     return transactions
-      .filter(t => t.type === 'sale' && t.date >= from && t.date <= to)
+      .filter(
+        (t) =>
+          (t.type === 'sale' || t.type === 'return') &&
+          t.date >= from &&
+          t.date <= to
+      )
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [transactions, dateRange]);
 
@@ -71,6 +76,7 @@ export function Reports() {
   const cashSales = filteredTransactions.reduce((sum, t) => sum + t.cashAmount, 0);
   const transferSales = filteredTransactions.reduce((sum, t) => sum + t.transferAmount, 0);
   const cardSales = filteredTransactions.reduce((sum, t) => sum + t.cardAmount, 0);
+  const paymentVolume = Math.abs(cashSales) + Math.abs(transferSales) + Math.abs(cardSales);
 
   const inventoryValue = getTotalInventoryValue();
   const outstandingBalance = getTotalOutstandingBalance();
@@ -81,17 +87,20 @@ export function Reports() {
   const topProducts = useMemo(() => {
     const productSales: Record<string, { name: string; quantity: number; total: number }> = {};
 
-    filteredTransactions.forEach(t => {
-      t.items.forEach(item => {
-        if (!productSales[item.productId]) {
-          productSales[item.productId] = { name: item.productName, quantity: 0, total: 0 };
+    filteredTransactions.forEach((transaction) => {
+      const direction = transaction.type === 'return' ? -1 : 1;
+      transaction.items.forEach((item) => {
+        const productKey = item.productId || `unregistered:${item.productName}:${item.unitPrice}`;
+        if (!productSales[productKey]) {
+          productSales[productKey] = { name: item.productName, quantity: 0, total: 0 };
         }
-        productSales[item.productId].quantity += item.quantity;
-        productSales[item.productId].total += item.totalPrice;
+        productSales[productKey].quantity += item.quantity * direction;
+        productSales[productKey].total += item.totalPrice * direction;
       });
     });
 
     return Object.values(productSales)
+      .filter((product) => product.total > 0 || product.quantity > 0)
       .sort((a, b) => b.total - a.total)
       .slice(0, 10);
   }, [filteredTransactions]);
@@ -146,7 +155,7 @@ export function Reports() {
               {formatCurrency(cashSales)}
             </Text>
             <Text fontSize="sm" color="gray.500">
-              {totalSales > 0 ? Math.round((cashSales / totalSales) * 100) : 0}%
+              {paymentVolume > 0 ? Math.round((Math.abs(cashSales) / paymentVolume) * 100) : 0}%
             </Text>
           </Box>
           <Box p={4} bg="blue.50" borderRadius="lg" textAlign="center">
@@ -155,7 +164,7 @@ export function Reports() {
               {formatCurrency(transferSales)}
             </Text>
             <Text fontSize="sm" color="gray.500">
-              {totalSales > 0 ? Math.round((transferSales / totalSales) * 100) : 0}%
+              {paymentVolume > 0 ? Math.round((Math.abs(transferSales) / paymentVolume) * 100) : 0}%
             </Text>
           </Box>
           <Box p={4} bg="purple.50" borderRadius="lg" textAlign="center">
@@ -164,7 +173,7 @@ export function Reports() {
               {formatCurrency(cardSales)}
             </Text>
             <Text fontSize="sm" color="gray.500">
-              {totalSales > 0 ? Math.round((cardSales / totalSales) * 100) : 0}%
+              {paymentVolume > 0 ? Math.round((Math.abs(cardSales) / paymentVolume) * 100) : 0}%
             </Text>
           </Box>
         </SimpleGrid>
@@ -283,7 +292,11 @@ export function Reports() {
                   <Tr key={transaction.id}>
                     <Td>{formatDateTime(transaction.date)}</Td>
                     <Td fontWeight="medium">{transaction.customerName}</Td>
-                    <Td isNumeric fontWeight="bold" color="green.600">
+                    <Td
+                      isNumeric
+                      fontWeight="bold"
+                      color={transaction.total < 0 ? "orange.600" : "green.600"}
+                    >
                       {formatCurrency(transaction.total)}
                     </Td>
                     <Td>

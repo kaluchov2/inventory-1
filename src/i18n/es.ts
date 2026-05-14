@@ -167,6 +167,11 @@ export const es = {
     modifyConfirmTitle: 'Modificar transacción',
     modifyConfirmMessage:
       '¿Seguro que deseas modificar esta transacción? Esto actualizará inventario y saldos.',
+    refundConfirmTitle: 'Registrar devolución',
+    refundConfirmMessage:
+      'Esta edición dejará el total por debajo de lo pagado y se registrará una devolución vinculada a la venta original por',
+    refundModeWarning: 'Esta edición se procesará como devolución por',
+    refundedLinesLabel: 'renglón(es) devuelto(s)',
     undoConfirmTitle: 'Deshacer transacción',
     undoConfirmMessage:
       '¿Seguro que deseas deshacer esta transacción? Esto restaurará inventario y saldos.',
@@ -241,6 +246,7 @@ export const es = {
     saleCompleted: '¡Venta registrada exitosamente!',
     paymentReceived: '¡Pago recibido exitosamente!',
     transactionModified: '¡Transacción modificada exitosamente!',
+    transactionRefunded: '¡Devolución registrada exitosamente!',
     transactionUndone: '¡Transacción deshecha exitosamente!',
   },
 
@@ -272,6 +278,10 @@ export const es = {
       'Hay operaciones fallidas de sincronizacion. Reintenta antes de modificar.',
     transactionModifyRefreshWarning:
       'La venta se modificó en la base de datos, pero no se pudo recargar toda la información. Actualiza la vista para verificar.',
+    transactionRefundRpcMissing:
+      'La función para registrar devoluciones no existe en la base de datos. Aplica migraciones.',
+    transactionRefundInvalidPayload:
+      'La devolución contiene datos inválidos o no permitidos.',
     transactionUndoRpcMissing:
       'La funcion para deshacer transacciones no existe en la base de datos. Aplica migraciones.',
     transactionUndoSoldUnderflow:

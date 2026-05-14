@@ -338,7 +338,7 @@ export const useTransactionStore = create<TransactionStore>()(
       getTodaySales: () => {
         const today = new Date().toISOString().split('T')[0];
         const todayTransactions = get().transactions.filter(
-          (t) => t.type === 'sale' && t.date.startsWith(today)
+          (t) => (t.type === 'sale' || t.type === 'return') && t.date.startsWith(today)
         );
 
         return {
@@ -351,18 +351,22 @@ export const useTransactionStore = create<TransactionStore>()(
 
       getSalesByDateRange: (from, to) => {
         return get().transactions.filter(
-          (t) => t.type === 'sale' && t.date >= from && t.date <= to
+          (t) => (t.type === 'sale' || t.type === 'return') && t.date >= from && t.date <= to
         );
       },
 
       getTotalSalesByCategory: () => {
-        const sales = get().transactions.filter((t) => t.type === 'sale');
+        const transactions = get().transactions.filter(
+          (t) => t.type === 'sale' || t.type === 'return'
+        );
         const categoryTotals: Record<string, number> = {};
 
-        sales.forEach((sale) => {
-          sale.items.forEach((item) => {
+        transactions.forEach((transaction) => {
+          const direction = transaction.type === 'return' ? -1 : 1;
+          transaction.items.forEach((item) => {
             if (item.category) {
-              categoryTotals[item.category] = (categoryTotals[item.category] || 0) + item.totalPrice;
+              categoryTotals[item.category] =
+                (categoryTotals[item.category] || 0) + item.totalPrice * direction;
             }
           });
         });

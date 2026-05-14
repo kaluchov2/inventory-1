@@ -51,6 +51,26 @@ export interface ModifySaleTransactionResult {
   itemCount: number;
 }
 
+export interface RefundSaleFromEditPayload {
+  transactionId: string;
+  returnTransactionId: string;
+  items: ModifySaleTransactionItemInput[];
+  discount?: number;
+  reason?: string;
+}
+
+export interface RefundSaleFromEditResult {
+  sourceTransactionId: string;
+  returnTransactionId: string;
+  refundTotal: number;
+  refundedItemCount: number;
+  restoredProductRows: number;
+  oldUnpaid: number;
+  newUnpaid: number;
+  deltaUnpaid: number;
+  cashRefundAmount: number;
+}
+
 export interface UndoSaleTransactionPayload {
   transactionId: string;
   reason?: string;
@@ -323,6 +343,20 @@ export const transactionService = {
 
     return parseUndoSaleResult(data);
   },
+
+  async refundSaleTransactionFromEdit(
+    payload: RefundSaleFromEditPayload
+  ): Promise<RefundSaleFromEditResult> {
+    const client = getSupabaseClient();
+
+    const { data, error } = await (client as any).rpc('refund_sale_transaction_from_edit', {
+      edit_payload: payload,
+    });
+
+    if (error) throw error;
+
+    return parseRefundFromEditResult(data);
+  },
 };
 
 function parseModifySaleResult(data: any): ModifySaleTransactionResult {
@@ -371,6 +405,25 @@ function parseUndoSaleResult(data: any): UndoSaleTransactionResult {
       raw.skippedProductRefs === undefined
         ? undefined
         : Number(raw.skippedProductRefs ?? 0),
+  };
+}
+
+function parseRefundFromEditResult(data: any): RefundSaleFromEditResult {
+  const raw = Array.isArray(data) ? data[0] : data;
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('refund_sale_transaction_from_edit_invalid_response');
+  }
+
+  return {
+    sourceTransactionId: String(raw.sourceTransactionId ?? ''),
+    returnTransactionId: String(raw.returnTransactionId ?? ''),
+    refundTotal: Number(raw.refundTotal ?? 0),
+    refundedItemCount: Number(raw.refundedItemCount ?? 0),
+    restoredProductRows: Number(raw.restoredProductRows ?? 0),
+    oldUnpaid: Number(raw.oldUnpaid ?? 0),
+    newUnpaid: Number(raw.newUnpaid ?? 0),
+    deltaUnpaid: Number(raw.deltaUnpaid ?? 0),
+    cashRefundAmount: Number(raw.cashRefundAmount ?? 0),
   };
 }
 

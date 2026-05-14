@@ -38,6 +38,7 @@ interface CustomerTransactionDetailsProps {
 }
 
 const PAGE_SIZE = 5;
+type HistoryFilter = 'sale' | 'return' | 'all';
 
 const mergeTransactions = (remote: Transaction[], local: Transaction[]) => {
   const merged = new Map<string, Transaction>();
@@ -112,6 +113,7 @@ export function CustomerTransactionDetails({
   const [transactionToUndo, setTransactionToUndo] = useState<Transaction | null>(null);
   const [isUndoing, setIsUndoing] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('sale');
 
   const unpaidTransactions = useMemo(
     () => getUnpaidTransactionsByCustomer(customer.id),
@@ -132,12 +134,17 @@ export function CustomerTransactionDetails({
     [unpaidTransactions, effectivePendingMap]
   );
 
+  const filteredHistoryTransactions = useMemo(() => {
+    if (historyFilter === 'all') return latestTransactions;
+    return latestTransactions.filter((transaction) => transaction.type === historyFilter);
+  }, [historyFilter, latestTransactions]);
+
   const visibleTransactions = useMemo(
-    () => latestTransactions.slice(0, visibleCount),
-    [latestTransactions, visibleCount]
+    () => filteredHistoryTransactions.slice(0, visibleCount),
+    [filteredHistoryTransactions, visibleCount]
   );
 
-  const canLoadMore = visibleCount < latestTransactions.length;
+  const canLoadMore = visibleCount < filteredHistoryTransactions.length;
   const staffById = useMemo(
     () => new Map(staff.map((member) => [member.id, member.name])),
     [staff]
@@ -149,6 +156,11 @@ export function CustomerTransactionDetails({
     );
     setVisibleCount(PAGE_SIZE);
   }, [customer.id, customer.name, transactions]);
+
+  const handleHistoryFilterChange = (nextFilter: HistoryFilter) => {
+    setHistoryFilter(nextFilter);
+    setVisibleCount(PAGE_SIZE);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -520,7 +532,7 @@ export function CustomerTransactionDetails({
         <VStack align="stretch" spacing={3}>
           <HStack justify="space-between" align="center">
             <Text fontWeight="semibold" color="gray.700">
-              Transacciones recientes ({latestTransactions.length})
+              Transacciones recientes ({filteredHistoryTransactions.length})
             </Text>
             {isLoadingLatest && (
               <HStack spacing={2}>
@@ -532,6 +544,33 @@ export function CustomerTransactionDetails({
             )}
           </HStack>
 
+          <HStack spacing={2}>
+            <Button
+              size="xs"
+              colorScheme={historyFilter === 'sale' ? 'blue' : 'gray'}
+              variant={historyFilter === 'sale' ? 'solid' : 'outline'}
+              onClick={() => handleHistoryFilterChange('sale')}
+            >
+              Ventas
+            </Button>
+            <Button
+              size="xs"
+              colorScheme={historyFilter === 'return' ? 'orange' : 'gray'}
+              variant={historyFilter === 'return' ? 'solid' : 'outline'}
+              onClick={() => handleHistoryFilterChange('return')}
+            >
+              Devoluciones
+            </Button>
+            <Button
+              size="xs"
+              colorScheme={historyFilter === 'all' ? 'purple' : 'gray'}
+              variant={historyFilter === 'all' ? 'solid' : 'outline'}
+              onClick={() => handleHistoryFilterChange('all')}
+            >
+              Todas
+            </Button>
+          </HStack>
+
           {latestError && (
             <Alert status="warning" borderRadius="md" fontSize="sm">
               <AlertIcon />
@@ -539,10 +578,14 @@ export function CustomerTransactionDetails({
             </Alert>
           )}
 
-          {latestTransactions.length === 0 ? (
+          {filteredHistoryTransactions.length === 0 ? (
             <Box bg="white" p={3} borderRadius="md">
               <Text fontSize="sm" color="gray.600">
-                No hay transacciones registradas para este cliente.
+                {historyFilter === 'sale'
+                  ? 'No hay ventas registradas para este cliente.'
+                  : historyFilter === 'return'
+                    ? 'No hay devoluciones registradas para este cliente.'
+                    : 'No hay transacciones registradas para este cliente.'}
               </Text>
             </Box>
           ) : (

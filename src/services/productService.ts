@@ -1,3 +1,9 @@
+import {
+  SyncCursor,
+  buildNextCursor,
+  getDeltaWindowStart,
+} from "../lib/syncMetadata";
+import { DELTA_BATCH_LIMIT_ERROR_CODE } from "../lib/deltaSync";
 import { getSupabaseClient } from "../lib/supabase";
 import { Product, ProductStatus } from "../types";
 
@@ -6,6 +12,18 @@ import { Product, ProductStatus } from "../types";
  * V2: Handles CRUD operations for products with Supabase
  * Includes new V2 fields: ups_raw, identifier_type, drop_number, etc.
  */
+
+export interface ProductDeltaChange {
+  product: Product;
+  id: string;
+  updatedAt: string;
+  isDeleted: boolean;
+}
+
+export interface ProductDeltaResult {
+  changes: ProductDeltaChange[];
+  nextCursor: SyncCursor;
+}
 
 export const productService = {
   async getAll(): Promise<Product[]> {
@@ -96,6 +114,96 @@ export const productService = {
     }
 
     return allProducts.map(convertFromDbFormat);
+  },
+
+  async getChangesSince(
+    cursor: SyncCursor,
+    batchSize = 500,
+  ): Promise<ProductDeltaResult> {
+    const client = getSupabaseClient();
+    const BATCH_TIMEOUT_MS = 15_000;
+    const MAX_BATCHES = 200;
+    const windowStart = getDeltaWindowStart(cursor);
+
+    if (!windowStart) {
+      return {
+        changes: [],
+        nextCursor: cursor,
+      };
+    }
+
+    let offset = 0;
+    let hasMore = true;
+    let batchCount = 0;
+    const rows: any[] = [];
+
+    console.log("[ProductService.getChangesSince] Starting delta fetch...", {
+      windowStart,
+      batchSize,
+      lastUpdatedAt: cursor.lastUpdatedAt,
+    });
+
+    while (hasMore) {
+      batchCount++;
+      if (batchCount > MAX_BATCHES) {
+        throw Object.assign(
+          new Error("[ProductService.getChangesSince] Aborted after exceeding max batch count"),
+          { code: DELTA_BATCH_LIMIT_ERROR_CODE },
+        );
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), BATCH_TIMEOUT_MS);
+      let data: any[] | null = null;
+      let error: any = null;
+
+      try {
+        const result = await client
+          .from("products")
+          .select("*")
+          .gte("updated_at", windowStart)
+          .order("updated_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(offset, offset + batchSize - 1)
+          .abortSignal(controller.signal);
+        data = result.data;
+        error = result.error;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          throw new Error(
+            `[ProductService.getChangesSince] Request timed out after ${BATCH_TIMEOUT_MS}ms`,
+          );
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        rows.push(...data);
+        offset += batchSize;
+        hasMore = data.length === batchSize;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    const changes = rows.map((row) => ({
+      product: convertFromDbFormat(row),
+      id: row.id,
+      updatedAt: row.updated_at,
+      isDeleted: !!row.is_deleted,
+    }));
+
+    return {
+      changes,
+      nextCursor: buildNextCursor(
+        cursor,
+        rows.map((row) => row.updated_at),
+      ),
+    };
   },
 
   async validateProductCount(): Promise<{
@@ -213,7 +321,11 @@ export const productService = {
 
     const { error } = await client
       .from("products")
-      .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+      .update({
+        is_deleted: true,
+        deleted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", id);
 
     if (error) throw error;

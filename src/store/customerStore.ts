@@ -1,11 +1,44 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {
+  advanceSyncCursor,
+  clearSyncCursor,
+  getSyncCursor,
+  isFullSnapshotStale,
+  setSyncCursor,
+  seedSyncCursorFromTimestamps,
+} from '../lib/syncMetadata';
+import { shouldResetDeltaCursorAfterError } from '../lib/deltaSync';
 import { Customer } from '../types';
 import { generateId, getCurrentISODate } from '../utils/formatters';
 import { syncManager } from '../lib/syncManager';
-import { customerService } from '../services/customerService';
+import { customerService, CustomerDeltaChange } from '../services/customerService';
 import { supabase } from '../lib/supabase';
 import { syncQueue } from '../lib/syncQueue';
+type CustomerLoadKind = 'full' | 'delta';
+const MAX_FULL_SNAPSHOT_AGE_MS = 24 * 60 * 60 * 1000;
+let customerLoadInFlight: Promise<void> | null = null;
+let customerLoadKind: CustomerLoadKind | null = null;
+let queuedCustomerFullReload = false;
+
+async function runCustomerLoad(
+  kind: CustomerLoadKind,
+  task: () => Promise<void>,
+): Promise<void> {
+  if (customerLoadInFlight) {
+    await customerLoadInFlight;
+    return;
+  }
+
+  customerLoadKind = kind;
+  customerLoadInFlight = task();
+  try {
+    await customerLoadInFlight;
+  } finally {
+    customerLoadInFlight = null;
+    customerLoadKind = null;
+  }
+}
 
 interface CustomerStore {
   customers: Customer[];
@@ -25,6 +58,7 @@ interface CustomerStore {
 
   // Sync actions
   loadFromSupabase: () => Promise<void>;
+  loadChangesFromSupabase: () => Promise<void>;
   handleRealtimeUpdate: (customer: any) => void;
   handleRealtimeDelete: (customer: any) => void;
 
@@ -143,18 +177,80 @@ export const useCustomerStore = create<CustomerStore>()(
 
       loadFromSupabase: async () => {
         if (!supabase) return;
-
-        set({ isLoading: true });
-        try {
-          const customers = await customerService.getAll();
-          const local = get().customers;
-          const merged = mergeCustomers(local, customers);
-
-          set({ customers: merged, lastSync: new Date(), isLoading: false });
-        } catch (error) {
-          console.error('Failed to load customers from Supabase:', error);
-          set({ isLoading: false });
+        if (customerLoadInFlight) {
+          if (customerLoadKind === 'delta') {
+            queuedCustomerFullReload = true;
+          }
+          await customerLoadInFlight;
+          if (queuedCustomerFullReload) {
+            queuedCustomerFullReload = false;
+            await get().loadFromSupabase();
+          }
+          return;
         }
+
+        await runCustomerLoad('full', async () => {
+          set({ isLoading: true });
+          try {
+            const customers = await customerService.getAll();
+            seedSyncCursorFromTimestamps(
+              'customers',
+              customers.map((customer) => customer.updatedAt),
+            );
+            const local = get().customers;
+            const merged = mergeCustomers(local, customers);
+
+            set({ customers: merged, lastSync: new Date(), isLoading: false });
+          } catch (error) {
+            console.error('Failed to load customers from Supabase:', error);
+            set({ isLoading: false });
+          }
+        });
+      },
+
+      loadChangesFromSupabase: async () => {
+        if (!supabase) return;
+        if (customerLoadInFlight) {
+          await customerLoadInFlight;
+          return;
+        }
+
+        const cursor = getSyncCursor('customers');
+        if (!cursor.lastUpdatedAt) {
+          await get().loadFromSupabase();
+          return;
+        }
+        if (isFullSnapshotStale(cursor, MAX_FULL_SNAPSHOT_AGE_MS)) {
+          await get().loadFromSupabase();
+          return;
+        }
+
+        await runCustomerLoad('delta', async () => {
+          set({ isLoading: true });
+          try {
+            const result = await customerService.getChangesSince(cursor);
+
+            if (result.changes.length > 0) {
+              set((state) => ({
+                customers: applyCustomerDeltaChanges(state.customers, result.changes),
+                lastSync: new Date(),
+                isLoading: false,
+              }));
+            } else {
+              set({ lastSync: new Date(), isLoading: false });
+            }
+
+            setSyncCursor('customers', result.nextCursor);
+          } catch (error) {
+            console.error('Failed to load customer delta from Supabase:', error);
+            if (shouldResetDeltaCursorAfterError(error)) {
+              clearSyncCursor('customers');
+            } else {
+              console.warn('[CustomerStore] Keeping sync cursor after transient delta error.');
+            }
+            set({ isLoading: false });
+          }
+        });
       },
 
       handleRealtimeUpdate: (dbCustomer) => {
@@ -162,6 +258,9 @@ export const useCustomerStore = create<CustomerStore>()(
           set((state) => ({
             customers: state.customers.filter((c) => c.id !== dbCustomer.id),
           }));
+          if (dbCustomer.updated_at) {
+            advanceSyncCursor('customers', dbCustomer.updated_at);
+          }
           return;
         }
         const converted = convertDbCustomer(dbCustomer);
@@ -173,11 +272,14 @@ export const useCustomerStore = create<CustomerStore>()(
               ? state.customers.map(c => c.id === converted.id ? converted : c)
               : [...state.customers, converted],
           }));
+          if (dbCustomer.updated_at) {
+            advanceSyncCursor('customers', dbCustomer.updated_at);
+          }
         }
       },
 
       handleRealtimeDelete: (dbCustomer) => {
-        if (dbCustomer.is_deleted) {
+        if (dbCustomer?.id) {
           set((state) => ({
             customers: state.customers.filter(c => c.id !== dbCustomer.id),
           }));
@@ -271,16 +373,47 @@ function mergeCustomers(local: Customer[], remote: Customer[]): Customer[] {
 
   // Remove local-only records that aren't pending in the sync queue
   // These are ghost records from localStorage that were deleted on the server
-  const pendingIds = new Set(
-    syncQueue.getAll()
+  const pendingIds = new Set([
+    ...syncQueue.getAll()
       .filter((op: any) => op.type === 'customers' && (op.action === 'create' || op.action === 'update'))
-      .map((op: any) => op.data?.id)
-      .filter(Boolean)
-  );
+      .map((op: any) => op.data?.id),
+    ...syncQueue.getDeadLetter()
+      .filter((op: any) => op.type === 'customers' && (op.action === 'create' || op.action === 'update'))
+      .map((op: any) => op.data?.id),
+  ].filter(Boolean));
 
   for (const [id] of merged) {
     if (!remoteMap.has(id) && !pendingIds.has(id)) {
       merged.delete(id);
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+function applyCustomerDeltaChanges(
+  current: Customer[],
+  changes: CustomerDeltaChange[],
+): Customer[] {
+  const merged = new Map(current.map((customer) => [customer.id, customer]));
+
+  for (const change of changes) {
+    if (change.isDeleted) {
+      merged.delete(change.id);
+      continue;
+    }
+
+    const local = merged.get(change.id);
+    if (!local) {
+      merged.set(change.id, change.customer);
+      continue;
+    }
+
+    const localTime = new Date(local.updatedAt).getTime();
+    const remoteTime = new Date(change.updatedAt).getTime();
+
+    if (!Number.isFinite(localTime) || remoteTime > localTime) {
+      merged.set(change.id, change.customer);
     }
   }
 

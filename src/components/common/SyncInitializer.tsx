@@ -4,6 +4,7 @@ import { useProductStore } from '../../store/productStore';
 import { useCustomerStore } from '../../store/customerStore';
 import { useTransactionStore } from '../../store/transactionStore';
 import { useRealtimeProducts, useRealtimeCustomers, useRealtimeTransactions } from '../../hooks/useRealtimeSync';
+import { connectionStatus } from '../../lib/connectionStatus';
 import { syncManager } from '../../lib/syncManager';
 
 /**
@@ -21,16 +22,18 @@ import { syncManager } from '../../lib/syncManager';
  * incremental handler (handleRealtimeUpdate / handleRealtimeDelete), which
  * merges just that one record into local state — no full reload needed.
  *
- * Full reloads are still triggered for:
+ * Recovery reloads are still triggered for:
  *   - Initial mount (forceReplace = true)
- *   - App foreground return (visibilitychange)
- *   - Reconnect after offline (connectionStatus subscriber in syncManager)
+ *   - App foreground return (delta catch-up for products/customers + full transactions reload)
+ *   - Reconnect after offline (queue flush in syncManager + catch-up here)
  *   - After Excel import
  */
 export function SyncInitializer() {
   const { isAuthenticated, isOfflineMode } = useAuthStore();
   const loadProducts = useProductStore((state) => state.loadFromSupabase);
+  const loadProductChanges = useProductStore((state) => state.loadChangesFromSupabase);
   const loadCustomers = useCustomerStore((state) => state.loadFromSupabase);
+  const loadCustomerChanges = useCustomerStore((state) => state.loadChangesFromSupabase);
   const loadTransactions = useTransactionStore((state) => state.loadFromSupabase);
 
   // Incremental realtime handlers — update/delete a single record in local state
@@ -76,8 +79,9 @@ export function SyncInitializer() {
     }
   }, [isAuthenticated, isOfflineMode, loadProducts, loadCustomers, loadTransactions]);
 
-  // When app returns from background, flush pending queue then reload all data
-  // This ensures changes from other devices are picked up immediately
+  // When app returns from background or reconnects, flush pending queue then
+  // catch up products/customers via delta sync. Transactions stay on full reload
+  // until they have a stable updated_at watermark in the DB.
   useEffect(() => {
     let lastForegroundRunAt = 0;
     const triggerForegroundSync = (source: string) => {
@@ -90,16 +94,22 @@ export function SyncInitializer() {
 
       // Delay 500 ms so connectionStatus.forceCheck() can finish before flush attempt.
       setTimeout(() => {
-        console.log(`[Sync] Foreground trigger (${source}), flushing queue and reloading...`);
+        console.log(`[Sync] Foreground trigger (${source}), flushing queue and running delta catch-up...`);
         console.log('[Sync] Status before foreground flush:', syncManager.getStatus());
         syncManager.syncPendingOperations().then(() => {
           console.log('[Sync] Status after foreground flush:', syncManager.getStatus());
           const { pendingCount } = syncManager.getStatus();
           if (pendingCount > 0) {
-            console.log('[Sync] Foreground reload deferred because queue still has pending operations');
+            console.log('[Sync] Foreground catch-up deferred because queue still has pending operations');
             return;
           }
-          return Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
+          return Promise.all([
+            loadProductChanges(),
+            loadCustomerChanges(),
+            loadTransactions(),
+          ]);
+        }).catch((error) => {
+          console.error(`[Sync] Foreground catch-up failed (${source}):`, error);
         });
       }, 500);
     };
@@ -118,6 +128,24 @@ export function SyncInitializer() {
       triggerForegroundSync('pageshow');
     };
 
+    let hasSeenConnectionStatus = false;
+    let wasConnectionReady = false;
+    const unsubscribeConnection = connectionStatus.subscribe((status) => {
+      const isConnectionReady = status.isOnline && status.isSupabaseConnected;
+
+      if (!hasSeenConnectionStatus) {
+        hasSeenConnectionStatus = true;
+        wasConnectionReady = isConnectionReady;
+        return;
+      }
+
+      if (!wasConnectionReady && isConnectionReady) {
+        triggerForegroundSync('reconnect');
+      }
+
+      wasConnectionReady = isConnectionReady;
+    });
+
     // Bug 2: pagehide fires on iOS when the user swipes the PWA closed from the
     // app switcher (visibilitychange is not reliable in that case). This is a
     // best-effort flush — iOS may kill the process before it completes, but the
@@ -134,12 +162,19 @@ export function SyncInitializer() {
     window.addEventListener('pageshow', handlePageShow);
     window.addEventListener('pagehide', handlePageHide);
     return () => {
+      unsubscribeConnection();
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('pageshow', handlePageShow);
       window.removeEventListener('pagehide', handlePageHide);
     };
-  }, [isAuthenticated, isOfflineMode, loadProducts, loadCustomers, loadTransactions]);
+  }, [
+    isAuthenticated,
+    isOfflineMode,
+    loadProductChanges,
+    loadCustomerChanges,
+    loadTransactions,
+  ]);
 
   // Route realtime events directly to incremental handlers — no full reload, no debounce.
   // useRealtimeSync only subscribes when isAuthenticated && !isOfflineMode.

@@ -7,7 +7,7 @@ import { logSyncIncident } from './syncIncidentLogger';
  */
 class ConnectionStatusManager {
   private readonly DEBUG_LOGS_ENABLED = true;
-  private readonly CONNECTIVITY_TIMEOUT_MS = 5_000;
+  private readonly CONNECTIVITY_TIMEOUT_MS = 10_000;
   private readonly SESSION_REFRESH_RETRY_WINDOW_MS = 120_000;
   private listeners: Set<(status: ConnectionStatus) => void> = new Set();
   private currentStatus: ConnectionStatus = {

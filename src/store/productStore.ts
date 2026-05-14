@@ -1,5 +1,13 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import {
+  advanceSyncCursor,
+  clearSyncCursor,
+  getSyncCursor,
+  isFullSnapshotStale,
+  setSyncCursor,
+  seedSyncCursorFromTimestamps,
+} from "../lib/syncMetadata";
 import { Product, CategoryCode, ProductStatus } from "../types";
 import {
   generateId,
@@ -7,7 +15,8 @@ import {
   getCurrentISODate,
 } from "../utils/formatters";
 import { syncManager } from "../lib/syncManager";
-import { productService } from "../services/productService";
+import { shouldResetDeltaCursorAfterError } from "../lib/deltaSync";
+import { productService, ProductDeltaChange } from "../services/productService";
 import { supabase, getSupabaseClient } from "../lib/supabase";
 import { parseUPS } from "../utils/upsParser";
 import { generateBarcode, generateLegacyBarcode, parseBarcode } from "../utils/barcodeGenerator";
@@ -104,6 +113,7 @@ interface ProductStore {
 
   // Sync actions
   loadFromSupabase: (forceReplace?: boolean) => Promise<void>;
+  loadChangesFromSupabase: () => Promise<void>;
   handleRealtimeUpdate: (product: any) => void;
   handleRealtimeDelete: (product: any) => void;
 
@@ -139,6 +149,35 @@ const defaultFilters: ProductFilters = {
 // Persisting the full product list can exceed mobile localStorage quota and block the UI thread.
 // Keep a lightweight cache and rely on Supabase as source of truth on startup.
 const PERSIST_PRODUCT_LIMIT = 1500;
+const MAX_FULL_SNAPSHOT_AGE_MS = 24 * 60 * 60 * 1000;
+type ProductLoadKind = "full" | "delta";
+let productLoadInFlight: Promise<void> | null = null;
+let productLoadKind: ProductLoadKind | null = null;
+let productLoadForceReplace = false;
+let queuedProductFullReload = false;
+let queuedProductFullReloadForceReplace = false;
+
+async function runProductLoad(
+  kind: ProductLoadKind,
+  task: () => Promise<void>,
+  options?: { forceReplace?: boolean },
+): Promise<void> {
+  if (productLoadInFlight) {
+    await productLoadInFlight;
+    return;
+  }
+
+  productLoadKind = kind;
+  productLoadForceReplace = !!options?.forceReplace;
+  productLoadInFlight = task();
+  try {
+    await productLoadInFlight;
+  } finally {
+    productLoadInFlight = null;
+    productLoadKind = null;
+    productLoadForceReplace = false;
+  }
+}
 
 export const useProductStore = create<ProductStore>()(
   persist(
@@ -1003,23 +1042,97 @@ export const useProductStore = create<ProductStore>()(
       loadFromSupabase: async (forceReplace = false) => {
         if (!supabase) return;
 
-        set({ isLoading: true });
-        try {
-          const products = await productService.getAll();
+        if (productLoadInFlight) {
+          const shouldQueueFullReload =
+            productLoadKind === "delta" ||
+            (forceReplace && !productLoadForceReplace);
 
-          if (forceReplace) {
-            // Skip merge - use Supabase data directly (after import/sync)
-            set({ products, lastSync: new Date(), isLoading: false });
-          } else {
-            // Normal merge with local products using last-write-wins
-            const localProducts = get().products;
-            const merged = mergeProducts(localProducts, products);
-            set({ products: merged, lastSync: new Date(), isLoading: false });
+          if (shouldQueueFullReload) {
+            queuedProductFullReload = true;
+            // If any waiter asks for forceReplace, preserve that stronger intent
+            // for the single queued follow-up full reload.
+            queuedProductFullReloadForceReplace =
+              queuedProductFullReloadForceReplace || forceReplace;
           }
-        } catch (error) {
-          console.error("Failed to load products from Supabase:", error);
-          set({ isLoading: false });
+          await productLoadInFlight;
+
+          if (queuedProductFullReload) {
+            const queuedForceReplace = queuedProductFullReloadForceReplace;
+            queuedProductFullReload = false;
+            queuedProductFullReloadForceReplace = false;
+            await get().loadFromSupabase(queuedForceReplace);
+          }
+          return;
         }
+
+        await runProductLoad("full", async () => {
+          set({ isLoading: true });
+          try {
+            const products = await productService.getAll();
+            seedSyncCursorFromTimestamps(
+              "products",
+              products.map((product) => product.updatedAt),
+            );
+
+            if (forceReplace) {
+              // Skip merge - use Supabase data directly (after import/sync)
+              set({ products, lastSync: new Date(), isLoading: false });
+            } else {
+              // Normal merge with local products using last-write-wins
+              const localProducts = get().products;
+              const merged = mergeProducts(localProducts, products);
+              set({ products: merged, lastSync: new Date(), isLoading: false });
+            }
+          } catch (error) {
+            console.error("Failed to load products from Supabase:", error);
+            set({ isLoading: false });
+          }
+        }, { forceReplace });
+      },
+
+      loadChangesFromSupabase: async () => {
+        if (!supabase) return;
+        if (productLoadInFlight) {
+          await productLoadInFlight;
+          return;
+        }
+
+        const cursor = getSyncCursor("products");
+        if (!cursor.lastUpdatedAt) {
+          await get().loadFromSupabase();
+          return;
+        }
+        if (isFullSnapshotStale(cursor, MAX_FULL_SNAPSHOT_AGE_MS)) {
+          await get().loadFromSupabase(true);
+          return;
+        }
+
+        await runProductLoad("delta", async () => {
+          set({ isLoading: true });
+          try {
+            const result = await productService.getChangesSince(cursor);
+
+            if (result.changes.length > 0) {
+              set((state) => ({
+                products: applyProductDeltaChanges(state.products, result.changes),
+                lastSync: new Date(),
+                isLoading: false,
+              }));
+            } else {
+              set({ lastSync: new Date(), isLoading: false });
+            }
+
+            setSyncCursor("products", result.nextCursor);
+          } catch (error) {
+            console.error("Failed to load product delta from Supabase:", error);
+            if (shouldResetDeltaCursorAfterError(error)) {
+              clearSyncCursor("products");
+            } else {
+              console.warn("[ProductStore] Keeping sync cursor after transient delta error.");
+            }
+            set({ isLoading: false });
+          }
+        });
       },
 
       handleRealtimeUpdate: (dbProduct) => {
@@ -1028,6 +1141,9 @@ export const useProductStore = create<ProductStore>()(
           set((state) => ({
             products: state.products.filter((p) => p.id !== dbProduct.id),
           }));
+          if (dbProduct.updated_at) {
+            advanceSyncCursor("products", dbProduct.updated_at);
+          }
           return;
         }
         const converted = convertDbProduct(dbProduct);
@@ -1045,11 +1161,14 @@ export const useProductStore = create<ProductStore>()(
                 )
               : [...state.products, converted],
           }));
+          if (dbProduct.updated_at) {
+            advanceSyncCursor("products", dbProduct.updated_at);
+          }
         }
       },
 
       handleRealtimeDelete: (dbProduct) => {
-        if (dbProduct.is_deleted) {
+        if (dbProduct?.id) {
           set((state) => ({
             products: state.products.filter((p) => p.id !== dbProduct.id),
           }));
@@ -1383,6 +1502,35 @@ function mergeProducts(local: Product[], remote: Product[]): Product[] {
   for (const [id] of merged) {
     if (!remoteMap.has(id) && !pendingIds.has(id)) {
       merged.delete(id);
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+function applyProductDeltaChanges(
+  current: Product[],
+  changes: ProductDeltaChange[],
+): Product[] {
+  const merged = new Map(current.map((product) => [product.id, product]));
+
+  for (const change of changes) {
+    if (change.isDeleted) {
+      merged.delete(change.id);
+      continue;
+    }
+
+    const local = merged.get(change.id);
+    if (!local) {
+      merged.set(change.id, change.product);
+      continue;
+    }
+
+    const localTime = new Date(local.updatedAt).getTime();
+    const remoteTime = new Date(change.updatedAt).getTime();
+
+    if (!Number.isFinite(localTime) || remoteTime > localTime) {
+      merged.set(change.id, change.product);
     }
   }
 

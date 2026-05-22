@@ -19,6 +19,9 @@ import {
   NumberInputStepper,
   NumberIncrementStepper,
   NumberDecrementStepper,
+  Box,
+  HStack,
+  Text,
 } from "@chakra-ui/react";
 import { useForm, Controller } from "react-hook-form";
 import { useEffect, useRef } from "react";
@@ -31,6 +34,7 @@ import {
 } from "../../constants/colors";
 import { CurrencyInput, AutocompleteSelect } from "../common";
 import { es } from "../../i18n/es";
+import { getReviewQty } from "../../utils/productHelpers";
 
 interface ProductFormData {
   name: string;
@@ -62,6 +66,10 @@ export function ProductForm({
   initialUpsBatch,
 }: ProductFormProps) {
   const isEditing = !!product;
+  const reviewQty = product ? getReviewQty(product) : 0;
+  const otherQty = product
+    ? product.donatedQty + product.lostQty + product.expiredQty
+    : 0;
 
   const addAnotherRef = useRef(false);
 
@@ -70,6 +78,7 @@ export function ProductForm({
     control,
     handleSubmit,
     reset,
+    watch,
     formState: { errors },
   } = useForm<ProductFormData>({
     defaultValues: {
@@ -84,13 +93,14 @@ export function ProductForm({
       description: "",
     },
   });
+  const watchedQuantity = watch("quantity");
 
   useEffect(() => {
     if (product) {
       reset({
         name: product.name,
         upsBatch: product.upsBatch,
-        quantity: product.quantity,
+        quantity: product.availableQty,
         unitPrice: product.unitPrice,
         category: product.category,
         brand: product.brand || "",
@@ -233,7 +243,9 @@ export function ProductForm({
               {/* Quantity and Price */}
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} w="full">
                 <FormControl isInvalid={!!errors.quantity} isRequired>
-                  <FormLabel>{es.products.quantity}</FormLabel>
+                  <FormLabel>
+                    {isEditing ? es.products.availableStock : es.products.initialQuantity}
+                  </FormLabel>
                   <Controller
                     name="quantity"
                     control={control}
@@ -258,6 +270,53 @@ export function ProductForm({
                   <FormErrorMessage>
                     {errors.quantity?.message}
                   </FormErrorMessage>
+                  {isEditing && product && (
+                    <Box
+                      mt={3}
+                      p={3}
+                      bg="gray.50"
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="gray.100"
+                    >
+                      <HStack spacing={4} flexWrap="wrap" color="gray.600" fontSize="sm">
+                        <Text>
+                          <Text as="span" fontWeight="semibold" color="gray.700">
+                            {es.products.currentTotal}:
+                          </Text>{" "}
+                          {product.quantity}
+                        </Text>
+                        <Text>
+                          <Text as="span" fontWeight="semibold" color="gray.700">
+                            {es.products.availableTotal}:
+                          </Text>{" "}
+                          {watchedQuantity ?? product.availableQty}
+                        </Text>
+                        <Text>
+                          <Text as="span" fontWeight="semibold" color="gray.700">
+                            {es.products.soldQuantity}:
+                          </Text>{" "}
+                          {product.soldQty}
+                        </Text>
+                        {reviewQty > 0 && (
+                          <Text>
+                            <Text as="span" fontWeight="semibold" color="gray.700">
+                              {es.products.reviewQuantity}:
+                            </Text>{" "}
+                            {reviewQty}
+                          </Text>
+                        )}
+                        {otherQty > 0 && (
+                          <Text>
+                            <Text as="span" fontWeight="semibold" color="gray.700">
+                              {es.products.otherQuantity}:
+                            </Text>{" "}
+                            {otherQty}
+                          </Text>
+                        )}
+                      </HStack>
+                    </Box>
+                  )}
                 </FormControl>
 
                 <FormControl isInvalid={!!errors.unitPrice} isRequired>

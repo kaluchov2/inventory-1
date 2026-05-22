@@ -1392,14 +1392,20 @@ class SyncManager {
    * Force-reset the sync lock and immediately re-attempt sync.
    * Use when sync appears stuck (e.g. a fetch hung indefinitely).
    */
-  public forceSync() {
+  public async forceSync() {
     this.logDebug("forceSync requested", {
       pendingCount: syncQueue.size(),
       connection: this.getConnectionSnapshot(),
     });
     this.isSyncing = false;
     this.syncStartTime = null;
-    this.syncPendingOperations();
+    this.updateStatus({
+      isSyncing: false,
+      pendingCount: syncQueue.size(),
+      deadLetterCount: syncQueue.getDeadLetterCount(),
+      error: null,
+    });
+    await this.syncPendingOperations();
   }
 
   /**

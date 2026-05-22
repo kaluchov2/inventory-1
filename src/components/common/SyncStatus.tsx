@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Icon, Text, Spinner, Badge, Tooltip } from '@chakra-ui/react';
 import { FiCloud, FiCloudOff, FiWifiOff, FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
 import { syncManager, SyncStatus as SyncStatusType } from '../../lib/syncManager';
 import { connectionStatus, ConnectionStatus } from '../../lib/connectionStatus';
 import { useAuthStore } from '../../store/authStore';
+import { useProductStore } from '../../store/productStore';
+import { useCustomerStore } from '../../store/customerStore';
+import { useTransactionStore } from '../../store/transactionStore';
 
 /**
  * SyncStatus Component
@@ -13,6 +16,10 @@ export function SyncStatus() {
   const { isOfflineMode } = useAuthStore();
   const [syncStatus, setSyncStatus] = useState<SyncStatusType>(syncManager.getStatus());
   const [connStatus, setConnStatus] = useState<ConnectionStatus>(connectionStatus.getStatus());
+  const [isManuallyRecovering, setIsManuallyRecovering] = useState(false);
+  const loadProductChanges = useProductStore((state) => state.loadChangesFromSupabase);
+  const loadCustomerChanges = useCustomerStore((state) => state.loadChangesFromSupabase);
+  const loadTransactions = useTransactionStore((state) => state.loadFromSupabase);
 
   useEffect(() => {
     const unsubSync = syncManager.subscribe(setSyncStatus);
@@ -23,6 +30,36 @@ export function SyncStatus() {
       unsubConn();
     };
   }, []);
+
+  const handlePendingSync = useCallback(async () => {
+    if (isOfflineMode || isManuallyRecovering) return;
+
+    setIsManuallyRecovering(true);
+    try {
+      await syncManager.forceSync();
+
+      const status = syncManager.getStatus();
+      if (status.pendingCount > 0 || status.deadLetterCount > 0) {
+        return;
+      }
+
+      await Promise.all([
+        loadProductChanges(),
+        loadCustomerChanges(),
+        loadTransactions(),
+      ]);
+    } catch (error) {
+      console.error('[SyncStatus] Manual pending sync recovery failed:', error);
+    } finally {
+      setIsManuallyRecovering(false);
+    }
+  }, [
+    isManuallyRecovering,
+    isOfflineMode,
+    loadCustomerChanges,
+    loadProductChanges,
+    loadTransactions,
+  ]);
 
   if (isOfflineMode) {
     return (
@@ -119,10 +156,16 @@ export function SyncStatus() {
           px={3}
           py={1}
           cursor="pointer"
-          onClick={() => syncManager.forceSync()}
+          onClick={() => {
+            void handlePendingSync();
+          }}
         >
-          <Icon as={FiCloud} />
-          <Text fontSize="sm">{syncStatus.pendingCount} pendiente(s)</Text>
+          {isManuallyRecovering ? <Spinner size="xs" /> : <Icon as={FiCloud} />}
+          <Text fontSize="sm">
+            {isManuallyRecovering
+              ? 'Sincronizando...'
+              : `${syncStatus.pendingCount} pendiente(s)`}
+          </Text>
         </Badge>
       </Tooltip>
     );

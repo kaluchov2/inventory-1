@@ -1,4 +1,4 @@
--- Hotfix: normalize unregistered-line unit_price keying (400 vs 400.00) in refund-from-edit RPC.
+-- Hotfix: resolve ambiguous refund_total column reference in refund-from-edit RPC.
 -- Reverts inventory for removed quantities and creates a linked return transaction atomically.
 
 CREATE OR REPLACE FUNCTION refund_sale_transaction_from_edit(edit_payload jsonb)

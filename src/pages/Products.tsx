@@ -168,7 +168,7 @@ function ProductCard({
                 Resolver
               </MenuItem>
             )}
-            {product.soldQty > 0 && paymentStatus?.status === 'paid' && onRefund && (
+            {viewMode === 'sold' && product.soldQty > 0 && paymentStatus?.status === 'paid' && onRefund && (
               <MenuItem icon={<Icon as={FiRotateCcw} />} color="orange.500" onClick={onRefund}>
                 Devolucion
               </MenuItem>
@@ -508,14 +508,29 @@ export function Products() {
     setIsLoading(true);
     try {
       if (selectedProduct) {
-        // Preserve status and keep qty accounting consistent so the product
-        // never accidentally lands in "review" state after a simple price/name edit.
-        const quantityDelta = (data.quantity ?? selectedProduct.quantity) - selectedProduct.quantity;
-        const newAvailableQty = Math.max(0, (selectedProduct.availableQty ?? 0) + quantityDelta);
+        const currentReviewQty = getReviewQty(selectedProduct);
+        const newAvailableQty = Math.max(
+          0,
+          data.quantity ?? selectedProduct.availableQty ?? 0,
+        );
+        const newQuantity =
+          newAvailableQty +
+          selectedProduct.soldQty +
+          selectedProduct.donatedQty +
+          selectedProduct.lostQty +
+          selectedProduct.expiredQty +
+          currentReviewQty;
+        const updatedProduct = {
+          ...selectedProduct,
+          ...data,
+          quantity: newQuantity,
+          availableQty: newAvailableQty,
+        };
         updateProduct(selectedProduct.id, {
           ...data,
-          status: selectedProduct.status,
+          quantity: newQuantity,
           availableQty: newAvailableQty,
+          status: deriveStatus(updatedProduct),
         });
         toast({
           title: es.success.productUpdated,
@@ -1123,7 +1138,7 @@ export function Products() {
                 onEdit={() => handleEditProduct(product)}
                 onDelete={() => handleDeleteClick(product)}
                 onResolve={() => handleResolveClick(product)}
-                onRefund={() => handleRefundClick(product)}
+                onRefund={viewMode === 'sold' ? () => handleRefundClick(product) : undefined}
                 viewMode={viewMode}
                 paymentStatus={viewMode === 'sold' ? getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap) : undefined}
               />
@@ -1255,7 +1270,7 @@ export function Products() {
                                   Resolver
                                 </MenuItem>
                               )}
-                              {product.soldQty > 0 && (() => {
+                              {viewMode === 'sold' && product.soldQty > 0 && (() => {
                                 const ps = getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap);
                                 return ps.status === 'paid';
                               })() && (

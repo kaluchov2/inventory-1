@@ -284,6 +284,7 @@ export type Database = {
         Row: {
           id: string;
           name: string;
+          reference: string | null;
           phone: string | null;
           email: string | null;
           balance: number;
@@ -298,6 +299,7 @@ export type Database = {
         Insert: {
           id: string;
           name: string;
+          reference?: string | null;
           phone?: string | null;
           email?: string | null;
           balance?: number;
@@ -312,6 +314,7 @@ export type Database = {
         Update: {
           id?: string;
           name?: string;
+          reference?: string | null;
           phone?: string | null;
           email?: string | null;
           balance?: number;

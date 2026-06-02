@@ -120,6 +120,7 @@ export interface Product {
 export interface Customer {
   id: string;
   name: string;                // Cliente
+  reference?: string;
   phone?: string;
   email?: string;
   balance: number;             // Outstanding amount owed

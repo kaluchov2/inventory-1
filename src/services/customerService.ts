@@ -202,7 +202,7 @@ export const customerService = {
       .from('customers')
       .select('*')
       .eq('is_deleted', false)
-      .or(`name.ilike.%${query}%,phone.ilike.%${query}%,email.ilike.%${query}%`)
+      .or(`name.ilike.%${query}%,reference.ilike.%${query}%,phone.ilike.%${query}%,email.ilike.%${query}%`)
       .limit(50);
 
     if (error) throw error;
@@ -215,6 +215,7 @@ function convertFromDbFormat(data: any): Customer {
   return {
     id: data.id,
     name: data.name,
+    reference: data.reference || undefined,
     phone: data.phone || undefined,
     email: data.email || undefined,
     balance: data.balance,
@@ -228,6 +229,7 @@ function convertToDbFormat(customer: Customer): any {
   return {
     id: customer.id,
     name: customer.name,
+    reference: customer.reference || null,
     phone: customer.phone || null,
     email: customer.email || null,
     balance: customer.balance,

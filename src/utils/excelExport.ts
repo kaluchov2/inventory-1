@@ -153,6 +153,7 @@ export function exportProductsByUps(products: Product[], filename?: string): voi
 export function exportCustomersToExcel(customers: Customer[]): void {
   const data = customers.map(c => ({
     'Nombre': c.name,
+    'Referencia': c.reference || '',
     'Teléfono': c.phone || '',
     'Correo': c.email || '',
     'Saldo Pendiente': c.balance,
@@ -166,6 +167,7 @@ export function exportCustomersToExcel(customers: Customer[]): void {
 
   worksheet['!cols'] = [
     { wch: 30 }, // Nombre
+    { wch: 30 }, // Referencia
     { wch: 15 }, // Teléfono
     { wch: 25 }, // Correo
     { wch: 15 }, // Saldo Pendiente
@@ -502,6 +504,7 @@ export function exportAllToExcel(
   // Customers sheet
   const customersData = customers.map(c => ({
     'Nombre': c.name,
+    'Referencia': c.reference || '',
     'Teléfono': c.phone || '',
     'Correo': c.email || '',
     'Saldo Pendiente': c.balance,

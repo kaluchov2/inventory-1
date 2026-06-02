@@ -294,6 +294,7 @@ export const useCustomerStore = create<CustomerStore>()(
         return customers.filter(
           (c) =>
             c.name.toLowerCase().includes(queryLower) ||
+            (c.reference && c.reference.toLowerCase().includes(queryLower)) ||
             (c.phone && c.phone.includes(queryLower)) ||
             (c.email && c.email.toLowerCase().includes(queryLower))
         );
@@ -340,6 +341,7 @@ function convertDbCustomer(dbCustomer: any): Customer {
   return {
     id: dbCustomer.id,
     name: dbCustomer.name,
+    reference: dbCustomer.reference || undefined,
     phone: dbCustomer.phone || undefined,
     email: dbCustomer.email || undefined,
     balance: dbCustomer.balance,

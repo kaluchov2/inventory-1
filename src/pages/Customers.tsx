@@ -295,6 +295,11 @@ export function Customers() {
                       />
                       <Text fontWeight="medium">{customer.name}</Text>
                     </HStack>
+                    {customer.reference && (
+                      <Text fontSize="sm" color="gray.500" ml={6}>
+                        {es.customers.reference}: {customer.reference}
+                      </Text>
+                    )}
                     {customer.email && (
                       <Text fontSize="sm" color="gray.500" ml={6}>
                         {customer.email}
@@ -406,6 +411,11 @@ export function Customers() {
                     </Td>
                     <Td>
                       <Text fontWeight="medium">{customer.name}</Text>
+                      {customer.reference && (
+                        <Text fontSize="sm" color="gray.500">
+                          {es.customers.reference}: {customer.reference}
+                        </Text>
+                      )}
                       {customer.email && (
                         <Text fontSize="sm" color="gray.500">
                           {customer.email}

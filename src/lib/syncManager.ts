@@ -1202,6 +1202,7 @@ class SyncManager {
       return {
         id: data.id,
         name: data.name,
+        reference: data.reference || null,
         phone: data.phone || null,
         email: data.email || null,
         balance: data.balance,

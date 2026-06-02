@@ -20,6 +20,7 @@ import { es } from '../../i18n/es';
 
 interface CustomerFormData {
   name: string;
+  reference: string;
   phone: string;
   email: string;
 }
@@ -49,6 +50,7 @@ export function CustomerForm({
   } = useForm<CustomerFormData>({
     defaultValues: {
       name: '',
+      reference: '',
       phone: '',
       email: '',
     },
@@ -58,12 +60,14 @@ export function CustomerForm({
     if (customer) {
       reset({
         name: customer.name,
+        reference: customer.reference || '',
         phone: customer.phone || '',
         email: customer.email || '',
       });
     } else {
       reset({
         name: '',
+        reference: '',
         phone: '',
         email: '',
       });
@@ -102,6 +106,14 @@ export function CustomerForm({
                   placeholder="Nombre completo del cliente"
                 />
                 <FormErrorMessage>{errors.name?.message}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl>
+                <FormLabel>{es.customers.reference}</FormLabel>
+                <Input
+                  {...register('reference')}
+                  placeholder="Ej: Familia Ramírez / vecina / recomendación"
+                />
               </FormControl>
 
               {/* Phone */}

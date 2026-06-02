@@ -100,6 +100,7 @@ function toDbCustomer(customer: Customer) {
   return {
     id: customer.id,
     name: customer.name,
+    reference: customer.reference || null,
     phone: customer.phone || null,
     email: customer.email || null,
     balance: customer.balance,

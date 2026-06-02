@@ -101,7 +101,7 @@ synced to Supabase.
 
 The interval is currently 10 seconds. It can be reduced to 5 seconds for even faster sync:
 
-```ts
+```
 // Line ~65 in syncManager.ts
 }, 5000); // flush every 5 seconds
 ```

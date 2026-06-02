@@ -133,6 +133,23 @@ export function QRGenerator() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUps, products]);
 
+  const selectedReprintProducts = useMemo(
+    () =>
+      Array.from(reprintSelections.entries()).flatMap(([productId, copies]) => {
+        const product = products.find((p) => p.id === productId && !!p.barcode);
+        return product ? [{ product, copies }] : [];
+      }),
+    [products, reprintSelections],
+  );
+
+  const selectedReprintUps = useMemo(
+    () =>
+      Array.from(
+        new Set(selectedReprintProducts.map(({ product }) => product.dropNumber)),
+      ),
+    [selectedReprintProducts],
+  );
+
   // Count of products in this UPS that have no barcode (for warning)
   const excludedCount = useMemo(() => {
     if (!selectedUps) return 0;
@@ -154,35 +171,37 @@ export function QRGenerator() {
     }
     // Reprint mode: expand selections into repeated entries
     const entries: Array<{ barcode: string; product?: Product }> = [];
-    for (const [productId, copies] of reprintSelections) {
-      const product = reprintProducts.find((p) => p.id === productId);
-      if (product?.barcode) {
-        for (let i = 0; i < copies; i++) {
-          entries.push({ barcode: product.barcode, product });
-        }
+    for (const { product, copies } of selectedReprintProducts) {
+      for (let i = 0; i < copies; i++) {
+        entries.push({ barcode: product.barcode!, product });
       }
     }
     return entries;
-  }, [mode, generatedCodes, productMap, reprintSelections, reprintProducts]);
+  }, [mode, generatedCodes, productMap, selectedReprintProducts]);
 
   const totalReprintLabels = useMemo(() => {
     let total = 0;
-    for (const copies of reprintSelections.values()) {
+    for (const { copies } of selectedReprintProducts) {
       total += copies;
     }
     return total;
-  }, [reprintSelections]);
+  }, [selectedReprintProducts]);
+
+  const reprintSelectionSummary = useMemo(() => {
+    if (selectedReprintUps.length === 1) {
+      return `Reimpresi\u00f3n - UPS ${selectedReprintUps[0]}, ${selectedReprintProducts.length} productos, ${totalReprintLabels} etiquetas`;
+    }
+    return `Reimpresi\u00f3n - ${selectedReprintUps.length} UPS, ${selectedReprintProducts.length} productos, ${totalReprintLabels} etiquetas`;
+  }, [selectedReprintProducts.length, selectedReprintUps, totalReprintLabels]);
 
   const handleModeChange = useCallback((newMode: Mode) => {
     setMode(newMode);
     setShowPreview(false);
-    setReprintSelections(new Map());
   }, []);
 
   const handleUpsChange = useCallback((val: string | number) => {
     setSelectedUps(val ? Number(val) : "");
     setShowPreview(false);
-    setReprintSelections(new Map());
     setFromInput("1");
     setToInput("40");
   }, []);
@@ -209,19 +228,21 @@ export function QRGenerator() {
   }, []);
 
   const selectAll = useCallback(() => {
-    const next = new Map<string, number>();
-    for (const p of reprintProducts) {
-      next.set(p.id, reprintSelections.get(p.id) ?? 1);
-    }
-    setReprintSelections(next);
-  }, [reprintProducts, reprintSelections]);
+    setReprintSelections((prev) => {
+      const next = new Map(prev);
+      for (const p of reprintProducts) {
+        next.set(p.id, prev.get(p.id) ?? 1);
+      }
+      return next;
+    });
+  }, [reprintProducts]);
 
-  const deselectAll = useCallback(() => {
+  const clearReprintSelections = useCallback(() => {
     setReprintSelections(new Map());
   }, []);
 
   const handleGeneratePreview = () => {
-    if (!selectedUps) {
+    if (mode === "generate" && !selectedUps) {
       toast({
         title: "Selecciona un UPS",
         description: "Debes seleccionar un número de UPS para generar códigos",
@@ -231,7 +252,7 @@ export function QRGenerator() {
       });
       return;
     }
-    if (mode === "reprint" && reprintSelections.size === 0) {
+    if (mode === "reprint" && selectedReprintProducts.length === 0) {
       toast({
         title: "Selecciona productos",
         description: "Debes seleccionar al menos un producto para reimprimir",
@@ -267,8 +288,15 @@ export function QRGenerator() {
 
     const headerText =
       mode === "reprint"
-        ? `Reimpresión - UPS ${selectedUps}, ${reprintSelections.size} productos, ${totalReprintLabels} etiquetas`
+        ? reprintSelectionSummary
         : `Del ${allBarcodes[0]} al ${allBarcodes[allBarcodes.length - 1]} (${allBarcodes.length} códigos)`;
+
+    const documentTitle =
+      mode === "reprint"
+        ? selectedReprintUps.length === 1
+          ? `C\u00f3digos QR - UPS ${selectedReprintUps[0]}`
+          : `C\u00f3digos QR - ${selectedReprintUps.length} UPS`
+        : `C\u00f3digos QR - UPS ${selectedUps}`;
 
     const thermalStyles = `
       @page {
@@ -400,7 +428,7 @@ export function QRGenerator() {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Códigos QR - UPS ${selectedUps}</title>
+          <title>${documentTitle}</title>
           <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
           <style>
             * {
@@ -413,7 +441,7 @@ export function QRGenerator() {
         </head>
         <body>
           <div class="header">
-            <h1>Códigos QR - UPS ${selectedUps}</h1>
+            <h1>${documentTitle}</h1>
             <p>${headerText}</p>
           </div>
           <div class="grid" id="qr-grid">
@@ -779,10 +807,10 @@ export function QRGenerator() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={deselectAll}
-                        isDisabled={reprintSelections.size === 0}
+                        onClick={clearReprintSelections}
+                        isDisabled={selectedReprintProducts.length === 0}
                       >
-                        Deseleccionar Todos
+                        Limpiar selección
                       </Button>
                     </HStack>
                     <HStack spacing={3}>
@@ -792,7 +820,7 @@ export function QRGenerator() {
                         </Text>
                       )}
                       <Badge colorScheme="purple" fontSize="sm" px={2} py={1}>
-                        {reprintSelections.size} productos, {totalReprintLabels}{" "}
+                        {selectedReprintProducts.length} productos, {totalReprintLabels}{" "}
                         etiquetas
                       </Badge>
                     </HStack>
@@ -894,8 +922,8 @@ export function QRGenerator() {
             size="lg"
             onClick={handleGeneratePreview}
             isDisabled={
-              !selectedUps ||
-              (mode === "reprint" && reprintSelections.size === 0)
+              (mode === "generate" && !selectedUps) ||
+              (mode === "reprint" && selectedReprintProducts.length === 0)
             }
           >
             {mode === "reprint"

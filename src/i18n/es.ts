@@ -8,6 +8,8 @@ export const es = {
     sales: "Ventas",
     scanner: "Escáner",
     qrGenerator: "Códigos QR",
+    satKeys: "SAT",
+    ventasSat: "Ventas SAT",
     transactions: "Transacciones",
     reports: "Reportes",
     settings: "Configuración",

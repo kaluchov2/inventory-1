@@ -23,7 +23,12 @@ import { useAuthStore } from '../store/authStore';
  * changes (e.g. login / logout / going offline).
  */
 
-type TableName = 'products' | 'customers' | 'transactions';
+type TableName =
+  | 'products'
+  | 'customers'
+  | 'transactions'
+  | 'sat_keys'
+  | 'sat_category_suggestions';
 
 interface RealtimeSyncOptions {
   table: TableName;
@@ -110,4 +115,12 @@ export function useRealtimeCustomers(callbacks: RealtimeCallbacks) {
 
 export function useRealtimeTransactions(callbacks: RealtimeCallbacks) {
   useRealtimeSync({ table: 'transactions', ...callbacks });
+}
+
+export function useRealtimeSatKeys(callbacks: RealtimeCallbacks) {
+  useRealtimeSync({ table: 'sat_keys', ...callbacks });
+}
+
+export function useRealtimeSatCategorySuggestions(callbacks: RealtimeCallbacks) {
+  useRealtimeSync({ table: 'sat_category_suggestions', ...callbacks });
 }

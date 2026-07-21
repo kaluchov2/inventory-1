@@ -67,6 +67,29 @@ export interface Staff {
 }
 
 // ============================================
+// SAT Key Interface
+// ============================================
+
+export interface SatKey {
+  id: string;
+  code: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SatCategorySuggestion {
+  id: string;
+  categoryCode: CategoryCode;
+  satKeyId: string;
+  priority: number;
+  isDefault: boolean;
+  sourceGroup?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================
 // V2 Product Interface
 // ============================================
 
@@ -89,6 +112,7 @@ export interface Product {
   unitPrice: number;           // Precio Unitario (MXN)
   originalPrice?: number;      // Original price before markdown
   category: CategoryCode;      // Categoría
+  satKeyId?: string;           // FK -> SatKey.id
   brand?: string;              // Marca
   color?: string;              // Color
   size?: string;               // Talla
@@ -139,6 +163,9 @@ export interface TransactionItem {
   quantity: number;            // Cantidad
   unitPrice: number;           // Precio Unitario
   totalPrice: number;          // Precio Total
+  satKeyId?: string;            // SAT key snapshot at sale time
+  satKeyCode?: string;
+  satKeyDescription?: string;
   upsBatch?: number;           // 0 for unregistered items (UPS 0)
   category?: CategoryCode;
   brand?: string;

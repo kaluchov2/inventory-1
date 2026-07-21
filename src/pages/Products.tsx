@@ -37,6 +37,11 @@ import {
   FormLabel,
   Spinner,
   Center,
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+  PopoverArrow,
+  PopoverBody,
 } from "@chakra-ui/react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
@@ -67,7 +72,9 @@ import { es } from "../i18n/es";
 import { useProductStore } from "../store/productStore";
 import { useTransactionStore, createSaleTransaction } from "../store/transactionStore";
 import { useCustomerStore } from "../store/customerStore";
+import { useSatKeyStore } from "../store/satKeyStore";
 import { getReviewQty, deriveStatus } from "../utils/productHelpers";
+import { getProductSatSnapshot } from "../utils/satKeyHelpers";
 
 // Helper function to get payment status for a product
 function getPaymentStatusForProduct(
@@ -105,6 +112,51 @@ function getPaymentStatusForProduct(
   return { status: 'pending', amount: relatedTransaction.total - originalPaid };
 }
 
+interface SatKeyDisplay {
+  code: string;
+  description: string;
+  colorScheme: "teal" | "gray" | "orange";
+  hasDetails: boolean;
+}
+
+function SatKeyBadge({ satKey }: { satKey: SatKeyDisplay }) {
+  const badge = (
+    <Badge
+      as={satKey.hasDetails ? "button" : "span"}
+      colorScheme={satKey.colorScheme}
+      fontSize="xs"
+      maxW="8.5rem"
+      whiteSpace="nowrap"
+      overflow="hidden"
+      textOverflow="ellipsis"
+      cursor={satKey.hasDetails ? "pointer" : "default"}
+      title={satKey.hasDetails ? "Click para ver descripcion SAT" : undefined}
+      _hover={satKey.hasDetails ? { opacity: 0.85 } : undefined}
+    >
+      {satKey.code}
+    </Badge>
+  );
+
+  if (!satKey.hasDetails) return badge;
+
+  return (
+    <Popover trigger="click" placement="top" closeOnBlur>
+      <PopoverTrigger>{badge}</PopoverTrigger>
+      <PopoverContent w="min(280px, calc(100vw - 32px))" boxShadow="lg">
+        <PopoverArrow />
+        <PopoverBody>
+          <Text fontWeight="semibold" color="gray.800">
+            {satKey.code}
+          </Text>
+          <Text mt={1} fontSize="sm" color="gray.600">
+            {satKey.description}
+          </Text>
+        </PopoverBody>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // Mobile Product Card Component
 function ProductCard({
   product,
@@ -114,6 +166,7 @@ function ProductCard({
   onRefund,
   viewMode,
   paymentStatus,
+  satKeyDisplay,
 }: {
   product: Product;
   onEdit: () => void;
@@ -122,6 +175,7 @@ function ProductCard({
   onRefund?: () => void;
   viewMode: 'available' | 'sold' | 'review' | 'other';
   paymentStatus?: { status: 'paid' | 'pending' | 'unknown'; amount: number };
+  satKeyDisplay: SatKeyDisplay;
 }) {
   const { customers } = useCustomerStore();
   const navigate = useNavigate();
@@ -146,6 +200,7 @@ function ProductCard({
             <Badge colorScheme="purple" fontSize="xs">
               {getCategoryLabel(product.category)}
             </Badge>
+            <SatKeyBadge satKey={satKeyDisplay} />
           </HStack>
           <Text fontWeight="bold" fontSize="md" noOfLines={2}>
             {product.name}
@@ -328,10 +383,55 @@ export function Products() {
     deleteProduct,
     getFilteredProducts,
   } = useProductStore();
+  const { satKeys } = useSatKeyStore();
 
   const { addTransaction, queueSaleSync, transactions, getEffectivePendingMap } = useTransactionStore();
   const { addPurchase } = useCustomerStore();
   const { customers } = useCustomerStore();
+  const satKeyMap = useMemo(
+    () => new Map(satKeys.map((satKey) => [satKey.id, satKey])),
+    [satKeys],
+  );
+  const getSatKeyDisplay = useCallback(
+    (product: Product): SatKeyDisplay => {
+      if (!product.satKeyId) {
+        return {
+          code: "Sin clave",
+          description: "Sin clave SAT",
+          colorScheme: "gray",
+          hasDetails: false,
+        };
+      }
+
+      const satKey = satKeyMap.get(product.satKeyId);
+      if (!satKey) {
+        return {
+          code: "No disponible",
+          description: "La clave SAT asignada ya no esta disponible.",
+          colorScheme: "orange",
+          hasDetails: true,
+        };
+      }
+
+      return {
+        code: satKey.code,
+        description: satKey.description,
+        colorScheme: "teal",
+        hasDetails: true,
+      };
+    },
+    [satKeyMap],
+  );
+
+  const getSatKeyLabel = useCallback(
+    (product: Product) => {
+      const satKey = getSatKeyDisplay(product);
+      return satKey.hasDetails
+        ? `${satKey.code} - ${satKey.description}`
+        : satKey.description;
+    },
+    [getSatKeyDisplay],
+  );
 
   const {
     isOpen: isFormOpen,
@@ -636,6 +736,7 @@ export function Products() {
             quantity: qty,
             unitPrice: effectiveUnitPrice,
             totalPrice: effectiveTotalPrice,
+            ...getProductSatSnapshot(product, satKeys),
             category: product.category,
             brand: product.brand,
             color: product.color,
@@ -1141,6 +1242,7 @@ export function Products() {
                 onRefund={viewMode === 'sold' ? () => handleRefundClick(product) : undefined}
                 viewMode={viewMode}
                 paymentStatus={viewMode === 'sold' ? getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap) : undefined}
+                satKeyDisplay={getSatKeyDisplay(product)}
               />
             ))}
           </VStack>
@@ -1154,6 +1256,7 @@ export function Products() {
                   <Th>UPS</Th>
                   <Th>{es.products.productName}</Th>
                   <Th>{es.products.category}</Th>
+                  <Th>Clave SAT</Th>
                   <Th>{es.products.brand}</Th>
                   <Th isNumeric>{es.products.quantity}</Th>
                   <Th isNumeric>{es.products.unitPrice}</Th>
@@ -1199,6 +1302,9 @@ export function Products() {
                         <Badge colorScheme="purple">
                           {getCategoryLabel(product.category)}
                         </Badge>
+                      </Td>
+                      <Td>
+                        <SatKeyBadge satKey={getSatKeyDisplay(product)} />
                       </Td>
                       <Td>{product.brand || "-"}</Td>
                       <Td isNumeric>
@@ -1297,7 +1403,7 @@ export function Products() {
                     {/* Expanded Row Details */}
                     {expandedRows.has(product.id) && (
                       <Tr key={`${product.id}-details`} bg="gray.50">
-                        <Td colSpan={viewMode === 'sold' ? 11 : 9} py={4}>
+                        <Td colSpan={viewMode === 'sold' ? 12 : 10} py={4}>
                           {viewMode === 'sold' ? (
                             <Box px={4}>
                               <SoldProductDetails product={product} />
@@ -1315,6 +1421,10 @@ export function Products() {
                               <Box>
                                 <Text fontSize="xs" color="gray.500" fontWeight="semibold">Precio Original</Text>
                                 <Text fontSize="sm">{product.originalPrice ? formatCurrency(product.originalPrice) : "-"}</Text>
+                              </Box>
+                              <Box>
+                                <Text fontSize="xs" color="gray.500" fontWeight="semibold">Clave SAT</Text>
+                                <Text fontSize="sm">{getSatKeyLabel(product)}</Text>
                               </Box>
                               <Box>
                                 <Text fontSize="xs" color="gray.500" fontWeight="semibold">Descripción</Text>

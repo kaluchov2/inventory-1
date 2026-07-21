@@ -548,6 +548,26 @@ class SyncManager {
               consecutiveErrors = 0; // Reset after removing failed operation
             } else {
               if (
+                operation.type === "sat_keys" &&
+                syncQueue.size() > 1
+              ) {
+                const movedToBack = syncQueue.moveToBack(operation.id);
+                this.logDebug(
+                  "Moved failed sat_keys operation to queue tail to avoid blocking later writes",
+                  {
+                    ...opSummary,
+                    movedToBack,
+                    queueSize: syncQueue.size(),
+                  },
+                );
+                if (movedToBack) {
+                  consecutiveErrors = 0;
+                  this.updateStatus({ pendingCount: syncQueue.size() });
+                  continue;
+                }
+              }
+
+              if (
                 isTimeoutError &&
                 operation.action === "record_sale" &&
                 syncQueue.size() > 1
@@ -743,6 +763,7 @@ class SyncManager {
       transactions: "transactions",
       drops: "drops",
       staff: "staff",
+      sat_keys: "sat_keys",
     };
 
     const table = tableMap[type];
@@ -828,6 +849,8 @@ class SyncManager {
         return this.syncDrop(action, data, signal);
       case "staff":
         return this.syncStaff(action, data, signal);
+      case "sat_keys":
+        return this.syncSatKey(action, data, signal);
       default:
         throw new Error(`Unknown sync type: ${type}`);
     }
@@ -1053,6 +1076,9 @@ class SyncManager {
             quantity: item.quantity,
             unit_price: item.unitPrice,
             total_price: item.totalPrice,
+            sat_key_id: item.satKeyId || null,
+            sat_key_code: item.satKeyCode || null,
+            sat_key_description: item.satKeyDescription || null,
             category: item.category,
             brand: item.brand,
             color: item.color,
@@ -1160,6 +1186,58 @@ class SyncManager {
     }
   }
 
+  private async syncSatKey(action: string, data: any, signal: AbortSignal) {
+    const client = getSupabaseClient();
+
+    const dbData = this.convertToDbFormat(data, "sat_key");
+
+    switch (action) {
+      case "create":
+      case "update":
+        const { data: existingSatKey, error: findError } = await client
+          .from("sat_keys")
+          .select("id")
+          .eq("code", dbData.code)
+          .eq("is_deleted", false)
+          .abortSignal(signal)
+          .maybeSingle();
+        if (findError) throw findError;
+
+        if (existingSatKey) {
+          const { error: updateError } = await client
+            .from("sat_keys")
+            .update(dbData)
+            .eq("id", existingSatKey.id)
+            .abortSignal(signal);
+          if (updateError) throw updateError;
+          break;
+        }
+
+        const { error: upsertError } = await client
+          .from("sat_keys")
+          .upsert(dbData, { onConflict: "id" })
+          .abortSignal(signal);
+        if (upsertError) throw upsertError;
+        break;
+
+      case "delete":
+        const { error: deleteError } = await client
+          .from("sat_keys")
+          .update({
+            is_deleted: true,
+            deleted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", data.id)
+          .abortSignal(signal);
+        if (deleteError) throw deleteError;
+        break;
+
+      default:
+        throw new Error(`Unknown action: ${action}`);
+    }
+  }
+
   private convertToDbFormat(data: any, type: string): any {
     if (type === "product") {
       return {
@@ -1178,6 +1256,7 @@ class SyncManager {
         unit_price: data.unitPrice,
         original_price: data.originalPrice || null,
         category: data.category,
+        sat_key_id: data.satKeyId || null,
         brand: data.brand || null,
         color: data.color || null,
         size: data.size || null,
@@ -1261,6 +1340,15 @@ class SyncManager {
         total_sales: data.totalSales || 0,
         total_amount: data.totalAmount || 0,
         notes: data.notes || null,
+        created_at: data.createdAt,
+        updated_at: data.updatedAt,
+        is_deleted: false,
+      };
+    } else if (type === "sat_key") {
+      return {
+        id: data.id,
+        code: data.code,
+        description: data.description,
         created_at: data.createdAt,
         updated_at: data.updatedAt,
         is_deleted: false,

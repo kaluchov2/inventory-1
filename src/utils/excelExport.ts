@@ -3,6 +3,7 @@ import { Product, Customer, Transaction, ProductStatus } from '../types';
 import { getCategoryLabel } from '../constants/categories';
 import { formatDate } from './formatters';
 import { deriveStatus } from './productHelpers';
+import { MonthlySatSalesRow, getPaymentMethodLabel } from './satSalesReport';
 
 const statusLabels: Record<ProductStatus, string> = {
   available: 'Disponible',
@@ -195,6 +196,8 @@ export function exportTransactionsToExcel(transactions: Transaction[]): void {
         'Marca': item.brand || '',
         'Color': item.color || '',
         'Talla': item.size || '',
+        'Clave SAT': item.satKeyCode || '',
+        'Descripcion SAT': item.satKeyDescription || '',
         'Precio Unitario': item.unitPrice,
         'Precio Total': item.totalPrice,
         'Descuento': t.discount,
@@ -202,10 +205,7 @@ export function exportTransactionsToExcel(transactions: Transaction[]): void {
         'Pagos en Efectivo': t.cashAmount,
         'Pagos Transferencia': t.transferAmount,
         'Pago Tarjeta': t.cardAmount,
-        'Método de Pago': t.paymentMethod === 'cash' ? 'Efectivo' :
-                         t.paymentMethod === 'transfer' ? 'Transferencia' :
-                         t.paymentMethod === 'card' ? 'Tarjeta' :
-                         t.paymentMethod === 'mixed' ? 'Mixto' : 'Crédito',
+        'Método de Pago': getPaymentMethodLabel(t.paymentMethod),
         'Tipo': t.type === 'sale' ? 'Venta' :
                 t.type === 'return' ? 'Devolución' :
                 t.type === 'installment_payment' ? 'Abono' : 'Ajuste',
@@ -231,6 +231,8 @@ export function exportTransactionsToExcel(transactions: Transaction[]): void {
     'Marca': '',
     'Color': '',
     'Talla': '',
+    'Clave SAT': '',
+    'Descripcion SAT': '',
     'Precio Unitario': '',
     'Precio Total': '',
     'Descuento': '',
@@ -257,6 +259,8 @@ export function exportTransactionsToExcel(transactions: Transaction[]): void {
     { wch: 15 }, // Marca
     { wch: 12 }, // Color
     { wch: 10 }, // Talla
+    { wch: 16 }, // Clave SAT
+    { wch: 28 }, // Descripcion SAT
     { wch: 15 }, // Precio Unitario
     { wch: 15 }, // Precio Total
     { wch: 12 }, // Descuento
@@ -271,6 +275,61 @@ export function exportTransactionsToExcel(transactions: Transaction[]): void {
 
   const date = new Date().toISOString().split('T')[0];
   XLSX.writeFile(workbook, `transacciones_${date}.xlsx`);
+}
+
+export function exportSatSalesToExcel(
+  rows: MonthlySatSalesRow[],
+  label: string,
+): void {
+  const data = rows.map((row) => ({
+    'Fecha de Venta': row.saleDate,
+    'Descripcion': row.description,
+    'Forma de Pago': row.paymentMethod,
+    'Clave SAT': row.satCode,
+    'Descripcion SAT': row.satDescription,
+    'Cantidad': row.quantity,
+    'Precio Unitario': row.unitPrice,
+    'Total Linea': row.lineTotal,
+    'Cliente': row.customerName,
+    'Estado SAT': row.satStatus,
+    'Comentarios': row.notes,
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Ventas SAT');
+
+  const headers = [
+    'Fecha de Venta',
+    'Descripcion',
+    'Forma de Pago',
+    'Clave SAT',
+    'Descripcion SAT',
+    'Cantidad',
+    'Precio Unitario',
+    'Total Linea',
+    'Cliente',
+    'Estado SAT',
+    'Comentarios',
+  ];
+
+  applyCurrencyFormat(worksheet, headers, ['Precio Unitario', 'Total Linea']);
+
+  worksheet['!cols'] = [
+    { wch: 16 },
+    { wch: 40 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 28 },
+    { wch: 10 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 28 },
+    { wch: 16 },
+    { wch: 30 },
+  ];
+
+  XLSX.writeFile(workbook, `ventas_sat_${label}.xlsx`);
 }
 
 // Export transactions filtered by customer
@@ -290,12 +349,6 @@ export function exportTransactionsByCustomer(
 
   const data: any[] = [];
   const salesWithoutItems = filteredSales.filter((t) => !t.items || t.items.length === 0).length;
-
-  const getPaymentMethodLabel = (paymentMethod: Transaction['paymentMethod']) =>
-    paymentMethod === 'cash' ? 'Efectivo' :
-    paymentMethod === 'transfer' ? 'Transferencia' :
-    paymentMethod === 'card' ? 'Tarjeta' :
-    paymentMethod === 'mixed' ? 'Mixto' : 'Credito';
 
   filteredSales.forEach((t) => {
     if (!t.items || t.items.length === 0) {
@@ -381,11 +434,7 @@ export function exportSingleTransactionToExcel(
   const pendingAmount = Math.max(transaction.total - paidAmount, 0);
   const shouldIncludePending = pendingAmount > 0.01;
 
-  const paymentMethodLabel =
-    transaction.paymentMethod === 'cash' ? 'Efectivo' :
-    transaction.paymentMethod === 'transfer' ? 'Transferencia' :
-    transaction.paymentMethod === 'card' ? 'Tarjeta' :
-    transaction.paymentMethod === 'mixed' ? 'Mixto' : 'Credito';
+  const paymentMethodLabel = getPaymentMethodLabel(transaction.paymentMethod);
 
   const baseRows = (transaction.items.length > 0 ? transaction.items : [{
     productId: '',
@@ -536,6 +585,8 @@ export function exportAllToExcel(
           'Fecha': formatDate(t.date),
           'Cantidad': item.quantity,
           'Artículo': item.productName,
+          'Clave SAT': item.satKeyCode || '',
+          'Descripcion SAT': item.satKeyDescription || '',
           'Precio Unitario': item.unitPrice,
           'Precio Total': item.totalPrice,
           'Descuento': t.discount,

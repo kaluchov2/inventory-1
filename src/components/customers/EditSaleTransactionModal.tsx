@@ -41,11 +41,13 @@ import {
 } from '../../services/transactionService';
 import { useCustomerStore } from '../../store/customerStore';
 import { useProductStore } from '../../store/productStore';
+import { useSatKeyStore } from '../../store/satKeyStore';
 import { useTransactionStore } from '../../store/transactionStore';
 import { CategoryCode, Transaction } from '../../types';
 import { CATEGORY_OPTIONS } from '../../constants/categories';
 import { es } from '../../i18n/es';
 import { formatCurrency, generateId } from '../../utils/formatters';
+import { getProductSatSnapshot } from '../../utils/satKeyHelpers';
 
 interface EditableLine {
   lineId: string;
@@ -53,6 +55,9 @@ interface EditableLine {
   productName: string;
   quantity: number;
   unitPrice: number;
+  satKeyId?: string;
+  satKeyCode?: string;
+  satKeyDescription?: string;
   category?: string;
   brand?: string;
   color?: string;
@@ -89,6 +94,7 @@ export function EditSaleTransactionModal({
 }: EditSaleTransactionModalProps) {
   const toast = useToast();
   const { products, loadFromSupabase: loadProducts } = useProductStore();
+  const { satKeys } = useSatKeyStore();
   const loadCustomers = useCustomerStore((state) => state.loadFromSupabase);
   const loadTransactions = useTransactionStore((state) => state.loadFromSupabase);
   const {
@@ -229,6 +235,9 @@ export function EditSaleTransactionModal({
       productName: item.productName,
       quantity: item.quantity,
       unitPrice: item.unitPrice,
+      satKeyId: item.satKeyId,
+      satKeyCode: item.satKeyCode,
+      satKeyDescription: item.satKeyDescription,
       category: item.category,
       brand: item.brand,
       color: item.color,
@@ -289,6 +298,7 @@ export function EditSaleTransactionModal({
           productName: selectedProduct.name,
           quantity: addQuantity,
           unitPrice: selectedProduct.unitPrice,
+          ...getProductSatSnapshot(selectedProduct, satKeys),
           category: selectedProduct.category,
           brand: selectedProduct.brand,
           color: selectedProduct.color,
@@ -387,6 +397,9 @@ export function EditSaleTransactionModal({
         quantity: line.quantity,
         unitPrice: line.unitPrice,
         totalPrice: line.quantity * line.unitPrice,
+        satKeyId: line.satKeyId,
+        satKeyCode: line.satKeyCode,
+        satKeyDescription: line.satKeyDescription,
         category: line.category,
         brand: line.brand,
         color: line.color,
@@ -409,6 +422,9 @@ export function EditSaleTransactionModal({
         quantity: line.quantity,
         unitPrice: line.unitPrice,
         totalPrice: line.quantity * line.unitPrice,
+        satKeyId: line.satKeyId,
+        satKeyCode: line.satKeyCode,
+        satKeyDescription: line.satKeyDescription,
         category: line.category,
         brand: line.brand,
         color: line.color,

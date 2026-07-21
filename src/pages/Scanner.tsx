@@ -53,12 +53,14 @@ import {
   createSaleTransaction,
 } from "../store/transactionStore";
 import { useCustomerStore } from "../store/customerStore";
+import { useSatKeyStore } from "../store/satKeyStore";
 import { Product, TransactionItem, PaymentMethod } from "../types";
 import { parseBarcode } from "../utils/barcodeGenerator";
 import { formatCurrency } from "../utils/formatters";
 import { getCategoryLabel } from "../constants/categories";
 import { CurrencyInput } from "../components/common";
 import { es } from "../i18n/es";
+import { getProductSatSnapshot } from "../utils/satKeyHelpers";
 
 type ScanMode = "sell" | "register";
 
@@ -88,6 +90,7 @@ export function Scanner() {
     useProductStore();
   const { addTransaction, queueSaleSync } = useTransactionStore();
   const { customers, addPurchase } = useCustomerStore();
+  const { satKeys } = useSatKeyStore();
 
   // --- Sell mode: cart state ---
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
@@ -345,6 +348,7 @@ export function Scanner() {
           quantity: qty,
           unitPrice: productToAddToCart.unitPrice,
           totalPrice: qty * productToAddToCart.unitPrice,
+          ...getProductSatSnapshot(productToAddToCart, satKeys),
           upsBatch: productToAddToCart.upsBatch,
           category: productToAddToCart.category,
           brand: productToAddToCart.brand,
@@ -368,7 +372,7 @@ export function Scanner() {
       setLastScan(null);
       setCameraEnabled(true);
     },
-    [cart, productToAddToCart, onCartModalClose, toast],
+    [cart, productToAddToCart, onCartModalClose, satKeys, toast],
   );
 
   const handleRemoveFromCart = (productId: string) => {
@@ -429,6 +433,9 @@ export function Scanner() {
             quantity,
             unitPrice,
             totalPrice,
+            satKeyId,
+            satKeyCode,
+            satKeyDescription,
             upsBatch,
             category,
             brand,
@@ -440,6 +447,9 @@ export function Scanner() {
             quantity,
             unitPrice,
             totalPrice,
+            satKeyId,
+            satKeyCode,
+            satKeyDescription,
             upsBatch,
             category,
             brand,

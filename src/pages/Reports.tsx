@@ -15,8 +15,12 @@ import {
   HStack,
   Select,
   Icon,
+  Button,
+  Input,
+  Flex,
+  useToast,
 } from '@chakra-ui/react';
-import { FiCalendar } from 'react-icons/fi';
+import { FiCalendar, FiDownload } from 'react-icons/fi';
 import { StatCard } from '../components/common';
 import { useProductStore } from '../store/productStore';
 import { useCustomerStore } from '../store/customerStore';
@@ -24,9 +28,15 @@ import { useTransactionStore } from '../store/transactionStore';
 import { formatCurrency, formatDateTime } from '../utils/formatters';
 import { getCategoryLabel } from '../constants/categories';
 import { es } from '../i18n/es';
+import { buildMonthlySatSalesRows } from '../utils/satSalesReport';
+import { exportSatSalesToExcel } from '../utils/excelExport';
 
 export function Reports() {
+  const toast = useToast();
   const [dateRange, setDateRange] = useState('today');
+  const [satReportMonth, setSatReportMonth] = useState(() =>
+    new Date().toISOString().slice(0, 7),
+  );
 
   const { getTotalInventoryValue } = useProductStore();
   const { getTotalOutstandingBalance, getCustomersWithBalance } = useCustomerStore();
@@ -82,6 +92,33 @@ export function Reports() {
   const outstandingBalance = getTotalOutstandingBalance();
   const customersWithBalance = getCustomersWithBalance();
   const salesByCategory = getTotalSalesByCategory();
+  const monthlySatRows = useMemo(
+    () => buildMonthlySatSalesRows(transactions, satReportMonth),
+    [transactions, satReportMonth],
+  );
+  const monthlySatMissingCount = monthlySatRows.filter(
+    (row) => row.satStatus === 'Sin clave SAT',
+  ).length;
+
+  const handleExportMonthlySat = () => {
+    if (monthlySatRows.length === 0) {
+      toast({
+        title: 'No hay ventas para exportar',
+        description: 'Seleccione otro mes o registre ventas antes de descargar.',
+        status: 'warning',
+        duration: 3500,
+        isClosable: true,
+      });
+      return;
+    }
+    exportSatSalesToExcel(monthlySatRows, satReportMonth);
+    toast({
+      title: 'Reporte SAT descargado',
+      description: `${monthlySatRows.length} renglon(es) incluidos.`,
+      status: 'success',
+      duration: 3000,
+    });
+  };
 
   // Top products
   const topProducts = useMemo(() => {
@@ -177,6 +214,79 @@ export function Reports() {
             </Text>
           </Box>
         </SimpleGrid>
+      </Box>
+
+      <Box bg="white" p={6} borderRadius="xl" boxShadow="sm">
+        <Flex
+          direction={{ base: 'column', md: 'row' }}
+          justify="space-between"
+          gap={4}
+          mb={4}
+        >
+          <Box>
+            <Heading size="md">Ventas Mensuales SAT</Heading>
+            <Text color="gray.500" mt={1}>
+              {monthlySatRows.length} renglon(es), {monthlySatMissingCount} sin clave SAT
+            </Text>
+          </Box>
+          <HStack spacing={3} flexWrap="wrap">
+            <Input
+              type="month"
+              value={satReportMonth}
+              onChange={(event) => setSatReportMonth(event.target.value)}
+              maxW={{ base: 'full', md: '180px' }}
+              bg="white"
+            />
+            <Button
+              leftIcon={<Icon as={FiDownload} />}
+              onClick={handleExportMonthlySat}
+              isDisabled={monthlySatRows.length === 0}
+            >
+              Descargar Excel
+            </Button>
+          </HStack>
+        </Flex>
+        {monthlySatRows.length === 0 ? (
+          <Text color="gray.500" textAlign="center" py={4}>
+            No hay ventas registradas en este mes.
+          </Text>
+        ) : (
+          <Box overflowX="auto">
+            <Table size="sm">
+              <Thead>
+                <Tr>
+                  <Th>Fecha</Th>
+                  <Th>Producto</Th>
+                  <Th>Clave SAT</Th>
+                  <Th>Pago</Th>
+                  <Th isNumeric>Total</Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                {monthlySatRows.slice(0, 8).map((row, index) => (
+                  <Tr key={`${row.saleDate}-${row.description}-${index}`}>
+                    <Td>{row.saleDate}</Td>
+                    <Td>
+                      <Text noOfLines={1}>{row.description}</Text>
+                    </Td>
+                    <Td>
+                      <Badge colorScheme={row.satStatus === 'Con clave' ? 'teal' : 'gray'}>
+                        {row.satCode}
+                      </Badge>
+                    </Td>
+                    <Td>{row.paymentMethod}</Td>
+                    <Td isNumeric>{formatCurrency(row.lineTotal)}</Td>
+                  </Tr>
+                ))}
+              </Tbody>
+            </Table>
+            {monthlySatRows.length > 8 && (
+              <Text color="gray.500" fontSize="sm" mt={3}>
+                Se muestran 8 renglones. El Excel incluye todos.
+              </Text>
+            )}
+          </Box>
+        )}
       </Box>
 
       <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>

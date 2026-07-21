@@ -59,6 +59,14 @@ function detectProductChanges(
   return { hasChanges: reasons.length > 0, reasons };
 }
 
+function preserveImportOnlyFields(incoming: Product, existing?: Product): Product {
+  if (!existing || incoming.satKeyId) return incoming;
+  return {
+    ...incoming,
+    satKeyId: existing.satKeyId,
+  };
+}
+
 // Import mode types
 export type ImportMode = "replace" | "sync" | "sync_by_ups";
 
@@ -271,6 +279,7 @@ export const useProductStore = create<ProductStore>()(
                   unit_price: newProduct.unitPrice,
                   original_price: newProduct.originalPrice || null,
                   category: newProduct.category,
+                  sat_key_id: newProduct.satKeyId || null,
                   brand: newProduct.brand || null,
                   color: newProduct.color || null,
                   size: newProduct.size || null,
@@ -372,6 +381,7 @@ export const useProductStore = create<ProductStore>()(
                   unit_price: updatedProduct.unitPrice,
                   original_price: updatedProduct.originalPrice || null,
                   category: updatedProduct.category,
+                  sat_key_id: updatedProduct.satKeyId || null,
                   brand: updatedProduct.brand || null,
                   color: updatedProduct.color || null,
                   size: updatedProduct.size || null,
@@ -463,6 +473,7 @@ export const useProductStore = create<ProductStore>()(
                       unit_price: updatedProduct.unitPrice,
                       original_price: updatedProduct.originalPrice || null,
                       category: updatedProduct.category,
+                      sat_key_id: updatedProduct.satKeyId || null,
                       brand: updatedProduct.brand || null,
                       color: updatedProduct.color || null,
                       size: updatedProduct.size || null,
@@ -561,7 +572,12 @@ export const useProductStore = create<ProductStore>()(
 
         if (mode === "replace") {
           // Simple replace mode - set all products
-          // Deduplicate by ID first
+          // Deduplicate by ID first while preserving fields not present in Excel imports.
+          const existingProducts = get().products;
+          const existingById = new Map(existingProducts.map((product) => [product.id, product]));
+          const existingByMatchKey = new Map(
+            existingProducts.map((product) => [getProductMatchKey(product), product]),
+          );
           const seen = new Map<string, Product>();
           for (const product of newProducts) {
             if (seen.has(product.id)) {
@@ -569,7 +585,10 @@ export const useProductStore = create<ProductStore>()(
                 `[Import] Duplicate product ID found: ${product.id}, keeping latest version`,
               );
             }
-            seen.set(product.id, product);
+            const existingProduct =
+              existingById.get(product.id) ||
+              existingByMatchKey.get(getProductMatchKey(product));
+            seen.set(product.id, preserveImportOnlyFields(product, existingProduct));
           }
           const uniqueProducts = Array.from(seen.values());
 
@@ -612,6 +631,7 @@ export const useProductStore = create<ProductStore>()(
                   unit_price: p.unitPrice,
                   original_price: p.originalPrice || null,
                   category: p.category,
+                  sat_key_id: p.satKeyId || null,
                   brand: p.brand || null,
                   color: p.color || null,
                   size: p.size || null,
@@ -715,6 +735,7 @@ export const useProductStore = create<ProductStore>()(
                   ...newProduct,
                   id: existingProduct.id,
                   sku: existingProduct.sku,
+                  satKeyId: newProduct.satKeyId || existingProduct.satKeyId,
                   barcode: existingProduct.barcode,
                   dropSequence: existingProduct.dropSequence,
                   createdAt: existingProduct.createdAt,
@@ -856,6 +877,7 @@ export const useProductStore = create<ProductStore>()(
                 ...newProduct,
                 id: existingProduct.id,
                 sku: existingProduct.sku,
+                satKeyId: newProduct.satKeyId || existingProduct.satKeyId,
                 barcode: existingProduct.barcode, // Preserve existing barcode to avoid 409 conflicts
                 dropSequence: existingProduct.dropSequence, // Preserve sequence for consistency
                 createdAt: existingProduct.createdAt,
@@ -1442,6 +1464,7 @@ function convertDbProduct(dbProduct: any): Product {
     unitPrice: dbProduct.unit_price,
     originalPrice: dbProduct.original_price || undefined,
     category: dbProduct.category,
+    satKeyId: dbProduct.sat_key_id || undefined,
     brand: dbProduct.brand || undefined,
     color: dbProduct.color || undefined,
     size: dbProduct.size || undefined,

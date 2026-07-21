@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Center, Spinner, VStack, Text } from '@chakra-ui/react';
 import { Layout } from './components/layout';
 import { Home } from './pages/Home';
@@ -10,6 +10,8 @@ import { Reports } from './pages/Reports';
 import { Transactions } from './pages/Transactions';
 import { Settings } from './pages/Settings';
 import { Soporte } from './pages/Soporte';
+import { SatKeys } from './pages/SatKeys';
+import { VentasSat } from './pages/VentasSat';
 import { Login } from './pages/Login';
 import { Scanner } from './pages/Scanner';
 import { QRGenerator } from './pages/QRGenerator';
@@ -17,10 +19,12 @@ import { useAuthStore } from './store/authStore';
 import { SyncInitializer } from './components/common/SyncInitializer';
 import { InstallPrompt } from './components/common/InstallPrompt';
 import { PwaUpdatePrompt } from './components/common/PwaUpdatePrompt';
+import { VENTAS_SAT_PATH, isViewerRole } from './constants/viewerAccess';
 
 // Protected route wrapper
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, isOfflineMode } = useAuthStore();
+  const { user, isAuthenticated, isLoading, isOfflineMode } = useAuthStore();
+  const location = useLocation();
 
   // Show loading spinner while checking auth
   if (isLoading) {
@@ -36,6 +40,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   // Allow access if authenticated OR in offline mode
   if (isAuthenticated || isOfflineMode) {
+    // Viewer accounts are restricted to the Ventas SAT page only
+    if (isViewerRole(user?.role) && location.pathname !== VENTAS_SAT_PATH) {
+      return <Navigate to={VENTAS_SAT_PATH} replace />;
+    }
     return <>{children}</>;
   }
 
@@ -77,6 +85,8 @@ function App() {
           <Route path="ventas" element={<Sales />} />
           <Route path="escaner" element={<Scanner />} />
           <Route path="codigos" element={<QRGenerator />} />
+          <Route path="sat" element={<SatKeys />} />
+          <Route path="ventas-sat" element={<VentasSat />} />
           <Route path="reportes" element={<Reports />} />
           <Route path="transacciones" element={<Transactions />} />
           <Route path="configuracion" element={<Settings />} />

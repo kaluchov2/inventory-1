@@ -59,6 +59,7 @@ import { AutocompleteSelect, CurrencyInput } from "../components/common";
 import { ProductFilterPanel } from "../components/sales";
 import { useProductStore } from "../store/productStore";
 import { useCustomerStore } from "../store/customerStore";
+import { useSatKeyStore } from "../store/satKeyStore";
 import {
   useTransactionStore,
   createSaleTransaction,
@@ -72,6 +73,7 @@ import {
 import { CATEGORY_OPTIONS } from "../constants/categories";
 import { formatCurrency } from "../utils/formatters";
 import { es } from "../i18n/es";
+import { getProductSatSnapshot } from "../utils/satKeyHelpers";
 
 interface CartItem extends TransactionItem {
   productId: string;
@@ -97,6 +99,7 @@ export function Sales() {
     useProductStore();
   const { customers, addPurchase, receivePayment } = useCustomerStore();
   const { addTransaction, queueSaleSync } = useTransactionStore();
+  const { satKeys } = useSatKeyStore();
 
   // Quantity modal state
   const {
@@ -454,6 +457,7 @@ export function Sales() {
         quantity,
         unitPrice: product.unitPrice,
         totalPrice: quantity * product.unitPrice,
+        ...getProductSatSnapshot(product, satKeys),
         barcode: product.barcode,
         category: product.category,
         brand: product.brand,
@@ -542,6 +546,9 @@ export function Sales() {
           quantity,
           unitPrice,
           totalPrice,
+          satKeyId,
+          satKeyCode,
+          satKeyDescription,
           upsBatch,
           category,
           brand,
@@ -553,6 +560,9 @@ export function Sales() {
           quantity,
           unitPrice,
           totalPrice,
+          satKeyId,
+          satKeyCode,
+          satKeyDescription,
           upsBatch,
           category,
           brand,

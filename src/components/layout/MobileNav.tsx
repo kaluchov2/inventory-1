@@ -29,11 +29,14 @@ import {
   FiLogOut,
   FiCamera,
   FiGrid,
+  FiHash,
   FiHelpCircle,
+  FiDollarSign,
 } from 'react-icons/fi';
 import { es } from '../../i18n/es';
 import { useAuthStore } from '../../store/authStore';
 import { SyncStatus } from '../common/SyncStatus';
+import { VENTAS_SAT_PATH, isViewerRole } from '../../constants/viewerAccess';
 
 interface NavItem {
   icon: typeof FiHome;
@@ -48,10 +51,16 @@ const navItems: NavItem[] = [
   { icon: FiShoppingCart, label: es.nav.sales, path: '/ventas' },
   { icon: FiCamera, label: es.nav.scanner, path: '/escaner' },
   { icon: FiGrid, label: es.nav.qrGenerator, path: '/codigos' },
+  { icon: FiHash, label: es.nav.satKeys, path: '/sat' },
+  { icon: FiDollarSign, label: es.nav.ventasSat, path: VENTAS_SAT_PATH },
   { icon: FiFileText, label: es.nav.transactions, path: '/transacciones' },
   { icon: FiBarChart2, label: es.nav.reports, path: '/reportes' },
   { icon: FiSettings, label: es.nav.settings, path: '/configuracion' },
   { icon: FiHelpCircle, label: 'Soporte', path: '/soporte' },
+];
+
+const viewerNavItems: NavItem[] = [
+  { icon: FiDollarSign, label: es.nav.ventasSat, path: VENTAS_SAT_PATH },
 ];
 
 export function MobileNav() {
@@ -59,6 +68,7 @@ export function MobileNav() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
+  const visibleNavItems = isViewerRole(user?.role) ? viewerNavItems : navItems;
 
   const handleNavigate = (path: string) => {
     navigate(path);
@@ -72,7 +82,7 @@ export function MobileNav() {
   };
 
   // Get current page title
-  const currentPage = navItems.find(item => item.path === location.pathname);
+  const currentPage = visibleNavItems.find(item => item.path === location.pathname);
 
   return (
     <>
@@ -126,7 +136,7 @@ export function MobileNav() {
 
           <DrawerBody py={4} display="flex" flexDirection="column">
             <VStack spacing={2} align="stretch" flex={1}>
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const isActive = location.pathname === item.path;
 
                 return (

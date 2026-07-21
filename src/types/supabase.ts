@@ -146,6 +146,84 @@ export type Database = {
         Relationships: [];
       };
 
+      sat_keys: {
+        Row: {
+          id: string;
+          code: string;
+          description: string;
+          created_at: string;
+          updated_at: string;
+          created_by: string | null;
+          updated_by: string | null;
+          is_deleted: boolean;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id: string;
+          code: string;
+          description: string;
+          created_at?: string;
+          updated_at?: string;
+          created_by?: string | null;
+          updated_by?: string | null;
+          is_deleted?: boolean;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          code?: string;
+          description?: string;
+          created_at?: string;
+          updated_at?: string;
+          created_by?: string | null;
+          updated_by?: string | null;
+          is_deleted?: boolean;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+
+      sat_category_suggestions: {
+        Row: {
+          id: string;
+          category_code: string;
+          sat_key_id: string;
+          priority: number;
+          is_default: boolean;
+          source_group: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          category_code: string;
+          sat_key_id: string;
+          priority?: number;
+          is_default?: boolean;
+          source_group?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          category_code?: string;
+          sat_key_id?: string;
+          priority?: number;
+          is_default?: boolean;
+          source_group?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'sat_category_suggestions_sat_key_id_fkey';
+            columns: ['sat_key_id'];
+            referencedRelation: 'sat_keys';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+
       // V2: Products table with new columns
       products: {
         Row: {
@@ -164,6 +242,7 @@ export type Database = {
           unit_price: number;
           original_price: number | null;
           category: string;
+          sat_key_id: string | null;
           brand: string | null;
           color: string | null;
           size: string | null;
@@ -204,6 +283,7 @@ export type Database = {
           unit_price?: number;
           original_price?: number | null;
           category: string;
+          sat_key_id?: string | null;
           brand?: string | null;
           color?: string | null;
           size?: string | null;
@@ -241,6 +321,7 @@ export type Database = {
           unit_price?: number;
           original_price?: number | null;
           category?: string;
+          sat_key_id?: string | null;
           brand?: string | null;
           color?: string | null;
           size?: string | null;
@@ -275,6 +356,12 @@ export type Database = {
             foreignKeyName: 'products_sold_to_fkey';
             columns: ['sold_to'];
             referencedRelation: 'customers';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'products_sat_key_id_fkey';
+            columns: ['sat_key_id'];
+            referencedRelation: 'sat_keys';
             referencedColumns: ['id'];
           }
         ];
@@ -431,6 +518,9 @@ export type Database = {
           quantity: number;
           unit_price: number;
           total_price: number;
+          sat_key_id: string | null;
+          sat_key_code: string | null;
+          sat_key_description: string | null;
           category: string | null;
           brand: string | null;
           color: string | null;
@@ -444,6 +534,9 @@ export type Database = {
           quantity: number;
           unit_price: number;
           total_price: number;
+          sat_key_id?: string | null;
+          sat_key_code?: string | null;
+          sat_key_description?: string | null;
           category?: string | null;
           brand?: string | null;
           color?: string | null;
@@ -457,6 +550,9 @@ export type Database = {
           quantity?: number;
           unit_price?: number;
           total_price?: number;
+          sat_key_id?: string | null;
+          sat_key_code?: string | null;
+          sat_key_description?: string | null;
           category?: string | null;
           brand?: string | null;
           color?: string | null;

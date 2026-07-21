@@ -22,12 +22,21 @@ interface AuthActions {
 
 type AuthStore = AuthState & AuthActions;
 
+const VALID_ROLES: UserRole[] = ['admin', 'user', 'viewer'];
+
+// Normalizes a raw profiles.role DB value (which may have stray whitespace/casing
+// from a manual SQL edit) into a known UserRole, defaulting safely to 'user'.
+function normalizeUserRole(rawRole: unknown): UserRole {
+  const normalized = typeof rawRole === 'string' ? rawRole.trim().toLowerCase() : '';
+  return (VALID_ROLES as string[]).includes(normalized) ? (normalized as UserRole) : 'user';
+}
+
 // Convert Supabase user to our User type
 const mapSupabaseUser = (supabaseUser: any, profile?: any): User => ({
   id: supabaseUser.id,
   email: supabaseUser.email || '',
   displayName: profile?.display_name || supabaseUser.user_metadata?.display_name || undefined,
-  role: (profile?.role as UserRole) || 'user',
+  role: normalizeUserRole(profile?.role),
   createdAt: supabaseUser.created_at || new Date().toISOString(),
   updatedAt: profile?.updated_at || new Date().toISOString(),
 });

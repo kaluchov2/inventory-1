@@ -10,7 +10,7 @@ export type SyncAction =
 
 export type SyncOperation = {
   id: string;
-  type: 'products' | 'customers' | 'transactions' | 'drops' | 'staff';
+  type: 'products' | 'customers' | 'transactions' | 'drops' | 'staff' | 'sat_keys';
   action: SyncAction;
   data: any;
   timestamp: string;

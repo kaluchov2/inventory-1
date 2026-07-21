@@ -3,7 +3,14 @@ import { useAuthStore } from '../../store/authStore';
 import { useProductStore } from '../../store/productStore';
 import { useCustomerStore } from '../../store/customerStore';
 import { useTransactionStore } from '../../store/transactionStore';
-import { useRealtimeProducts, useRealtimeCustomers, useRealtimeTransactions } from '../../hooks/useRealtimeSync';
+import { useSatKeyStore } from '../../store/satKeyStore';
+import {
+  useRealtimeProducts,
+  useRealtimeCustomers,
+  useRealtimeTransactions,
+  useRealtimeSatKeys,
+  useRealtimeSatCategorySuggestions,
+} from '../../hooks/useRealtimeSync';
 import { connectionStatus } from '../../lib/connectionStatus';
 import { syncManager } from '../../lib/syncManager';
 
@@ -35,6 +42,7 @@ export function SyncInitializer() {
   const loadCustomers = useCustomerStore((state) => state.loadFromSupabase);
   const loadCustomerChanges = useCustomerStore((state) => state.loadChangesFromSupabase);
   const loadTransactions = useTransactionStore((state) => state.loadFromSupabase);
+  const loadSatKeys = useSatKeyStore((state) => state.loadFromSupabase);
 
   // Incremental realtime handlers — update/delete a single record in local state
   const handleProductUpdate = useProductStore((state) => state.handleRealtimeUpdate);
@@ -43,6 +51,8 @@ export function SyncInitializer() {
   const handleCustomerDelete = useCustomerStore((state) => state.handleRealtimeDelete);
   const handleTransactionUpdate = useTransactionStore((state) => state.handleRealtimeUpdate);
   const handleTransactionDelete = useTransactionStore((state) => state.handleRealtimeDelete);
+  const handleSatKeyUpdate = useSatKeyStore((state) => state.handleRealtimeUpdate);
+  const handleSatKeyDelete = useSatKeyStore((state) => state.handleRealtimeDelete);
 
   // Initial load from Supabase — flush pending queue first
   useEffect(() => {
@@ -70,6 +80,7 @@ export function SyncInitializer() {
           loadProducts(true), // Force replace on initial load - Supabase is source of truth
           loadCustomers(),
           loadTransactions(),
+          loadSatKeys(),
         ]);
       }).then(() => {
         console.log('[Sync] Initial data loaded successfully');
@@ -77,7 +88,7 @@ export function SyncInitializer() {
         console.error('[Sync] Failed to load initial data:', error);
       });
     }
-  }, [isAuthenticated, isOfflineMode, loadProducts, loadCustomers, loadTransactions]);
+  }, [isAuthenticated, isOfflineMode, loadProducts, loadCustomers, loadTransactions, loadSatKeys]);
 
   // When app returns from background or reconnects, flush pending queue then
   // catch up products/customers via delta sync. Transactions stay on full reload
@@ -107,6 +118,7 @@ export function SyncInitializer() {
             loadProductChanges(),
             loadCustomerChanges(),
             loadTransactions(),
+            loadSatKeys(),
           ]);
         }).catch((error) => {
           console.error(`[Sync] Foreground catch-up failed (${source}):`, error);
@@ -174,6 +186,7 @@ export function SyncInitializer() {
     loadProductChanges,
     loadCustomerChanges,
     loadTransactions,
+    loadSatKeys,
   ]);
 
   // Route realtime events directly to incremental handlers — no full reload, no debounce.
@@ -192,6 +205,16 @@ export function SyncInitializer() {
     onInsert: handleTransactionUpdate,
     onUpdate: handleTransactionUpdate,
     onDelete: handleTransactionDelete,
+  });
+  useRealtimeSatKeys({
+    onInsert: handleSatKeyUpdate,
+    onUpdate: handleSatKeyUpdate,
+    onDelete: handleSatKeyDelete,
+  });
+  useRealtimeSatCategorySuggestions({
+    onInsert: () => loadSatKeys(true),
+    onUpdate: () => loadSatKeys(true),
+    onDelete: () => loadSatKeys(true),
   });
 
   return null; // This component doesn't render anything

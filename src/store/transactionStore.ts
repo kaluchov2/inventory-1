@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Transaction, TransactionItem, PaymentMethod, TransactionType } from '../types';
+import { Transaction, PaymentMethod, TransactionType } from '../types';
 import { generateId, getCurrentISODate } from '../utils/formatters';
 import { syncManager } from '../lib/syncManager';
 import { transactionService } from '../services/transactionService';
 import { supabase } from '../lib/supabase';
 import { syncQueue } from '../lib/syncQueue';
 import { SaleSyncPayload, syncRecordedSale } from '../lib/saleSync';
+export { createSaleTransaction } from '../utils/transactionHelpers';
 
 interface TransactionFilters {
   dateFrom: string;
@@ -130,6 +131,9 @@ export const useTransactionStore = create<TransactionStore>()(
                   quantity: item.quantity,
                   unit_price: item.unitPrice,
                   total_price: item.totalPrice,
+                  sat_key_id: item.satKeyId || null,
+                  sat_key_code: item.satKeyCode || null,
+                  sat_key_description: item.satKeyDescription || null,
                   category: item.category,
                   brand: item.brand,
                   color: item.color,
@@ -503,44 +507,3 @@ function mergeTransactions(local: Transaction[], remote: Transaction[]): Transac
   return Array.from(merged.values());
 }
 
-// Helper function to create a sale transaction
-export const createSaleTransaction = (
-  customerInfo: { id?: string; name: string },
-  items: TransactionItem[],
-  payment: {
-    method: PaymentMethod;
-    cash: number;
-    transfer: number;
-    card: number;
-    actualCard?: number;
-  },
-  options?: {
-    discount?: number;
-    discountNote?: string;
-    notes?: string;
-    isInstallment?: boolean;
-  }
-): Omit<Transaction, 'id' | 'createdAt'> => {
-  const subtotal = items.reduce((sum, item) => sum + item.totalPrice, 0);
-  const discount = options?.discount || 0;
-  const total = subtotal - discount;
-
-  return {
-    customerId: customerInfo.id,
-    customerName: customerInfo.name,
-    items,
-    subtotal,
-    discount,
-    discountNote: options?.discountNote,
-    total,
-    paymentMethod: payment.method,
-    cashAmount: payment.cash,
-    transferAmount: payment.transfer,
-    cardAmount: payment.card,
-    actualCardAmount: payment.actualCard,
-    isInstallment: options?.isInstallment || false,
-    notes: options?.notes,
-    date: getCurrentISODate(),
-    type: 'sale',
-  };
-};

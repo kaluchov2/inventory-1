@@ -22,9 +22,11 @@ import {
   Box,
   HStack,
   Text,
+  Alert,
+  AlertIcon,
 } from "@chakra-ui/react";
 import { useForm, Controller } from "react-hook-form";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Product, CategoryCode } from "../../types";
 import { CATEGORY_OPTIONS } from "../../constants/categories";
 import {
@@ -35,6 +37,8 @@ import {
 import { CurrencyInput, AutocompleteSelect } from "../common";
 import { es } from "../../i18n/es";
 import { getReviewQty } from "../../utils/productHelpers";
+import { useSatKeyStore } from "../../store/satKeyStore";
+import { getSatKeyOptionsForCategory } from "../../utils/satKeyHelpers";
 
 interface ProductFormData {
   name: string;
@@ -42,6 +46,7 @@ interface ProductFormData {
   quantity: number;
   unitPrice: number;
   category: CategoryCode;
+  satKeyId: string;
   brand: string;
   color: string;
   size: string;
@@ -66,6 +71,11 @@ export function ProductForm({
   initialUpsBatch,
 }: ProductFormProps) {
   const isEditing = !!product;
+  const { satKeys, satCategorySuggestions } = useSatKeyStore();
+  const productSatKeyMissing =
+    !!product?.satKeyId &&
+    satKeys.length > 0 &&
+    !satKeys.some((satKey) => satKey.id === product.satKeyId);
   const reviewQty = product ? getReviewQty(product) : 0;
   const otherQty = product
     ? product.donatedQty + product.lostQty + product.expiredQty
@@ -87,6 +97,7 @@ export function ProductForm({
       quantity: 1,
       unitPrice: 0,
       category: "VIB",
+      satKeyId: "",
       brand: "",
       color: "",
       size: "",
@@ -94,15 +105,28 @@ export function ProductForm({
     },
   });
   const watchedQuantity = watch("quantity");
+  const watchedCategory = watch("category");
+  const satKeyOptions = useMemo(
+    () => getSatKeyOptionsForCategory(
+      satKeys,
+      satCategorySuggestions,
+      watchedCategory || "",
+    ),
+    [satCategorySuggestions, satKeys, watchedCategory],
+  );
 
   useEffect(() => {
     if (product) {
+      const hasValidSatKey =
+        !!product.satKeyId &&
+        (satKeys.length === 0 || satKeys.some((satKey) => satKey.id === product.satKeyId));
       reset({
         name: product.name,
         upsBatch: product.upsBatch,
         quantity: product.availableQty,
         unitPrice: product.unitPrice,
         category: product.category,
+        satKeyId: hasValidSatKey ? product.satKeyId || "" : "",
         brand: product.brand || "",
         color: product.color || "",
         size: product.size || "",
@@ -115,13 +139,14 @@ export function ProductForm({
         quantity: 1,
         unitPrice: 0,
         category: "VIB",
+        satKeyId: "",
         brand: "",
         color: "",
         size: "",
         description: "",
       });
     }
-  }, [product, reset, initialUpsBatch]);
+  }, [product, reset, initialUpsBatch, satKeys]);
 
   const handleFormSubmit = (data: ProductFormData) => {
     const addAnother = addAnotherRef.current;
@@ -139,6 +164,7 @@ export function ProductForm({
         quantity: 1,
         unitPrice: 0,
         category: currentCategory,
+        satKeyId: data.satKeyId,
         brand: "",
         color: "",
         size: "",
@@ -341,6 +367,29 @@ export function ProductForm({
                   </FormErrorMessage>
                 </FormControl>
               </SimpleGrid>
+
+              <FormControl>
+                <FormLabel>Clave SAT</FormLabel>
+                <Controller
+                  name="satKeyId"
+                  control={control}
+                  render={({ field }) => (
+                    <AutocompleteSelect
+                      options={satKeyOptions}
+                      value={field.value || ""}
+                      onChange={(val) => field.onChange(val ? String(val) : "")}
+                      placeholder="Sin clave SAT"
+                      size="md"
+                    />
+                  )}
+                />
+                {productSatKeyMissing && (
+                  <Alert status="warning" mt={2} borderRadius="md" py={2}>
+                    <AlertIcon />
+                    La clave SAT anterior ya no existe. Al guardar se limpiara este campo.
+                  </Alert>
+                )}
+              </FormControl>
 
               {/* Brand and Color */}
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} w="full">

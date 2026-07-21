@@ -16,6 +16,9 @@ export interface ModifySaleTransactionItemInput {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  satKeyId?: string;
+  satKeyCode?: string;
+  satKeyDescription?: string;
   category?: string;
   brand?: string;
   color?: string;
@@ -239,6 +242,9 @@ export const transactionService = {
         quantity: item.quantity,
         unit_price: item.unitPrice,
         total_price: item.totalPrice,
+        sat_key_id: item.satKeyId || null,
+        sat_key_code: item.satKeyCode || null,
+        sat_key_description: item.satKeyDescription || null,
         category: item.category || null,
         brand: item.brand || null,
         color: item.color || null,
@@ -281,6 +287,9 @@ export const transactionService = {
           quantity: item.quantity,
           unit_price: item.unitPrice,
           total_price: item.totalPrice,
+          sat_key_id: item.satKeyId || null,
+          sat_key_code: item.satKeyCode || null,
+          sat_key_description: item.satKeyDescription || null,
           category: item.category || null,
           brand: item.brand || null,
           color: item.color || null,
@@ -321,6 +330,7 @@ export const transactionService = {
     if (error) throw error;
 
     const result = parseModifySaleResult(data);
+
     const transaction = await this.getById(payload.transactionId);
 
     if (!transaction) {
@@ -434,6 +444,9 @@ function convertFromDbFormat(data: any): Transaction {
     quantity: item.quantity,
     unitPrice: item.unit_price,
     totalPrice: item.total_price,
+    satKeyId: item.sat_key_id || undefined,
+    satKeyCode: item.sat_key_code || undefined,
+    satKeyDescription: item.sat_key_description || undefined,
     category: item.category || undefined,
     brand: item.brand || undefined,
     color: item.color || undefined,

@@ -115,8 +115,15 @@ export function SyncStatus() {
   }
 
   if (syncStatus.deadLetterCount > 0) {
+    const hasSatKeyReferenceError = syncStatus.hasSatKeyDeadLetter;
+    const failedLabel = hasSatKeyReferenceError
+      ? 'Clave SAT no encontrada - Descartar'
+      : `${syncStatus.deadLetterCount} fallido(s) - Reintentar`;
+    const failedTooltip = hasSatKeyReferenceError
+      ? 'Descarta las actualizaciones bloqueadas, elige una clave SAT válida en el producto y vuelve a guardarlo.'
+      : `${syncStatus.deadLetterCount} operación(es) fallaron - toca para reintentar`;
     return (
-      <Tooltip label={`${syncStatus.deadLetterCount} operación(es) fallaron — toca para reintentar`}>
+      <Tooltip label={failedTooltip}>
         <Badge
           colorScheme="orange"
           display="flex"
@@ -125,10 +132,16 @@ export function SyncStatus() {
           px={3}
           py={1}
           cursor="pointer"
-          onClick={() => syncManager.retryDeadLetter()}
+          onClick={() => {
+            if (hasSatKeyReferenceError) {
+              syncManager.discardSatKeyDeadLetters();
+              return;
+            }
+            syncManager.retryDeadLetter();
+          }}
         >
           <Icon as={FiAlertCircle} />
-          <Text fontSize="sm">{syncStatus.deadLetterCount} fallido(s) — Reintentar</Text>
+          <Text fontSize="sm">{failedLabel}</Text>
         </Badge>
       </Tooltip>
     );

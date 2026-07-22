@@ -3,6 +3,7 @@ import { syncQueue, SyncOperation } from "./syncQueue";
 import { connectionStatus } from "./connectionStatus";
 import { isMissingDatabaseFunction, syncRecordedSale } from "./saleSync";
 import { logSyncIncident } from "./syncIncidentLogger";
+import { publishSatKeyResolution } from "./satKeyResolution";
 
 /**
  * Sync Manager
@@ -36,9 +37,10 @@ import { logSyncIncident } from "./syncIncidentLogger";
  * - Switch from full-reload realtime to incremental handleRealtimeUpdate/handleRealtimeDelete
  * - Add a visual "sync pending" indicator showing queued operations count
  */
-class SyncManager {
+export class SyncManager {
   private isSyncing = false;
   private syncStartTime: number | null = null;
+  private activeSyncPromise: Promise<void> | null = null;
   private readonly MAX_RETRIES = 3;
   private readonly DEBUG_LOGS_ENABLED = true;
   private readonly STALLED_QUEUE_THRESHOLD_MS = 90_000;
@@ -49,12 +51,17 @@ class SyncManager {
     isSyncing: false,
     pendingCount: syncQueue.size(),
     deadLetterCount: syncQueue.getDeadLetterCount(),
+    hasSatKeyDeadLetter: syncQueue.getDeadLetter().some(
+      (operation) => operation.failureReason === "sat_key_foreign_key",
+    ),
     lastSync: null,
     error: null,
   };
 
-  constructor() {
-    this.initialize();
+  constructor(options: { initialize?: boolean } = {}) {
+    if (options.initialize !== false) {
+      this.initialize();
+    }
   }
 
   private logDebug(message: string, meta?: unknown) {
@@ -114,6 +121,14 @@ class SyncManager {
       };
     }
     return { error };
+  }
+
+  private getErrorCode(error: unknown): string | undefined {
+    if (error && typeof error === "object" && "code" in error) {
+      const code = (error as { code?: unknown }).code;
+      return typeof code === "string" ? code : undefined;
+    }
+    return undefined;
   }
 
   private markQueueObservation(reason: string) {
@@ -242,7 +257,32 @@ class SyncManager {
    * events to every connected client. SyncInitializer debounces these by 2 seconds,
    * then calls loadFromSupabase() to refresh the local store.
    */
-  public async syncPendingOperations() {
+  public syncPendingOperations(): Promise<void> {
+    if (this.activeSyncPromise) {
+      this.logDebug("Joining active sync run instead of starting a parallel one", {
+        queueSize: syncQueue.size(),
+      });
+      return this.activeSyncPromise;
+    }
+
+    const run = this.runPendingOperations();
+    this.activeSyncPromise = run;
+    void run.then(
+      () => {
+        if (this.activeSyncPromise === run) {
+          this.activeSyncPromise = null;
+        }
+      },
+      () => {
+        if (this.activeSyncPromise === run) {
+          this.activeSyncPromise = null;
+        }
+      },
+    );
+    return run;
+  }
+
+  private async runPendingOperations() {
     this.logDebug("syncPendingOperations called", {
       isSyncing: this.isSyncing,
       hasSupabase: !!supabase,
@@ -347,6 +387,7 @@ class SyncManager {
     try {
       let processed = 0;
       let consecutiveErrors = 0;
+      let persistentError: string | null = null;
       const MAX_CONSECUTIVE_ERRORS = 5;
 
       while (!syncQueue.isEmpty()) {
@@ -507,6 +548,42 @@ class SyncManager {
             }
           }
 
+          // A foreign-key violation is deterministic until its parent record is
+          // repaired. Retrying it only keeps the UI yellow and blocks the FIFO
+          // queue, so surface it immediately as a retryable dead-letter item.
+          if (this.getErrorCode(error) === "23503") {
+            const isSatKeyForeignKey =
+              operation.type === "products" &&
+              typeof operation.data?.satKeyId === "string" &&
+              operation.data.satKeyId.length > 0;
+            if (isSatKeyForeignKey) {
+              operation.failureReason = "sat_key_foreign_key";
+            }
+            persistentError =
+              isSatKeyForeignKey
+                ? "La clave SAT del producto no existe en la base de datos. Corrige la clave y reintenta."
+                : "Una referencia relacionada no existe en la base de datos. Corrige el dato y reintenta.";
+            this.logDebug("Foreign-key violation moved directly to dead letter", {
+              ...opSummary,
+              error: this.toErrorMeta(error),
+            });
+            try {
+              syncQueue.moveToDeadLetter(operation);
+              syncQueue.remove(operation.id);
+            } catch (queueError) {
+              throw new Error(
+                "LocalStorage quota exceeded - cannot manage sync queue",
+              );
+            }
+            this.updateStatus({
+              pendingCount: syncQueue.size(),
+              deadLetterCount: syncQueue.getDeadLetterCount(),
+              error: persistentError,
+            });
+            consecutiveErrors = 0;
+            continue;
+          }
+
           consecutiveErrors++;
 
           try {
@@ -547,26 +624,6 @@ class SyncManager {
               });
               consecutiveErrors = 0; // Reset after removing failed operation
             } else {
-              if (
-                operation.type === "sat_keys" &&
-                syncQueue.size() > 1
-              ) {
-                const movedToBack = syncQueue.moveToBack(operation.id);
-                this.logDebug(
-                  "Moved failed sat_keys operation to queue tail to avoid blocking later writes",
-                  {
-                    ...opSummary,
-                    movedToBack,
-                    queueSize: syncQueue.size(),
-                  },
-                );
-                if (movedToBack) {
-                  consecutiveErrors = 0;
-                  this.updateStatus({ pendingCount: syncQueue.size() });
-                  continue;
-                }
-              }
-
               if (
                 isTimeoutError &&
                 operation.action === "record_sale" &&
@@ -646,9 +703,10 @@ class SyncManager {
         deadLetterCount: syncQueue.getDeadLetterCount(),
         lastSync: new Date(),
         error:
-          syncQueue.getDeadLetterCount() > 0
+          persistentError ??
+          (syncQueue.getDeadLetterCount() > 0
             ? `${syncQueue.getDeadLetterCount()} operacion(es) fallaron. Datos guardados localmente.`
-            : null,
+            : null),
       });
     } catch (error) {
       console.error("[SyncManager] Sync error:", error);
@@ -1190,18 +1248,43 @@ class SyncManager {
     const client = getSupabaseClient();
 
     const dbData = this.convertToDbFormat(data, "sat_key");
+    const findExistingSatKey = async () => {
+      const result = await client
+        .from("sat_keys")
+        .select("id, code, description, created_at, updated_at")
+        .eq("code", dbData.code)
+        .eq("is_deleted", false)
+        .abortSignal(signal)
+        .maybeSingle();
+      if (result.error) throw result.error;
+      return result.data;
+    };
+    const adoptCanonicalSatKey = (existingSatKey: any) => {
+      syncQueue.remapSatKeyId(dbData.id, existingSatKey.id);
+      publishSatKeyResolution({
+        localId: dbData.id,
+        canonical: {
+          id: existingSatKey.id,
+          code: existingSatKey.code,
+          description: existingSatKey.description,
+          createdAt: existingSatKey.created_at,
+          updatedAt: existingSatKey.updated_at,
+        },
+      });
+    };
 
     switch (action) {
       case "create":
       case "update":
-        const { data: existingSatKey, error: findError } = await client
-          .from("sat_keys")
-          .select("id")
-          .eq("code", dbData.code)
-          .eq("is_deleted", false)
-          .abortSignal(signal)
-          .maybeSingle();
-        if (findError) throw findError;
+        const existingSatKey = await findExistingSatKey();
+
+        if (existingSatKey && existingSatKey.id !== dbData.id) {
+          // The remote row is canonical. Never rewrite its primary key: products
+          // reference this id through a foreign key and other devices may already
+          // persist it locally.
+          adoptCanonicalSatKey(existingSatKey);
+          break;
+        }
 
         if (existingSatKey) {
           const { error: updateError } = await client
@@ -1217,7 +1300,18 @@ class SyncManager {
           .from("sat_keys")
           .upsert(dbData, { onConflict: "id" })
           .abortSignal(signal);
-        if (upsertError) throw upsertError;
+        if (upsertError) {
+          // A competing client may have inserted this code after our initial
+          // lookup. Re-resolve 23505 once and adopt the canonical parent id.
+          if (this.getErrorCode(upsertError) === "23505") {
+            const canonicalSatKey = await findExistingSatKey();
+            if (canonicalSatKey && canonicalSatKey.id !== dbData.id) {
+              adoptCanonicalSatKey(canonicalSatKey);
+              break;
+            }
+          }
+          throw upsertError;
+        }
         break;
 
       case "delete":
@@ -1372,7 +1466,15 @@ class SyncManager {
   }
 
   private updateStatus(partial: Partial<SyncStatus>) {
-    this.currentStatus = { ...this.currentStatus, ...partial };
+    this.currentStatus = {
+      ...this.currentStatus,
+      ...partial,
+      // Recovery UI must use a persisted reason, not the final error string of
+      // a mixed batch of failed operations.
+      hasSatKeyDeadLetter: syncQueue.getDeadLetter().some(
+        (operation) => operation.failureReason === "sat_key_foreign_key",
+      ),
+    };
     this.notifyListeners();
   }
 
@@ -1486,10 +1588,14 @@ class SyncManager {
       pendingCount: syncQueue.size(),
       connection: this.getConnectionSnapshot(),
     });
-    this.isSyncing = false;
-    this.syncStartTime = null;
+    if (this.activeSyncPromise) {
+      this.logDebug("forceSync joined the active sync run", {
+        pendingCount: syncQueue.size(),
+      });
+      return this.activeSyncPromise;
+    }
+
     this.updateStatus({
-      isSyncing: false,
       pendingCount: syncQueue.size(),
       deadLetterCount: syncQueue.getDeadLetterCount(),
       error: null,
@@ -1513,12 +1619,49 @@ class SyncManager {
     });
     this.syncPendingOperations();
   }
+
+  /**
+   * Discards product snapshots blocked by a missing SAT parent and any older
+   * dead-letter snapshots for those same products. A corrected save is the
+   * authoritative version; retaining an older snapshot could later overwrite it.
+   */
+  public discardSatKeyDeadLetters() {
+    const affectedProductIds = new Set(
+      syncQueue
+        .getDeadLetter()
+        .filter(
+          (operation) =>
+            operation.failureReason === "sat_key_foreign_key" &&
+            operation.type === "products" &&
+            typeof operation.data?.id === "string",
+        )
+        .map((operation) => operation.data.id),
+    );
+    const discarded = syncQueue.discardDeadLetter(
+      (operation) =>
+        operation.failureReason === "sat_key_foreign_key" ||
+        (operation.type === "products" &&
+          typeof operation.data?.id === "string" &&
+          affectedProductIds.has(operation.data.id)),
+    );
+    const remaining = syncQueue.getDeadLetterCount();
+    this.updateStatus({
+      pendingCount: syncQueue.size(),
+      deadLetterCount: remaining,
+      error:
+        remaining > 0
+          ? `${remaining} operacion(es) fallaron. Datos guardados localmente.`
+          : null,
+    });
+    return discarded;
+  }
 }
 
 export interface SyncStatus {
   isSyncing: boolean;
   pendingCount: number;
   deadLetterCount: number;
+  hasSatKeyDeadLetter: boolean;
   lastSync: Date | null;
   error: string | null;
 }

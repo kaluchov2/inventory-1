@@ -6,6 +6,7 @@ import { satKeyService } from '../services/satKeyService';
 import { CategoryCode, SatCategorySuggestion, SatKey } from '../types';
 import { generateId, getCurrentISODate } from '../utils/formatters';
 import { isDuplicateSatCode, normalizeSatCode } from '../utils/satKeyHelpers';
+import { subscribeSatKeyResolution } from '../lib/satKeyResolution';
 
 interface SatKeyFilters {
   search: string;
@@ -254,6 +255,17 @@ export const useSatKeyStore = create<SatKeyStore>()(
     },
   ),
 );
+
+subscribeSatKeyResolution(({ localId, canonical }) => {
+  useSatKeyStore.setState((state) => ({
+    satKeys: [
+      ...state.satKeys.filter(
+        (item) => item.id !== localId && item.id !== canonical.id,
+      ),
+      canonical,
+    ],
+  }));
+});
 
 function convertDbSatKey(dbSatKey: any): SatKey {
   return {

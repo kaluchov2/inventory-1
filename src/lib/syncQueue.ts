@@ -15,6 +15,7 @@ export type SyncOperation = {
   data: any;
   timestamp: string;
   retryCount: number;
+  failureReason?: 'sat_key_foreign_key';
 };
 
 class SyncQueue {
@@ -57,7 +58,7 @@ class SyncQueue {
     operation.retryCount = 0; // Reset retries for future retry attempts
     this.deadLetter.push(operation);
     try {
-      localStorage.setItem(this.DEAD_LETTER_KEY, JSON.stringify(this.deadLetter));
+      this.saveDeadLetter();
     } catch (error) {
       console.error('[SyncQueue] Failed to persist dead-letter queue to localStorage — operation may be lost on next reload:', error);
     }
@@ -73,15 +74,58 @@ class SyncQueue {
 
   public retryDeadLetter() {
     const ops = [...this.deadLetter];
+    let requeued = 0;
+
+    try {
+      for (const op of ops) {
+        this.enqueue({ type: op.type, action: op.action, data: op.data });
+        requeued++;
+      }
+    } catch (error) {
+      // Keep only entries that never reached the main queue. Previously queued
+      // operations are already persisted there, so this avoids both loss and
+      // duplicate retries after a localStorage quota failure.
+      this.deadLetter = ops.slice(requeued);
+      try {
+        this.saveDeadLetter();
+      } catch (persistError) {
+        console.error('[SyncQueue] Failed to preserve remaining dead-letter operations after retry failure:', persistError);
+      }
+      throw error;
+    }
+
     this.deadLetter = [];
     try {
       localStorage.removeItem(this.DEAD_LETTER_KEY);
     } catch (error) {
+      // Every operation was already persisted in the main queue. Do not restore
+      // them here: that would leave a stale second copy in dead-letter storage
+      // and could apply a later retry twice.
       console.error('[SyncQueue] Failed to clear dead-letter queue from localStorage during retry:', error);
+      try {
+        this.saveDeadLetter();
+      } catch (persistError) {
+        console.error('[SyncQueue] Failed to persist the cleared dead-letter queue after retry:', persistError);
+      }
     }
-    // Re-enqueue all dead letter operations
-    for (const op of ops) {
-      this.enqueue({ type: op.type, action: op.action, data: op.data });
+  }
+
+  public discardDeadLetter(
+    shouldDiscard: (operation: SyncOperation) => boolean,
+  ): number {
+    const remaining = this.deadLetter.filter((operation) => !shouldDiscard(operation));
+    const discarded = this.deadLetter.length - remaining.length;
+    if (discarded === 0) return 0;
+
+    const original = this.deadLetter;
+    this.deadLetter = remaining;
+    try {
+      if (remaining.length === 0) localStorage.removeItem(this.DEAD_LETTER_KEY);
+      else this.saveDeadLetter();
+      return discarded;
+    } catch (error) {
+      this.deadLetter = original;
+      throw error;
     }
   }
 
@@ -176,6 +220,10 @@ class SyncQueue {
     }
   }
 
+  private saveDeadLetter() {
+    localStorage.setItem(this.DEAD_LETTER_KEY, JSON.stringify(this.deadLetter));
+  }
+
   /**
    * Move an existing operation to the back of the queue.
    * Useful to avoid head-of-line blocking when one operation is flaky.
@@ -193,6 +241,73 @@ class SyncQueue {
       return true;
     } catch (error) {
       this.queue = originalQueue;
+      throw error;
+    }
+  }
+
+  /**
+   * Replaces a locally generated SAT key id with the canonical server id in
+   * pending snapshots. This is needed when two devices created the same SAT
+   * code while offline and the server already owns that code under another id.
+   */
+  public remapSatKeyId(localId: string, canonicalId: string) {
+    if (!localId || localId === canonicalId) return;
+
+    const remapData = (data: any): any => {
+      if (Array.isArray(data)) {
+        const remapped = data.map(remapData);
+        return remapped.some((item, index) => item !== data[index])
+          ? remapped
+          : data;
+      }
+      if (!data || typeof data !== 'object') return data;
+
+      let next = data.satKeyId === localId
+        ? { ...data, satKeyId: canonicalId }
+        : data;
+
+      for (const key of ['items', 'transaction', 'snapshot']) {
+        if (!(key in data)) continue;
+        const remappedChild = remapData(data[key]);
+        if (remappedChild !== data[key]) {
+          next = { ...next, [key]: remappedChild };
+        }
+      }
+      return next;
+    };
+
+    const remapOperations = (operations: SyncOperation[]) =>
+      operations.map((operation) => {
+        const data = remapData(operation.data);
+        return data === operation.data ? operation : { ...operation, data };
+      });
+    const remappedQueue = remapOperations(this.queue);
+    const remappedDeadLetter = remapOperations(this.deadLetter);
+    const queueChanged = remappedQueue.some((operation, index) => operation !== this.queue[index]);
+    const deadLetterChanged = remappedDeadLetter.some((operation, index) => operation !== this.deadLetter[index]);
+
+    if (!queueChanged && !deadLetterChanged) return;
+
+    const originalQueue = this.queue;
+    const originalDeadLetter = this.deadLetter;
+    const storedQueue = localStorage.getItem(this.STORAGE_KEY);
+    const storedDeadLetter = localStorage.getItem(this.DEAD_LETTER_KEY);
+    this.queue = remappedQueue;
+    this.deadLetter = remappedDeadLetter;
+    try {
+      this.saveQueue();
+      this.saveDeadLetter();
+    } catch (error) {
+      this.queue = originalQueue;
+      this.deadLetter = originalDeadLetter;
+      try {
+        if (storedQueue === null) localStorage.removeItem(this.STORAGE_KEY);
+        else localStorage.setItem(this.STORAGE_KEY, storedQueue);
+        if (storedDeadLetter === null) localStorage.removeItem(this.DEAD_LETTER_KEY);
+        else localStorage.setItem(this.DEAD_LETTER_KEY, storedDeadLetter);
+      } catch {
+        // Preserve the original write error for the caller.
+      }
       throw error;
     }
   }

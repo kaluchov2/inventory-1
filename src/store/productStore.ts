@@ -24,6 +24,7 @@ import { getProductMatchKey } from "../utils/excelImport";
 import { deriveStatus } from "../utils/productHelpers";
 import { syncQueue } from "../lib/syncQueue";
 import { isMissingDatabaseFunction } from "../lib/saleSync";
+import { subscribeSatKeyResolution } from "../lib/satKeyResolution";
 
 /**
  * Normalize a string value for comparison during sync.
@@ -1445,6 +1446,16 @@ export const useProductStore = create<ProductStore>()(
     },
   ),
 );
+
+subscribeSatKeyResolution(({ localId, canonical }) => {
+  useProductStore.setState((state) => ({
+    products: state.products.map((product) =>
+      product.satKeyId === localId
+        ? { ...product, satKeyId: canonical.id }
+        : product,
+    ),
+  }));
+});
 
 // Helper functions
 function convertDbProduct(dbProduct: any): Product {

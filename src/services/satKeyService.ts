@@ -2,6 +2,15 @@ import { getSupabaseClient } from '../lib/supabase';
 import { SatCategorySuggestion, SatKey } from '../types';
 import { normalizeSatCode } from '../utils/satKeyHelpers';
 
+export interface ConfirmedSatKeyResult {
+  satKey: SatKey;
+  wasExisting: boolean;
+}
+
+// Bounds the manual "add SAT key" flow so a hung Supabase request cannot lock
+// the product form indefinitely (all its buttons are disabled while creating).
+const CREATE_OR_GET_TIMEOUT_MS = 15000;
+
 export const satKeyService = {
   async getAll(): Promise<SatKey[]> {
     const client = getSupabaseClient();
@@ -48,6 +57,72 @@ export const satKeyService = {
     if (error) throw error;
 
     return convertFromDbFormat(data);
+  },
+
+  async findByCode(code: string, signal?: AbortSignal): Promise<SatKey | null> {
+    const client = getSupabaseClient();
+    let query = client
+      .from('sat_keys')
+      .select('*')
+      .eq('code', normalizeSatCode(code))
+      .eq('is_deleted', false);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query.maybeSingle();
+
+    if (error) throw error;
+    return data ? convertFromDbFormat(data) : null;
+  },
+
+  /**
+   * Creates a key only after checking the server, then returns the server's
+   * canonical record. A unique-code race is resolved by reading that record.
+   * Bounded by a timeout so a hung request rejects instead of stalling forever.
+   */
+  async createOrGet(
+    satKey: SatKey,
+    options?: { timeoutMs?: number },
+  ): Promise<ConfirmedSatKeyResult> {
+    const controller = new AbortController();
+    const run = async (): Promise<ConfirmedSatKeyResult> => {
+      const existing = await this.findByCode(satKey.code, controller.signal);
+      if (existing) return { satKey: existing, wasExisting: true };
+
+      const client = getSupabaseClient();
+      const { data, error } = await client
+        .from('sat_keys')
+        .insert(convertToDbFormat(satKey))
+        .select()
+        .abortSignal(controller.signal)
+        .single();
+
+      if (error) {
+        if ((error as { code?: string }).code === '23505') {
+          const concurrent = await this.findByCode(satKey.code, controller.signal);
+          if (concurrent) return { satKey: concurrent, wasExisting: true };
+        }
+        throw error;
+      }
+
+      return { satKey: convertFromDbFormat(data), wasExisting: false };
+    };
+
+    const timeoutMs = options?.timeoutMs ?? CREATE_OR_GET_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => {
+          controller.abort();
+          reject(new Error('sat_key_confirm_timeout'));
+        },
+        timeoutMs,
+      );
+    });
+
+    try {
+      return await Promise.race([run(), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   },
 
   async update(id: string, updates: Partial<SatKey>): Promise<SatKey> {

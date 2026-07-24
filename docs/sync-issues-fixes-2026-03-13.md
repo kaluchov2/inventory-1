@@ -1,5 +1,9 @@
 # Sync Issues Fixes (March 13, 2026)
 
+> Current behavior (July 23, 2026): a missing `record_sale` RPC now fails closed
+> and preserves the queued sale; the legacy per-table fallback is no longer used.
+> Migration 023 also serializes concurrent retries for the same transaction id.
+
 ## Context
 The app showed repeated sync failures after creating a sale, then later writes (like adding products) also got stuck.
 

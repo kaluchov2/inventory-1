@@ -137,6 +137,40 @@ describe('syncQueue SAT id remapping', () => {
     expect(JSON.parse(storage.store.get('inventory_sync_dead_letter') || '[]')).toEqual([]);
   });
 
+  it('persists a failed SAT remap and applies it after the queue recovers on restart', async () => {
+    const storage = createLocalStorageStub();
+    vi.stubGlobal('localStorage', storage);
+    const { syncQueue } = await import('./syncQueue');
+
+    syncQueue.enqueue({
+      type: 'products',
+      action: 'update',
+      data: { id: 'product-pending-remap', satKeyId: 'sat-local-id' },
+    });
+    storage.setItem.mockImplementation((key: string, value: string) => {
+      if (key === 'inventory_sync_queue') throw new Error('storage unavailable');
+      storage.store.set(key, value);
+    });
+
+    expect(syncQueue.scheduleSatKeyIdRemap('sat-local-id', 'sat-server-id')).toBe(false);
+    expect(JSON.parse(storage.store.get('inventory_sync_sat_key_remaps') || '[]')).toEqual([
+      { localId: 'sat-local-id', canonicalId: 'sat-server-id' },
+    ]);
+
+    storage.setItem.mockImplementation((key: string, value: string) => {
+      storage.store.set(key, value);
+    });
+    vi.resetModules();
+    const { syncQueue: recoveredQueue } = await import('./syncQueue');
+
+    expect(recoveredQueue.getAll()).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ satKeyId: 'sat-server-id' }),
+      }),
+    ]);
+    expect(storage.store.get('inventory_sync_sat_key_remaps')).toBeUndefined();
+  });
+
   it('can discard only SAT foreign-key dead letters after the product is corrected', async () => {
     const { syncQueue } = await import('./syncQueue');
     syncQueue.enqueue({

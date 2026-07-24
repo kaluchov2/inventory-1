@@ -24,9 +24,10 @@ import {
   Text,
   Alert,
   AlertIcon,
+  useToast,
 } from "@chakra-ui/react";
 import { useForm, Controller } from "react-hook-form";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Product, CategoryCode } from "../../types";
 import { CATEGORY_OPTIONS } from "../../constants/categories";
 import {
@@ -71,7 +72,12 @@ export function ProductForm({
   initialUpsBatch,
 }: ProductFormProps) {
   const isEditing = !!product;
-  const { satKeys, satCategorySuggestions } = useSatKeyStore();
+  const { satKeys, satCategorySuggestions, createAndConfirmSatKey } = useSatKeyStore();
+  const toast = useToast();
+  const [isAddingSatKey, setIsAddingSatKey] = useState(false);
+  const [newSatCode, setNewSatCode] = useState("");
+  const [newSatDescription, setNewSatDescription] = useState("");
+  const [isCreatingSatKey, setIsCreatingSatKey] = useState(false);
   const productSatKeyMissing =
     !!product?.satKeyId &&
     satKeys.length > 0 &&
@@ -82,12 +88,14 @@ export function ProductForm({
     : 0;
 
   const addAnotherRef = useRef(false);
+  const initializedFormKeyRef = useRef<string | null>(null);
 
   const {
     register,
     control,
     handleSubmit,
     reset,
+    setValue,
     watch,
     formState: { errors },
   } = useForm<ProductFormData>({
@@ -116,17 +124,25 @@ export function ProductForm({
   );
 
   useEffect(() => {
+    if (!isOpen) {
+      initializedFormKeyRef.current = null;
+      return;
+    }
+
+    const formKey = product?.id ?? "new-product";
+    if (initializedFormKeyRef.current === formKey) return;
+    initializedFormKeyRef.current = formKey;
+
     if (product) {
-      const hasValidSatKey =
-        !!product.satKeyId &&
-        (satKeys.length === 0 || satKeys.some((satKey) => satKey.id === product.satKeyId));
       reset({
         name: product.name,
         upsBatch: product.upsBatch,
         quantity: product.availableQty,
         unitPrice: product.unitPrice,
         category: product.category,
-        satKeyId: hasValidSatKey ? product.satKeyId || "" : "",
+        // Preserve the stored id even when the SAT catalog arrives late. This
+        // prevents an edit from accidentally clearing a valid remote key.
+        satKeyId: product.satKeyId || "",
         brand: product.brand || "",
         color: product.color || "",
         size: product.size || "",
@@ -146,7 +162,7 @@ export function ProductForm({
         description: "",
       });
     }
-  }, [product, reset, initialUpsBatch, satKeys]);
+  }, [isOpen, product, reset, initialUpsBatch]);
 
   const handleFormSubmit = (data: ProductFormData) => {
     const addAnother = addAnotherRef.current;
@@ -179,8 +195,60 @@ export function ProductForm({
   };
 
   const handleClose = () => {
+    setIsAddingSatKey(false);
+    setNewSatCode("");
+    setNewSatDescription("");
     reset();
     onClose();
+  };
+
+  const handleCreateSatKey = async () => {
+    setIsCreatingSatKey(true);
+    try {
+      const result = await createAndConfirmSatKey({
+        code: newSatCode,
+        description: newSatDescription,
+      });
+      setValue("satKeyId", result.satKey.id, { shouldDirty: true });
+      setNewSatCode("");
+      setNewSatDescription("");
+      setIsAddingSatKey(false);
+      toast(result.hasPendingReconciliation
+        ? {
+            title: "Clave SAT registrada con pendientes locales",
+            description: `${result.satKey.code} - ${result.satKey.description}. Se usará en este producto; revisa la sincronización de cambios anteriores.`,
+            status: "warning",
+            duration: 7000,
+            isClosable: true,
+          }
+        : {
+            title: result.wasExisting ? "Clave SAT existente seleccionada" : "Clave SAT registrada",
+            description: `${result.satKey.code} - ${result.satKey.description}`,
+            status: "success",
+            duration: 4000,
+            isClosable: true,
+          });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const description = message === "sat_key_code_invalid"
+        ? "Ingresa una clave SAT de 8 dígitos."
+        : message === "sat_key_description_required"
+          ? "Ingresa una descripción para la clave SAT."
+          : message === "sat_key_connection_required"
+            ? "Necesitas conexión para registrar una nueva clave SAT."
+            : message === "sat_key_confirm_timeout"
+              ? "La confirmación tardó demasiado. Revisa tu conexión e inténtalo de nuevo."
+              : "No se pudo confirmar la clave SAT en Supabase. Revisa tu conexión e inténtalo de nuevo.";
+      toast({
+        title: "No se registró la clave SAT",
+        description,
+        status: "error",
+        duration: 6000,
+        isClosable: true,
+      });
+    } finally {
+      setIsCreatingSatKey(false);
+    }
   };
 
   return (
@@ -383,10 +451,86 @@ export function ProductForm({
                     />
                   )}
                 />
+                <HStack mt={3} spacing={3} align="center" flexWrap="wrap">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsAddingSatKey((current) => !current)}
+                    isDisabled={isCreatingSatKey}
+                  >
+                    Agregar nueva clave SAT
+                  </Button>
+                  <Text fontSize="sm" color="gray.600">
+                    Se verifica en Supabase antes de usarla en el producto.
+                  </Text>
+                </HStack>
+                {isAddingSatKey && (
+                  <Box
+                    mt={3}
+                    p={4}
+                    bg="blue.50"
+                    borderWidth="1px"
+                    borderColor="blue.100"
+                    borderRadius="lg"
+                  >
+                    <VStack align="stretch" spacing={3}>
+                      <Text fontWeight="semibold" color="gray.800">
+                        Registrar y usar nueva clave SAT
+                      </Text>
+                      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+                        <FormControl isRequired>
+                          <FormLabel>Clave SAT (8 dígitos)</FormLabel>
+                          <Input
+                            value={newSatCode}
+                            onChange={(event) => setNewSatCode(event.target.value.replace(/\D/g, "").slice(0, 8))}
+                            inputMode="numeric"
+                            maxLength={8}
+                            placeholder="Ej: 53103000"
+                            isDisabled={isCreatingSatKey}
+                          />
+                        </FormControl>
+                        <FormControl isRequired>
+                          <FormLabel>Descripción</FormLabel>
+                          <Input
+                            value={newSatDescription}
+                            onChange={(event) => setNewSatDescription(event.target.value)}
+                            placeholder="Ej: Ropa"
+                            isDisabled={isCreatingSatKey}
+                          />
+                        </FormControl>
+                      </SimpleGrid>
+                      <HStack justify="flex-end" spacing={3} flexWrap="wrap">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setIsAddingSatKey(false)}
+                          isDisabled={isCreatingSatKey}
+                        >
+                          Cancelar
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleCreateSatKey}
+                          isLoading={isCreatingSatKey}
+                          loadingText="Verificando"
+                          isDisabled={
+                            !/^\d{8}$/.test(newSatCode) ||
+                            newSatDescription.trim().length === 0
+                          }
+                        >
+                          Verificar y usar
+                        </Button>
+                      </HStack>
+                    </VStack>
+                  </Box>
+                )}
                 {productSatKeyMissing && (
                   <Alert status="warning" mt={2} borderRadius="md" py={2}>
                     <AlertIcon />
-                    La clave SAT anterior ya no existe. Al guardar se limpiara este campo.
+                    La clave SAT anterior no está disponible localmente. Se conservará hasta que elijas otra.
                   </Alert>
                 )}
               </FormControl>
@@ -460,7 +604,7 @@ export function ProductForm({
               variant="outline"
               size="lg"
               onClick={handleClose}
-              isDisabled={isLoading}
+              isDisabled={isLoading || isCreatingSatKey}
             >
               {es.actions.cancel}
             </Button>
@@ -471,6 +615,7 @@ export function ProductForm({
                 size="lg"
                 onClick={handleSaveAndAddAnother}
                 isLoading={isLoading}
+                isDisabled={isCreatingSatKey}
               >
                 Guardar y Agregar Otro
               </Button>
@@ -480,6 +625,7 @@ export function ProductForm({
               colorScheme="brand"
               size="lg"
               isLoading={isLoading}
+              isDisabled={isCreatingSatKey}
             >
               {es.actions.save}
             </Button>

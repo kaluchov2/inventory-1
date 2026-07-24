@@ -7,7 +7,7 @@ The system uses an **optimistic local-first** approach:
 1. A sale (or any write) updates the in-memory store and queues the operation to `localStorage` — **instantly visible to the current user**.
 2. `syncManager` flushes the queue to Supabase in the background.
 3. Supabase emits a `postgres_changes` realtime event to all connected clients.
-4. `SyncInitializer` debounces the event by **2 seconds**, then calls `loadFromSupabase()` which reloads the full dataset (~1–2 s).
+4. Realtime handlers merge the changed row directly into the matching local store. Foreground recovery later runs delta catch-up for products/customers and a full transaction reload.
 
 ---
 
@@ -15,12 +15,12 @@ The system uses an **optimistic local-first** approach:
 
 | Scenario | Wait time |
 |---|---|
-| Best case — queue flushed immediately | ~3–4 seconds |
-| Typical case — queue was partway through 10 s interval | ~7–8 seconds |
-| Worst case — 10 s timer just reset when the sale happened | ~13–15 seconds |
+| Best case — immediate flush + realtime delivery | Usually under 2 seconds |
+| Fallback — waits for periodic queue flush | Up to ~15 seconds plus network latency |
+| App was backgrounded | Connectivity check (bounded to 10 seconds), flush, then catch-up |
 
-The flush interval in `syncManager.ts` is **10 seconds**. Additionally, `visibilitychange` events
-trigger an immediate flush + reload when the app returns from background.
+The fallback flush interval in `syncManager.ts` is **15 seconds**. New operations normally request
+an immediate flush. Foreground events first await a fresh connectivity result, then flush and catch up.
 
 ---
 
@@ -31,18 +31,13 @@ User A completes a sale
   │
   ├─ [0 ms]   Local store updated, operation added to localStorage queue
   │
-  ├─ [0–10 s] syncManager flushes queue to Supabase
+  ├─ [0–15 s] syncManager flushes queue to Supabase
   │            • Immediate flush if connected + not already syncing → ~0 ms
-  │            • visibilitychange (app returns to foreground) → immediate flush
-  │            • Otherwise waits for next 10 s tick → up to 10 s
+  │            • foreground recovery → check connection, then flush
+  │            • Otherwise waits for next 15 s tick
   │
-  ├─ [+500 ms–2 s] Supabase replicates to realtime layer,
-  │                broadcasts postgres_changes to all subscribers
-  │
-  ├─ [+2 s]   SyncInitializer debounce fires → loadFromSupabase() called
-  │            (debounce collapses burst events from a single sale into one reload)
-  │
-  └─ [+1–2 s] loadFromSupabase() fetches & merges data → User B sees updated Products page
+  └─ [network latency] Supabase broadcasts postgres_changes and the receiving
+                       store merges that row directly
 ```
 
 ---
@@ -51,10 +46,11 @@ User A completes a sale
 
 | File | Role |
 |---|---|
-| `src/lib/syncManager.ts` | Queues operations, flushes to Supabase on 10 s interval or immediately. Dead-letter queue for failed ops. |
+| `src/lib/syncManager.ts` | Queues operations, flushes immediately or on the 15 s fallback interval. Dead-letter queue for failed ops. |
 | `src/lib/syncQueue.ts` | localStorage-backed FIFO queue with retry counting + dead-letter queue |
-| `src/lib/connectionStatus.ts` | Tracks online/Supabase status. `visibilitychange` triggers immediate re-check |
-| `src/components/common/SyncInitializer.tsx` | On mount: flush + load. On realtime: debounced reload. On foreground: flush + reload |
+| `src/lib/connectionStatus.ts` | Tracks online/Supabase status with a single-flight, whole-operation 10 s check deadline |
+| `src/lib/foregroundRecovery.ts` | Awaits connectivity, flushes the queue, then runs catch-up loads |
+| `src/components/common/SyncInitializer.tsx` | On mount: flush + load. On realtime: row merge. On foreground: coalesced recovery |
 | `src/components/common/SyncStatus.tsx` | Shows sync status, dead-letter count with retry button |
 | `src/hooks/useRealtimeSync.ts` | Subscribes to Supabase `postgres_changes` per table |
 
@@ -71,8 +67,10 @@ button. Operations in the dead-letter queue are persisted to `localStorage` and 
 ### Visibility change handlers (fixes background→foreground delay)
 
 When the PWA returns from background (or a browser tab regains focus):
-1. `connectionStatus.ts` re-checks Supabase connectivity immediately
-2. `SyncInitializer.tsx` flushes the pending queue, then reloads all data from Supabase
+1. Concurrent `visibilitychange`, `focus`, and `pageshow` triggers join one connectivity check.
+2. The check covers auth-token lookup and the database probe, and settles within 10 seconds.
+3. Only after a healthy result does foreground recovery flush pending writes.
+4. Products/customers run delta catch-up; transactions and SAT keys reload.
 
 This eliminates the 2–3 minute delay previously experienced when switching back to the app.
 
@@ -99,20 +97,10 @@ synced to Supabase.
 
 ### Reduce the sync delay further
 
-The interval is currently 10 seconds. It can be reduced to 5 seconds for even faster sync:
+The fallback interval is currently 15 seconds. It can be reduced if production traffic permits:
 
 ```
-// Line ~65 in syncManager.ts
-}, 5000); // flush every 5 seconds
-```
-
-### Reduce the debounce delay
-
-In `src/components/common/SyncInitializer.tsx`, the `2000` ms debounce can be reduced
-to `500` ms if burst events are no longer a concern:
-
-```ts
-productReloadTimer.current = setTimeout(() => { ... }, 500);
+}, 10_000); // flush every 10 seconds
 ```
 
 ---
@@ -125,7 +113,7 @@ productReloadTimer.current = setTimeout(() => { ... }, 500);
 | Two users edit different products | Both succeed independently | None |
 | Two users edit the **same** product simultaneously | Last writer wins, first edit lost silently | Medium |
 | User A deletes, User B edits the same product | `is_deleted=true` may be overwritten back by B's update | Medium |
-| User adds product while offline, reconnects | Queued op syncs on reconnect, then full reload | Low |
+| User adds product while offline, reconnects | Queued op syncs, then foreground delta/full catch-up runs | Low |
 | Rapid "Save & Add Another" | Sequential queue, no parallel conflicts | Low |
 
 ---
@@ -168,13 +156,12 @@ Each of the three new products gets a globally unique `id`. The Supabase upsert 
 `{ onConflict: 'id' }`, so the three operations never collide — they insert into three
 separate rows regardless of the order they arrive at the DB.
 
-Users won't see each other's new products until the realtime event fires and the 2 s debounce
-resolves (~3–15 s depending on where each client is in the flush interval), but every product
-is persisted without loss or overwrite.
+Users see each other's new products when the realtime row event arrives. If realtime was suspended,
+the next foreground delta catch-up provides the recovery path.
 
 **Summary:**
 - Inventory integrity: ✅ Guaranteed
-- Visibility delay: up to ~65 s (see timing table above)
+- Visibility delay: normally network/realtime latency; up to the fallback flush interval before upload
 - Risk: None
 
 ---
@@ -186,7 +173,7 @@ is persisted without loss or overwrite.
 The entire sync stack is pure JavaScript:
 - `localStorage` queue — same API in browser tab and PWA
 - Supabase Realtime WebSocket — same connection in both contexts
-- `setInterval` (60 s flush) — same JavaScript timer
+- `setInterval` (15 s fallback flush) — same JavaScript timer
 - Zustand store — same in-memory state
 
 In practice, opening the app as a PWA on desktop behaves identically to a browser tab.
@@ -194,24 +181,24 @@ In practice, opening the app as a PWA on desktop behaves identically to a browse
 **The one real difference — mobile OS backgrounding:**
 
 On Android and iOS, the OS may throttle or fully pause JavaScript execution when the PWA is
-backgrounded (app switcher) or the screen locks. The 10 s `setInterval` will not fire while
+backgrounded (app switcher) or the screen locks. The 15 s `setInterval` will not fire while
 the app is paused.
 
 This is mitigated by two mechanisms:
-1. `connectionStatus.ts` listens for `visibilitychange` → re-checks Supabase connectivity immediately
-2. `SyncInitializer.tsx` listens for `visibilitychange` → flushes pending queue + reloads all data
+1. `connectionStatus.ts` listens for foreground events and coalesces them into one bounded check.
+2. `SyncInitializer.tsx` awaits that result before flushing and catching up local stores.
 
 **Worst-case mobile flow:**
 1. Seller completes a sale → queued locally
 2. Seller minimizes the PWA (OS pauses JS)
 3. Timer never fires while backgrounded
-4. Seller re-opens the PWA → `visibilitychange` fires → queue flushes + data reloads within seconds
+4. Seller re-opens the PWA → connectivity check → queue flush → data catch-up
 
 Data is never lost; it syncs within seconds of re-opening the app.
 
 **Summary:**
 - Desktop (browser or PWA): ✅ Identical behavior
-- Mobile (backgrounded): ✅ Flush + reload on foreground via `visibilitychange`
+- Mobile (backgrounded): ✅ Bounded connection recovery, flush, and catch-up on foreground
 
 ---
 
@@ -377,45 +364,28 @@ path is more reliable because it reads immutable source records.
 
 ---
 
-### Risk 5 — Full product table reload on every realtime event ⚠️
+### Risk 5 — Full product reload on every realtime event ✅ Resolved
 
-**File:** `src/components/common/SyncInitializer.tsx` (debounce handler) →
-`productStore.loadFromSupabase()` → `productService.getAll()`
-
-Every realtime event — any product change from any user — triggers `SELECT * FROM products` with no
-pagination or incremental fetch. Today this is fast. As the catalog grows:
-
-- **Performance:** Query time grows linearly with product count.
-- **Egress:** With 5 connected users and 50 product changes per day, a 1,000-product table
-  (≈ 1 KB/row) generates roughly `5 users × 50 events × 1 MB = 250 MB/day` in egress — well
-  over the free tier's 2 GB/month allowance within a couple of weeks of active use.
-
-The same reload pattern applies to transactions and customers, compounding the egress cost.
-
-**No fix is in scope for the current architecture.** A proper solution would use incremental
-sync (fetch only rows with `updated_at > last_sync`) or Supabase Realtime row-level payloads
-instead of triggering a full reload.
+Realtime product and customer events now merge the changed row directly. Foreground recovery uses
+timestamp-based delta fetches, with a periodic full-snapshot backstop for missed events.
 
 ---
 
-### Risk 6 — Transaction items flash empty for ~2–3 seconds after a realtime event ⚠️
+### Risk 6 — Realtime transaction inserts omit item rows ⚠️
 
 **File:** `src/store/transactionStore.ts:304` — `convertDbTransaction()`
 
-The realtime handler (`handleRealtimeUpdate`) calls `convertDbTransaction()`, which always sets
-`items: []` — items are fetched separately by the service and are not included in the realtime
-payload. The sequence on a new sale from another user:
+The realtime handler (`handleRealtimeUpdate`) calls `convertDbTransaction()`, which sets `items: []`
+because item rows are fetched separately and are not included in the transaction realtime payload.
+The next transaction full reload (startup or foreground recovery) hydrates the item rows.
 
 ```
-[0 ms]    Realtime event fires → handleRealtimeUpdate → transaction stored with items: []
-[0–2 s]   Reports page: topProducts recalculated → new transaction contributes $0 to every product
-[+2 s]    Debounce fires → loadFromSupabase() → transaction reloaded with correct items
-[+1–2 s]  topProducts recalculated correctly
+[0 ms]       Realtime event fires → transaction stored with items: []
+[foreground] Recovery runs loadFromSupabase() → transaction items are hydrated
 ```
 
-**Impact:** The top products table and sales-by-item data briefly show incorrect totals. It
-self-corrects within ~3–4 seconds. Not a data integrity issue, but a visible flicker if the
-Reports page is open when another user completes a sale.
+**Impact:** Sales-by-item views can be incomplete until the next transaction reload. This is not a
+database integrity issue, but transaction-item realtime hydration remains a separate follow-up.
 
 ---
 

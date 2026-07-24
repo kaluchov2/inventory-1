@@ -89,6 +89,7 @@ vi.mock('./syncQueue', () => ({
           : operation,
       );
     },
+    retryPendingSatKeyRemaps: vi.fn(() => true),
     moveToDeadLetter: (operation: QueueOperation) => {
       state.deadLetter.push({ ...operation, retryCount: 0 });
     },

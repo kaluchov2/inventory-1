@@ -18,16 +18,25 @@ export type SyncOperation = {
   failureReason?: 'sat_key_foreign_key';
 };
 
+type PendingSatKeyRemap = {
+  localId: string;
+  canonicalId: string;
+};
+
 class SyncQueue {
   private queue: SyncOperation[] = [];
   private readonly STORAGE_KEY = 'inventory_sync_queue';
   private readonly DEAD_LETTER_KEY = 'inventory_sync_dead_letter';
+  private readonly SAT_KEY_REMAP_KEY = 'inventory_sync_sat_key_remaps';
   private readonly MAX_RETRIES = 3;
   private deadLetter: SyncOperation[] = [];
+  private pendingSatKeyRemaps: PendingSatKeyRemap[] = [];
 
   constructor() {
     this.loadQueue();
     this.loadDeadLetter();
+    this.loadPendingSatKeyRemaps();
+    this.retryPendingSatKeyRemaps();
   }
 
   private loadQueue() {
@@ -107,6 +116,90 @@ class SyncQueue {
       } catch (persistError) {
         console.error('[SyncQueue] Failed to persist the cleared dead-letter queue after retry:', persistError);
       }
+    }
+  }
+
+  private loadPendingSatKeyRemaps() {
+    try {
+      const stored = localStorage.getItem(this.SAT_KEY_REMAP_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored);
+      if (!Array.isArray(parsed)) return;
+      this.pendingSatKeyRemaps = parsed.filter(
+        (item): item is PendingSatKeyRemap =>
+          typeof item?.localId === 'string' &&
+          item.localId.length > 0 &&
+          typeof item?.canonicalId === 'string' &&
+          item.canonicalId.length > 0 &&
+          item.localId !== item.canonicalId,
+      );
+    } catch (error) {
+      console.error('Failed to load pending SAT key remaps:', error);
+      this.pendingSatKeyRemaps = [];
+    }
+  }
+
+  private savePendingSatKeyRemaps() {
+    if (this.pendingSatKeyRemaps.length === 0) {
+      localStorage.removeItem(this.SAT_KEY_REMAP_KEY);
+      return;
+    }
+    localStorage.setItem(
+      this.SAT_KEY_REMAP_KEY,
+      JSON.stringify(this.pendingSatKeyRemaps),
+    );
+  }
+
+  /**
+   * Persists an SAT id reconciliation before applying it to queue snapshots.
+   * If storage is temporarily unavailable, the mapping survives a restart and
+   * is retried by the next sync attempt.
+   */
+  public scheduleSatKeyIdRemap(localId: string, canonicalId: string): boolean {
+    if (!localId || !canonicalId || localId === canonicalId) return true;
+
+    const original = this.pendingSatKeyRemaps;
+    const existing = original.findIndex((item) => item.localId === localId);
+    const next = existing === -1
+      ? [...original, { localId, canonicalId }]
+      : original.map((item, index) =>
+        index === existing ? { localId, canonicalId } : item,
+      );
+    this.pendingSatKeyRemaps = next;
+    try {
+      this.savePendingSatKeyRemaps();
+    } catch (error) {
+      this.pendingSatKeyRemaps = original;
+      console.error('[SyncQueue] Failed to persist pending SAT key remap:', error);
+      return false;
+    }
+
+    return this.retryPendingSatKeyRemaps();
+  }
+
+  /** Retries persisted SAT id remaps; safe to call repeatedly because remaps are idempotent. */
+  public retryPendingSatKeyRemaps(): boolean {
+    if (this.pendingSatKeyRemaps.length === 0) return true;
+
+    const original = this.pendingSatKeyRemaps;
+    const remaining: PendingSatKeyRemap[] = [];
+    for (const remap of original) {
+      try {
+        this.remapSatKeyId(remap.localId, remap.canonicalId);
+      } catch (error) {
+        console.error('[SyncQueue] Failed to apply pending SAT key remap:', error);
+        remaining.push(remap);
+      }
+    }
+
+    this.pendingSatKeyRemaps = remaining;
+    try {
+      this.savePendingSatKeyRemaps();
+      return remaining.length === 0;
+    } catch (error) {
+      this.pendingSatKeyRemaps = original;
+      console.error('[SyncQueue] Failed to persist pending SAT key remap retry state:', error);
+      return false;
     }
   }
 

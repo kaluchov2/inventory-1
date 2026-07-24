@@ -1,5 +1,12 @@
 # Sync Issues Fixes Addendum (March 18, 2026)
 
+> Historical note (July 23, 2026): this document describes an earlier intended
+> large-sale design and is not authoritative for the current implementation.
+> Current sales use the atomic `record_sale` RPC with a fixed 45-second maximum.
+> Missing RPCs fail closed instead of using the non-atomic legacy fallback, and
+> migration 023 serializes concurrent retries. See
+> `sale-sync-concurrency-hardening-2026-07-23.md`.
+
 ## Why this addendum
 This document extends the previous report (`docs/sync-issues-fixes-2026-03-13.md`) with the large-sale hardening and final validations added after additional production-like tests.
 

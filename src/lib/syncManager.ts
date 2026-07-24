@@ -14,7 +14,7 @@ import { publishSatKeyResolution } from "./satKeyResolution";
  * ## Multi-User Sync Architecture (3-5 concurrent users)
  *
  * - Optimistic UI: Local state updates instantly, operations queued for async sync
- * - Flush interval: 10s timer + immediate flush on new operation if connected + visibilitychange
+ * - Flush interval: 15s timer + immediate flush on new operation if connected + visibilitychange
  * - Realtime: Full loadFromSupabase() reload on any change event, debounced 2s
  * - Conflict resolution: Last-write-wins based on updated_at timestamps
  * - Queue persistence: localStorage, survives app restarts
@@ -200,11 +200,11 @@ export class SyncManager {
     });
 
     // SYNC TIMING NOTE FOR THE TEAM:
-    // This interval fires every 10 seconds. A sale recorded by User A will be
+    // This interval fires every 15 seconds. A sale recorded by User A will be
     // visible on User B's Products page in roughly:
     //   - Best case  (~3-4s):  A's queue flushed immediately + realtime event + 2s debounce
-    //   - Typical    (~7-8s):  Queue was already syncing; waits for next flush
-    //   - Worst case (~13-15s): This timer just reset; full 10s wait + realtime + 2s debounce
+    //   - Typical    (~8-12s): Queue was already syncing; waits for next flush
+    //   - Worst case (~18-20s): This timer just reset; full 15s wait + realtime + debounce
     setInterval(() => {
       const status = connectionStatus.getStatus();
       if (
@@ -219,7 +219,7 @@ export class SyncManager {
         });
         this.syncPendingOperations();
       }
-    }, 15000); // Flush queue to Supabase every 10 seconds when online
+    }, 15000); // Flush queue to Supabase every 15 seconds when online
 
     // Watchdog: if sync has been stuck for >2 minutes, force-reset and retry
     setInterval(() => {
@@ -249,7 +249,7 @@ export class SyncManager {
    * Flush all queued operations to Supabase.
    *
    * Called automatically by:
-   *  - The 60-second interval timer (see initialize())
+   *  - The 15-second interval timer (see initialize())
    *  - queueOperation() when connected and not already syncing (immediate flush)
    *  - SyncInitializer on app startup (before initial data load)
    *
@@ -301,6 +301,10 @@ export class SyncManager {
       this.logDebug("Skipping sync because Supabase is not configured");
       return;
     }
+
+    // A manual SAT reconciliation may have been deferred while localStorage
+    // was unavailable. Apply it before reading queued product snapshots.
+    syncQueue.retryPendingSatKeyRemaps();
 
     let status = connectionStatus.getStatus();
     if (!status.isOnline) {

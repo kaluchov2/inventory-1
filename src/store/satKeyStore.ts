@@ -3,10 +3,11 @@ import { persist } from 'zustand/middleware';
 import { syncManager } from '../lib/syncManager';
 import { supabase } from '../lib/supabase';
 import { satKeyService } from '../services/satKeyService';
+import { syncQueue } from '../lib/syncQueue';
 import { CategoryCode, SatCategorySuggestion, SatKey } from '../types';
 import { generateId, getCurrentISODate } from '../utils/formatters';
 import { isDuplicateSatCode, normalizeSatCode } from '../utils/satKeyHelpers';
-import { subscribeSatKeyResolution } from '../lib/satKeyResolution';
+import { publishSatKeyResolution, subscribeSatKeyResolution } from '../lib/satKeyResolution';
 
 interface SatKeyFilters {
   search: string;
@@ -20,6 +21,13 @@ interface SatKeyStore {
   lastSync: Date | null;
 
   addSatKey: (satKey: Omit<SatKey, 'id' | 'createdAt' | 'updatedAt'>) => SatKey;
+  createAndConfirmSatKey: (
+    satKey: Omit<SatKey, 'id' | 'createdAt' | 'updatedAt'>,
+  ) => Promise<{
+    satKey: SatKey;
+    wasExisting: boolean;
+    hasPendingReconciliation: boolean;
+  }>;
   updateSatKey: (id: string, updates: Partial<SatKey>) => SatKey | undefined;
   deleteSatKey: (id: string) => void;
   setFilters: (filters: Partial<SatKeyFilters>) => void;
@@ -66,6 +74,17 @@ function assertValidSatKeyInput(
   return sanitized;
 }
 
+function assertConfirmableSatKeyInput(input: Pick<SatKey, 'code' | 'description'>) {
+  const sanitized = sanitizeSatKeyInput(input);
+  if (!/^\d{8}$/.test(sanitized.code)) {
+    throw new Error('sat_key_code_invalid');
+  }
+  if (!sanitized.description) {
+    throw new Error('sat_key_description_required');
+  }
+  return sanitized;
+}
+
 export const useSatKeyStore = create<SatKeyStore>()(
   persist(
     (set, get) => ({
@@ -98,6 +117,54 @@ export const useSatKeyStore = create<SatKeyStore>()(
         }
 
         return newSatKey;
+      },
+
+      createAndConfirmSatKey: async (satKeyData) => {
+        if (!supabase) throw new Error('sat_key_connection_required');
+
+        const sanitized = assertConfirmableSatKeyInput(satKeyData);
+        const now = getCurrentISODate();
+        const candidate: SatKey = {
+          id: generateId(),
+          ...sanitized,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const result = await satKeyService.createOrGet(candidate);
+        const localSameCode = get().satKeys.find(
+          (item) => normalizeSatCode(item.code).toLowerCase() === sanitized.code.toLowerCase(),
+        );
+
+        let hasPendingReconciliation = false;
+        if (localSameCode && localSameCode.id !== result.satKey.id) {
+          // Reconcile a legacy local-only record before the new product uses
+          // the canonical server id. Mirror syncManager's adoption: remap any
+          // pending queue and dead-letter operations that still reference the
+          // stale local id, not only the Zustand stores.
+          const remapped = syncQueue.scheduleSatKeyIdRemap(
+            localSameCode.id,
+            result.satKey.id,
+          );
+          if (!remapped) {
+            // The server record is already confirmed. Keep the current product
+            // safe by adopting that record, while warning that older queued
+            // snapshots could not be reconciled due to local storage failure.
+            hasPendingReconciliation = true;
+          }
+          publishSatKeyResolution({
+            localId: localSameCode.id,
+            canonical: result.satKey,
+          });
+        } else {
+          set((state) => ({
+            satKeys: [
+              ...state.satKeys.filter((item) => item.id !== result.satKey.id),
+              result.satKey,
+            ],
+          }));
+        }
+
+        return { ...result, hasPendingReconciliation };
       },
 
       updateSatKey: (id, updates) => {

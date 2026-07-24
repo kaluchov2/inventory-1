@@ -13,6 +13,7 @@ import {
 } from '../../hooks/useRealtimeSync';
 import { connectionStatus } from '../../lib/connectionStatus';
 import { syncManager } from '../../lib/syncManager';
+import { runForegroundRecovery } from '../../lib/foregroundRecovery';
 
 /**
  * SyncInitializer Component
@@ -94,36 +95,42 @@ export function SyncInitializer() {
   // catch up products/customers via delta sync. Transactions stay on full reload
   // until they have a stable updated_at watermark in the DB.
   useEffect(() => {
-    let lastForegroundRunAt = 0;
+    let foregroundRunPromise: Promise<void> | null = null;
+
+    const runForegroundSync = async (source: string) => {
+      await runForegroundRecovery({
+        source,
+        forceCheck: () => connectionStatus.forceCheck(),
+        syncPendingOperations: () => syncManager.syncPendingOperations(),
+        getPendingCount: () => syncManager.getStatus().pendingCount,
+        loadChanges: [
+          loadProductChanges,
+          loadCustomerChanges,
+          loadTransactions,
+          loadSatKeys,
+        ],
+      });
+      console.log('[Sync] Status after foreground recovery:', syncManager.getStatus());
+    };
+
     const triggerForegroundSync = (source: string) => {
       if (!isAuthenticated || isOfflineMode) return;
+      if (foregroundRunPromise) {
+        console.log(`[Sync] Foreground trigger (${source}) joined the active recovery run`);
+        return;
+      }
 
-      // Avoid duplicate runs when browsers emit multiple foreground events in quick succession.
-      const now = Date.now();
-      if (now - lastForegroundRunAt < 1500) return;
-      lastForegroundRunAt = now;
-
-      // Delay 500 ms so connectionStatus.forceCheck() can finish before flush attempt.
-      setTimeout(() => {
-        console.log(`[Sync] Foreground trigger (${source}), flushing queue and running delta catch-up...`);
-        console.log('[Sync] Status before foreground flush:', syncManager.getStatus());
-        syncManager.syncPendingOperations().then(() => {
-          console.log('[Sync] Status after foreground flush:', syncManager.getStatus());
-          const { pendingCount } = syncManager.getStatus();
-          if (pendingCount > 0) {
-            console.log('[Sync] Foreground catch-up deferred because queue still has pending operations');
-            return;
-          }
-          return Promise.all([
-            loadProductChanges(),
-            loadCustomerChanges(),
-            loadTransactions(),
-            loadSatKeys(),
-          ]);
-        }).catch((error) => {
+      const run = runForegroundSync(source);
+      foregroundRunPromise = run;
+      void run.then(
+        () => {
+          if (foregroundRunPromise === run) foregroundRunPromise = null;
+        },
+        (error) => {
           console.error(`[Sync] Foreground catch-up failed (${source}):`, error);
-        });
-      }, 500);
+          if (foregroundRunPromise === run) foregroundRunPromise = null;
+        },
+      );
     };
 
     const handleVisibility = () => {

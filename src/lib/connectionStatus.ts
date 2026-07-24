@@ -1,14 +1,23 @@
 import { supabase } from './supabase';
 import { logSyncIncident } from './syncIncidentLogger';
 
+class ConnectivityCheckTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Supabase connectivity check timed out after ${timeoutMs}ms`);
+    this.name = 'ConnectivityCheckTimeoutError';
+  }
+}
+
 /**
  * Connection status manager
  * Tracks Supabase connection state and network availability
  */
-class ConnectionStatusManager {
+export class ConnectionStatusManager {
   private readonly DEBUG_LOGS_ENABLED = true;
   private readonly CONNECTIVITY_TIMEOUT_MS = 10_000;
   private readonly SESSION_REFRESH_RETRY_WINDOW_MS = 120_000;
+  private activeCheckPromise: Promise<ConnectionStatus> | null = null;
+  private checkSequence = 0;
   private listeners: Set<(status: ConnectionStatus) => void> = new Set();
   private currentStatus: ConnectionStatus = {
     isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -16,8 +25,10 @@ class ConnectionStatusManager {
     lastChecked: new Date(),
   };
 
-  constructor() {
-    this.initialize();
+  constructor(options: { initialize?: boolean } = {}) {
+    if (options.initialize !== false) {
+      this.initialize();
+    }
   }
 
   private logDebug(message: string, meta?: unknown) {
@@ -37,6 +48,7 @@ class ConnectionStatusManager {
       this.logDebug('Browser online event');
       logSyncIncident('info', 'browser_online', 'Browser reported online state');
       this.updateStatus({ isOnline: true });
+      void this.checkSupabaseConnection();
     });
     window.addEventListener('offline', () => {
       this.logDebug('Browser offline event');
@@ -46,7 +58,7 @@ class ConnectionStatusManager {
 
     const runForegroundCheck = (source: string) => {
       this.logDebug(`${source}: checking Supabase connectivity`);
-      this.checkSupabaseConnection();
+      void this.checkSupabaseConnection();
     };
 
     // Re-check aggressively when users return to the app after idle/sleep.
@@ -58,8 +70,8 @@ class ConnectionStatusManager {
     window.addEventListener('focus', () => runForegroundCheck('Window focus'));
     window.addEventListener('pageshow', () => runForegroundCheck('Page show'));
 
-    this.checkSupabaseConnection();
-    setInterval(() => this.checkSupabaseConnection(), 30_000); // Check every 30s
+    void this.checkSupabaseConnection();
+    setInterval(() => void this.checkSupabaseConnection(), 30_000); // Check every 30s
   }
 
   private isLikelyAuthError(error: unknown): boolean {
@@ -156,45 +168,59 @@ class ConnectionStatusManager {
     }
   }
 
-  private async checkSupabaseConnection() {
+  private checkSupabaseConnection(): Promise<ConnectionStatus> {
+    if (this.activeCheckPromise) {
+      this.logDebug('Joining active Supabase connectivity check');
+      return this.activeCheckPromise;
+    }
+
+    const checkId = ++this.checkSequence;
+    const run = this.runSupabaseConnectionCheck(checkId);
+    this.activeCheckPromise = run;
+    void run.then(
+      () => {
+        if (this.activeCheckPromise === run) this.activeCheckPromise = null;
+      },
+      () => {
+        if (this.activeCheckPromise === run) this.activeCheckPromise = null;
+      },
+    );
+    return run;
+  }
+
+  private async runSupabaseConnectionCheck(checkId: number): Promise<ConnectionStatus> {
     if (!supabase || !this.currentStatus.isOnline) {
       this.logDebug('Connectivity check skipped', {
+        checkId,
         hasSupabase: !!supabase,
         isOnline: this.currentStatus.isOnline,
       });
-      this.updateStatus({ isSupabaseConnected: false });
-      return;
+      this.updateStatus({
+        isSupabaseConnected: false,
+        lastChecked: new Date(),
+      });
+      return this.currentStatus;
     }
 
     const client = supabase;
     const startedAt = Date.now();
-    this.logDebug('Supabase connectivity check started');
+    const controller = new AbortController();
+    this.logDebug('Supabase connectivity check started', { checkId });
 
-    const runProbe = async () => {
-      // AbortController prevents health check from hanging forever
-      // if the Supabase client is in a stuck state (zombie connections)
-      const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(),
-        this.CONNECTIVITY_TIMEOUT_MS
-      );
-      try {
+    const pipeline = async () => {
+      const runProbe = async () => {
         const { error } = await client
           .from('products')
           .select('id')
           .limit(1)
           .abortSignal(controller.signal);
         return { error };
-      } finally {
-        clearTimeout(timer);
-      }
-    };
+      };
 
-    try {
       let { error } = await runProbe();
-
       if (error && this.isLikelyAuthError(error)) {
         this.logDebug('Connectivity probe returned auth-like error, attempting session recovery', {
+          checkId,
           error,
         });
         const refreshed = await this.tryRefreshSession('connectivity_probe');
@@ -203,19 +229,32 @@ class ConnectionStatusManager {
           error = retry.error;
         }
       }
+      return { error };
+    };
+
+    try {
+      const { error } = await this.withTimeout(
+        pipeline(),
+        this.CONNECTIVITY_TIMEOUT_MS,
+        () => controller.abort(),
+      );
+      const isConnected = !error && this.currentStatus.isOnline;
 
       this.logDebug('Supabase connectivity check completed', {
+        checkId,
         elapsedMs: Date.now() - startedAt,
         hasError: !!error,
         error,
       });
       this.updateStatus({
-        isSupabaseConnected: !error,
+        isSupabaseConnected: isConnected,
         lastChecked: new Date(),
       });
     } catch (error) {
       this.logDebug('Supabase connectivity check failed', {
+        checkId,
         elapsedMs: Date.now() - startedAt,
+        timedOut: error instanceof ConnectivityCheckTimeoutError,
         error,
       });
       this.updateStatus({
@@ -223,6 +262,39 @@ class ConnectionStatusManager {
         lastChecked: new Date(),
       });
     }
+
+    return this.currentStatus;
+  }
+
+  private withTimeout<T>(
+    operation: Promise<T>,
+    timeoutMs: number,
+    onTimeout: () => void,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        onTimeout();
+        reject(new ConnectivityCheckTimeoutError(timeoutMs));
+      }, timeoutMs);
+
+      operation.then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   }
 
   private updateStatus(partial: Partial<ConnectionStatus>) {
@@ -273,9 +345,9 @@ class ConnectionStatusManager {
     return this.currentStatus;
   }
 
-  public async forceCheck() {
+  public forceCheck(): Promise<ConnectionStatus> {
     this.logDebug('forceCheck requested');
-    await this.checkSupabaseConnection();
+    return this.checkSupabaseConnection();
   }
 }
 

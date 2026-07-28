@@ -8,6 +8,9 @@ interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  // An authenticated Supabase session is not authorized for app routes until
+  // its profile (and therefore its role) has been verified.
+  isProfileHydrated: boolean;
   isOfflineMode: boolean;
   error: string | null;
 }
@@ -41,19 +44,23 @@ let scheduledProfileHydration: {
   generation: number;
 } | null = null;
 
-// Normalizes a raw profiles.role DB value (which may have stray whitespace/casing
-// from a manual SQL edit) into a known UserRole, defaulting safely to 'user'.
-function normalizeUserRole(rawRole: unknown): UserRole {
+// Accept only roles that the database profile explicitly supplies. A missing or
+// malformed role must not silently become a full-access user role.
+function normalizeUserRole(rawRole: unknown): UserRole | null {
   const normalized = typeof rawRole === 'string' ? rawRole.trim().toLowerCase() : '';
-  return (VALID_ROLES as string[]).includes(normalized) ? (normalized as UserRole) : 'user';
+  return (VALID_ROLES as string[]).includes(normalized) ? (normalized as UserRole) : null;
 }
 
 // Convert Supabase user to our User type
-const mapSupabaseUser = (supabaseUser: SupabaseUser, profile?: any): User => ({
+const mapSupabaseUser = (
+  supabaseUser: SupabaseUser,
+  profile?: any,
+  role: UserRole = 'user',
+): User => ({
   id: supabaseUser.id,
   email: supabaseUser.email || '',
   displayName: profile?.display_name || supabaseUser.user_metadata?.display_name || undefined,
-  role: normalizeUserRole(profile?.role),
+  role,
   createdAt: supabaseUser.created_at || new Date().toISOString(),
   updatedAt: profile?.updated_at || new Date().toISOString(),
 });
@@ -65,13 +72,38 @@ export const useAuthStore = create<AuthStore>()(
         const current = get();
         if (!current.isAuthenticated || current.user?.id !== supabaseUser.id) {
           authGeneration += 1;
+        }
+        // Never expose an authenticated session to protected routes using a
+        // provisional/default role. This also revalidates the role after token
+        // refreshes, in case it changed in the database.
+        set({
+          user: mapSupabaseUser(supabaseUser),
+          isAuthenticated: true,
+          isLoading: true,
+          isProfileHydrated: false,
+          error: null,
+        });
+        return authGeneration;
+      };
+
+      const markProfileHydrationFailed = (
+        supabaseUser: SupabaseUser,
+        generation: number,
+        cause: unknown,
+      ) => {
+        console.warn('[Auth] Failed to verify user profile:', cause);
+        const current = get();
+        if (
+          generation === authGeneration &&
+          current.isAuthenticated &&
+          current.user?.id === supabaseUser.id
+        ) {
           set({
-            user: mapSupabaseUser(supabaseUser),
-            isAuthenticated: true,
-            error: null,
+            isLoading: false,
+            isProfileHydrated: false,
+            error: 'No se pudo verificar tu perfil. Revisa tu conexión e inténtalo de nuevo.',
           });
         }
-        return authGeneration;
       };
 
       const hydrateUserProfile = (
@@ -96,15 +128,17 @@ export const useAuthStore = create<AuthStore>()(
               .single();
 
             if (error) {
-              console.warn('[Auth] Failed to load user profile:', error);
-              const current = get();
-              if (
-                generation === authGeneration &&
-                current.isAuthenticated &&
-                current.user?.id === supabaseUser.id
-              ) {
-                set({ isLoading: false });
-              }
+              markProfileHydrationFailed(supabaseUser, generation, error);
+              return;
+            }
+
+            const role = normalizeUserRole(profile?.role);
+            if (!role) {
+              markProfileHydrationFailed(
+                supabaseUser,
+                generation,
+                new Error('Profile has no valid role'),
+              );
               return;
             }
 
@@ -118,21 +152,15 @@ export const useAuthStore = create<AuthStore>()(
             }
 
             set({
-              user: mapSupabaseUser(supabaseUser, profile),
+              user: mapSupabaseUser(supabaseUser, profile, role),
               isAuthenticated: true,
               isLoading: false,
+              isProfileHydrated: true,
               error: null,
             });
           } catch (error) {
             console.error('[Auth] Profile hydration failed:', error);
-            const current = get();
-            if (
-              generation === authGeneration &&
-              current.isAuthenticated &&
-              current.user?.id === supabaseUser.id
-            ) {
-              set({ isLoading: false });
-            }
+            markProfileHydrationFailed(supabaseUser, generation, error);
           }
         })();
 
@@ -183,7 +211,13 @@ export const useAuthStore = create<AuthStore>()(
           authGeneration += 1;
           activeProfileHydration = null;
           scheduledProfileHydration = null;
-          set({ user: null, isAuthenticated: false, isLoading: false });
+          set({
+            user: null,
+            isAuthenticated: false,
+            isLoading: false,
+            isProfileHydrated: false,
+            error: null,
+          });
           return;
         }
 
@@ -200,7 +234,7 @@ export const useAuthStore = create<AuthStore>()(
         }
 
         if (event === 'INITIAL_SESSION' && !session) {
-          set({ isLoading: false });
+          set({ isLoading: false, isProfileHydrated: false });
         }
       };
 
@@ -215,6 +249,7 @@ export const useAuthStore = create<AuthStore>()(
         user: null,
         isAuthenticated: false,
         isLoading: true,
+        isProfileHydrated: false,
         isOfflineMode: !isSupabaseConfigured(),
         error: null,
 
@@ -226,7 +261,7 @@ export const useAuthStore = create<AuthStore>()(
           const initialization = (async () => {
             // If Supabase is not configured, run in offline mode
             if (!isSupabaseConfigured() || !supabase) {
-              set({ isLoading: false, isOfflineMode: true });
+              set({ isLoading: false, isProfileHydrated: false, isOfflineMode: true });
               return;
             }
 
@@ -241,11 +276,11 @@ export const useAuthStore = create<AuthStore>()(
               if (error) {
                 if (error.name === 'AbortError' || error.message?.includes('abort')) {
                   shouldReleaseInitialization = true;
-                  set({ isLoading: false });
+                  set({ isLoading: false, isProfileHydrated: false });
                   return;
                 }
                 console.error('Auth initialization error:', error);
-                set({ isLoading: false, error: error.message });
+                set({ isLoading: false, isProfileHydrated: false, error: error.message });
                 return;
               }
 
@@ -253,12 +288,12 @@ export const useAuthStore = create<AuthStore>()(
                 const generation = beginAuthenticatedUser(session.user);
                 await hydrateUserProfile(session.user, generation);
               } else {
-                set({ isLoading: false });
+                set({ isLoading: false, isProfileHydrated: false });
               }
             } catch (error: any) {
               if (error?.name === 'AbortError' || error?.message?.includes('abort')) {
                 shouldReleaseInitialization = true;
-                set({ isLoading: false });
+                set({ isLoading: false, isProfileHydrated: false });
                 return;
               }
               console.error('Auth initialization error:', error);
@@ -285,7 +320,7 @@ export const useAuthStore = create<AuthStore>()(
             return { success: false, error: 'Supabase no está configurado' };
           }
 
-          set({ isLoading: true, error: null });
+          set({ isLoading: true, isProfileHydrated: false, error: null });
 
           try {
             const { data, error } = await supabase.auth.signInWithPassword({
@@ -294,21 +329,28 @@ export const useAuthStore = create<AuthStore>()(
             });
 
             if (error) {
-              set({ isLoading: false, error: error.message });
+              set({ isLoading: false, isProfileHydrated: false, error: error.message });
               return { success: false, error: error.message };
             }
 
             if (data.user) {
               const generation = beginAuthenticatedUser(data.user);
               await hydrateUserProfile(data.user, generation);
-              return { success: true };
+              const current = get();
+              if (current.isProfileHydrated && current.user?.id === data.user.id) {
+                return { success: true };
+              }
+              return {
+                success: false,
+                error: current.error || 'No se pudo verificar tu perfil',
+              };
             }
 
-            set({ isLoading: false });
+            set({ isLoading: false, isProfileHydrated: false });
             return { success: false, error: 'No se pudo obtener información del usuario' };
           } catch (error: any) {
             const errorMessage = error?.message || 'Error al iniciar sesión';
-            set({ isLoading: false, error: errorMessage });
+            set({ isLoading: false, isProfileHydrated: false, error: errorMessage });
             return { success: false, error: errorMessage };
           }
         },
@@ -319,7 +361,7 @@ export const useAuthStore = create<AuthStore>()(
             return { success: false, error: 'Supabase no está configurado' };
           }
 
-          set({ isLoading: true, error: null });
+          set({ isLoading: true, isProfileHydrated: false, error: null });
 
           try {
             const { data, error } = await supabase.auth.signUp({
@@ -333,22 +375,22 @@ export const useAuthStore = create<AuthStore>()(
             });
 
             if (error) {
-              set({ isLoading: false, error: error.message });
+              set({ isLoading: false, isProfileHydrated: false, error: error.message });
               return { success: false, error: error.message };
             }
 
             if (data.user) {
               // Profile will be created automatically by database trigger.
               beginAuthenticatedUser(data.user);
-              set({ isLoading: false });
+              set({ isLoading: false, isProfileHydrated: false });
               return { success: true };
             }
 
-            set({ isLoading: false });
+              set({ isLoading: false, isProfileHydrated: false });
             return { success: true }; // Email confirmation may be required
           } catch (error: any) {
             const errorMessage = error?.message || 'Error al registrarse';
-            set({ isLoading: false, error: errorMessage });
+            set({ isLoading: false, isProfileHydrated: false, error: errorMessage });
             return { success: false, error: errorMessage };
           }
         },
@@ -361,7 +403,13 @@ export const useAuthStore = create<AuthStore>()(
           if (supabase) {
             await supabase.auth.signOut();
           }
-          set({ user: null, isAuthenticated: false });
+          set({
+            user: null,
+            isAuthenticated: false,
+            isLoading: false,
+            isProfileHydrated: false,
+            error: null,
+          });
         },
 
         // Set offline mode (for when Supabase is not configured)

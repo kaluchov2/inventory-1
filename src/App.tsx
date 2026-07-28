@@ -19,11 +19,15 @@ import { useAuthStore } from './store/authStore';
 import { SyncInitializer } from './components/common/SyncInitializer';
 import { InstallPrompt } from './components/common/InstallPrompt';
 import { PwaUpdatePrompt } from './components/common/PwaUpdatePrompt';
-import { VENTAS_SAT_PATH, isViewerRole } from './constants/viewerAccess';
+import {
+  VENTAS_SAT_PATH,
+  hasUnverifiedAuthenticatedProfile,
+  isViewerRole,
+} from './constants/viewerAccess';
 
 // Protected route wrapper
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, isAuthenticated, isLoading, isOfflineMode } = useAuthStore();
+  const { user, isAuthenticated, isLoading, isProfileHydrated, isOfflineMode } = useAuthStore();
   const location = useLocation();
 
   // Show loading spinner while checking auth
@@ -36,6 +40,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
         </VStack>
       </Center>
     );
+  }
+
+  // A Supabase session alone is insufficient: the profile determines whether
+  // this is a SAT-only viewer. Keep unresolved or failed profile checks out of
+  // the app, even if offline mode was toggled from the login page.
+  if (hasUnverifiedAuthenticatedProfile(isAuthenticated, isProfileHydrated)) {
+    return <Navigate to="/login" replace />;
   }
 
   // Allow access if authenticated OR in offline mode

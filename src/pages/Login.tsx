@@ -16,20 +16,22 @@ import { FiPackage, FiWifiOff } from 'react-icons/fi';
 import { LoginForm } from '../components/auth';
 import { useAuthStore } from '../store/authStore';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { getPostLoginPath } from '../constants/viewerAccess';
 
 export function Login() {
   const navigate = useNavigate();
-  const { isAuthenticated, isLoading, setOfflineMode } = useAuthStore();
+  const { user, isAuthenticated, isLoading, isProfileHydrated, setOfflineMode } = useAuthStore();
 
   // Redirect if already authenticated
   useEffect(() => {
-    if (isAuthenticated) {
-      navigate('/', { replace: true });
+    if (isAuthenticated && isProfileHydrated && !isLoading) {
+      navigate(getPostLoginPath(user?.role), { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, isLoading, isProfileHydrated, navigate, user?.role]);
 
   const handleLoginSuccess = () => {
-    navigate('/', { replace: true });
+    const { user: currentUser } = useAuthStore.getState();
+    navigate(getPostLoginPath(currentUser?.role), { replace: true });
   };
 
   const handleOfflineMode = () => {

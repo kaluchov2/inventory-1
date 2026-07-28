@@ -25,6 +25,7 @@ import {
   NumberInputField,
   NumberInputStepper,
   Text,
+  Textarea,
   VStack,
   useDisclosure,
   useToast,
@@ -48,6 +49,7 @@ import { CATEGORY_OPTIONS } from '../../constants/categories';
 import { es } from '../../i18n/es';
 import { formatCurrency, generateId } from '../../utils/formatters';
 import { getProductSatSnapshot } from '../../utils/satKeyHelpers';
+import { getSaleEditNotesPayload } from '../../utils/saleEditNotes';
 
 interface EditableLine {
   lineId: string;
@@ -117,6 +119,7 @@ export function EditSaleTransactionModal({
   const [unregQty, setUnregQty] = useState(1);
   const [unregCategory, setUnregCategory] = useState<CategoryCode | ''>('');
   const [unregBrand, setUnregBrand] = useState('');
+  const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [lineSeed, setLineSeed] = useState(0);
 
@@ -254,6 +257,7 @@ export function EditSaleTransactionModal({
     setUnregQty(1);
     setUnregCategory('');
     setUnregBrand('');
+    setNotes(transaction.notes || '');
     setLineSeed((current) => current + 1);
   }, [isOpen, transaction]);
 
@@ -391,6 +395,7 @@ export function EditSaleTransactionModal({
       autoKeepPaidIfFullyPaid: true,
       discount: transaction.discount,
       discountNote: transaction.discountNote,
+      ...getSaleEditNotesPayload(notes),
       items: lines.map((line) => ({
         productId: line.productId,
         productName: line.productName,
@@ -416,6 +421,7 @@ export function EditSaleTransactionModal({
       returnTransactionId: `${transaction.id}-refund-${generateId()}`,
       reason: 'Refund from Clientes modify sale',
       discount: transaction.discount,
+      ...getSaleEditNotesPayload(notes),
       items: lines.map((line) => ({
         productId: line.productId,
         productName: line.productName,
@@ -792,6 +798,17 @@ export function EditSaleTransactionModal({
                   {es.transactions.atLeastOneItemRequired}
                 </Alert>
               )}
+
+              <FormControl>
+                <FormLabel>{es.sales.notes}</FormLabel>
+                <Textarea
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  placeholder={es.transactions.editSaleNotesPlaceholder}
+                  resize="vertical"
+                  rows={3}
+                />
+              </FormControl>
 
               <Divider />
 

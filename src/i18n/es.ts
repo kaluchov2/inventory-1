@@ -149,6 +149,7 @@ export const es = {
     filterByCustomer: "Filtrar por Cliente",
     filterByPayment: "Filtrar por Método de Pago",
     editSaleTitle: "Modificar Venta",
+    editSaleNotesPlaceholder: "Agregar o modificar comentarios de la venta...",
     saleTypeLabel: "Venta",
     addProductsLabel: "Agregar o quitar productos",
     productLabel: "Producto",

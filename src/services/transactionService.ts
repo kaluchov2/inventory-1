@@ -60,6 +60,7 @@ export interface RefundSaleFromEditPayload {
   items: ModifySaleTransactionItemInput[];
   discount?: number;
   reason?: string;
+  notes?: string;
 }
 
 export interface RefundSaleFromEditResult {

@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   authCallback: undefined as AuthCallback | undefined,
   getSession: vi.fn(),
   onAuthStateChange: vi.fn(),
+  signInWithPassword: vi.fn(),
   profileSingle: vi.fn(),
 }));
 
@@ -15,7 +16,7 @@ vi.mock('../lib/supabase', () => ({
     auth: {
       getSession: state.getSession,
       onAuthStateChange: state.onAuthStateChange,
-      signInWithPassword: vi.fn(),
+      signInWithPassword: state.signInWithPassword,
       signUp: vi.fn(),
       signOut: vi.fn(),
     },
@@ -70,6 +71,7 @@ describe('authStore foreground auth recovery', () => {
       data: { display_name: 'Owner', role: 'admin' },
       error: null,
     });
+    state.signInWithPassword.mockReset();
     state.onAuthStateChange.mockReset().mockImplementation((callback: AuthCallback) => {
       state.authCallback = callback;
       return { data: { subscription: { unsubscribe: vi.fn() } } };
@@ -127,7 +129,8 @@ describe('authStore foreground auth recovery', () => {
     expect(callbackResult).toBeUndefined();
     expect(useAuthStore.getState()).toMatchObject({
       isAuthenticated: true,
-      isLoading: false,
+      isLoading: true,
+      isProfileHydrated: false,
       user: { id: 'user-1' },
     });
 
@@ -144,12 +147,17 @@ describe('authStore foreground auth recovery', () => {
     expect(state.profileSingle).not.toHaveBeenCalled();
     expect(useAuthStore.getState()).toMatchObject({
       isAuthenticated: true,
+      isLoading: true,
+      isProfileHydrated: false,
       user: { id: 'user-1', role: 'user' },
     });
 
     await vi.runAllTimersAsync();
     expect(state.profileSingle).toHaveBeenCalledTimes(1);
-    expect(useAuthStore.getState().user).toMatchObject({ id: 'user-1', role: 'admin' });
+    expect(useAuthStore.getState()).toMatchObject({
+      isProfileHydrated: true,
+      user: { id: 'user-1', role: 'admin' },
+    });
   });
 
   it('deduplicates repeated SIGNED_IN profile hydration', async () => {
@@ -181,6 +189,42 @@ describe('authStore foreground auth recovery', () => {
     expect(useAuthStore.getState()).toMatchObject({
       user: null,
       isAuthenticated: false,
+    });
+  });
+
+  it('fails closed when the profile cannot be loaded after login', async () => {
+    state.signInWithPassword.mockResolvedValue({ data: { user: supabaseUser }, error: null });
+    state.profileSingle.mockResolvedValue({
+      data: null,
+      error: { message: 'network unavailable' },
+    });
+    const useAuthStore = await loadInitializedStore();
+
+    const result = await useAuthStore.getState().login('owner@example.com', 'secret');
+
+    expect(result.success).toBe(false);
+    expect(useAuthStore.getState()).toMatchObject({
+      isAuthenticated: true,
+      isLoading: false,
+      isProfileHydrated: false,
+      error: 'No se pudo verificar tu perfil. Revisa tu conexión e inténtalo de nuevo.',
+    });
+  });
+
+  it('fails closed when a profile has no valid role', async () => {
+    state.profileSingle.mockResolvedValue({
+      data: { display_name: 'Owner', role: 'unknown-role' },
+      error: null,
+    });
+    const useAuthStore = await loadInitializedStore();
+
+    state.authCallback?.('SIGNED_IN', { user: supabaseUser });
+    await vi.runAllTimersAsync();
+
+    expect(useAuthStore.getState()).toMatchObject({
+      isAuthenticated: true,
+      isLoading: false,
+      isProfileHydrated: false,
     });
   });
 });

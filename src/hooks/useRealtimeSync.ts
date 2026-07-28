@@ -19,8 +19,8 @@ import { useAuthStore } from '../store/authStore';
  *
  * ## Channel lifecycle
  * The channel is created on mount and removed on unmount (React cleanup).
- * The subscription is re-established whenever isAuthenticated or isOfflineMode
- * changes (e.g. login / logout / going offline).
+ * The subscription is re-established whenever authorization or offline state
+ * changes (e.g. login / logout / profile verification / going offline).
  */
 
 type TableName =
@@ -43,10 +43,10 @@ export function useRealtimeSync({
   onUpdate,
   onDelete,
 }: RealtimeSyncOptions) {
-  const { isAuthenticated, isOfflineMode } = useAuthStore();
+  const { isAuthenticated, isProfileHydrated, isOfflineMode } = useAuthStore();
 
   useEffect(() => {
-    if (!supabase || !isAuthenticated || isOfflineMode) {
+    if (!supabase || !isAuthenticated || !isProfileHydrated || isOfflineMode) {
       return;
     }
 
@@ -96,7 +96,7 @@ export function useRealtimeSync({
       console.log(`[Realtime] Unsubscribing from ${table}`);
       supabase!.removeChannel(channel);
     };
-  }, [table, onInsert, onUpdate, onDelete, isAuthenticated, isOfflineMode]);
+  }, [table, onInsert, onUpdate, onDelete, isAuthenticated, isProfileHydrated, isOfflineMode]);
 }
 
 type RealtimeCallbacks = {

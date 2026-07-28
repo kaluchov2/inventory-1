@@ -37,7 +37,7 @@ import { runForegroundRecovery } from '../../lib/foregroundRecovery';
  *   - After Excel import
  */
 export function SyncInitializer() {
-  const { isAuthenticated, isOfflineMode } = useAuthStore();
+  const { isAuthenticated, isProfileHydrated, isOfflineMode } = useAuthStore();
   const loadProducts = useProductStore((state) => state.loadFromSupabase);
   const loadProductChanges = useProductStore((state) => state.loadChangesFromSupabase);
   const loadCustomers = useCustomerStore((state) => state.loadFromSupabase);
@@ -59,9 +59,10 @@ export function SyncInitializer() {
   useEffect(() => {
     console.log('[Sync] Initializer auth/offline state changed', {
       isAuthenticated,
+      isProfileHydrated,
       isOfflineMode,
     });
-    if (isAuthenticated && !isOfflineMode) {
+    if (isAuthenticated && isProfileHydrated && !isOfflineMode) {
       console.log('[Sync] Flushing pending queue before initial load...');
       console.log('[Sync] Status before initial flush:', syncManager.getStatus());
 
@@ -89,7 +90,7 @@ export function SyncInitializer() {
         console.error('[Sync] Failed to load initial data:', error);
       });
     }
-  }, [isAuthenticated, isOfflineMode, loadProducts, loadCustomers, loadTransactions, loadSatKeys]);
+  }, [isAuthenticated, isProfileHydrated, isOfflineMode, loadProducts, loadCustomers, loadTransactions, loadSatKeys]);
 
   // When app returns from background or reconnects, flush pending queue then
   // catch up products/customers via delta sync. Transactions stay on full reload
@@ -114,7 +115,7 @@ export function SyncInitializer() {
     };
 
     const triggerForegroundSync = (source: string) => {
-      if (!isAuthenticated || isOfflineMode) return;
+      if (!isAuthenticated || !isProfileHydrated || isOfflineMode) return;
       if (foregroundRunPromise) {
         console.log(`[Sync] Foreground trigger (${source}) joined the active recovery run`);
         return;
@@ -170,7 +171,7 @@ export function SyncInitializer() {
     // best-effort flush — iOS may kill the process before it completes, but the
     // queue is already persisted to localStorage so it will retry on next open.
     const handlePageHide = () => {
-      if (isAuthenticated && !isOfflineMode) {
+      if (isAuthenticated && isProfileHydrated && !isOfflineMode) {
         console.log('[Sync] pagehide — attempting best-effort queue flush before unload');
         syncManager.syncPendingOperations();
       }
@@ -189,6 +190,7 @@ export function SyncInitializer() {
     };
   }, [
     isAuthenticated,
+    isProfileHydrated,
     isOfflineMode,
     loadProductChanges,
     loadCustomerChanges,
@@ -197,7 +199,7 @@ export function SyncInitializer() {
   ]);
 
   // Route realtime events directly to incremental handlers — no full reload, no debounce.
-  // useRealtimeSync only subscribes when isAuthenticated && !isOfflineMode.
+  // useRealtimeSync only subscribes after the authenticated profile is verified.
   useRealtimeProducts({
     onInsert: handleProductUpdate,
     onUpdate: handleProductUpdate,

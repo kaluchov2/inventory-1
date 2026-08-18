@@ -1,55 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
-  AlertIcon,
-  Badge,
-  Box,
-  Button,
-  Divider,
-  FormControl,
-  FormLabel,
-  HStack,
-  Icon,
-  IconButton,
-  Input,
-  Modal,
-  ModalBody,
-  ModalCloseButton,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
-  NumberDecrementStepper,
-  NumberIncrementStepper,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
-  Text,
-  Textarea,
-  VStack,
-  useDisclosure,
-  useToast,
+  Accordion, AccordionButton, AccordionIcon, AccordionItem, AccordionPanel,
+  Alert, AlertIcon, Badge, Box, Button, Divider, FormControl, FormLabel,
+  HStack, Icon, IconButton, Input, Modal, ModalBody, ModalCloseButton,
+  ModalContent, ModalFooter, ModalHeader, ModalOverlay, NumberDecrementStepper,
+  NumberIncrementStepper, NumberInput, NumberInputField, NumberInputStepper,
+  SimpleGrid, Switch, Text, Textarea, VStack, useDisclosure, useToast,
 } from '@chakra-ui/react';
 import { FiMinusCircle, FiPlus } from 'react-icons/fi';
-import { ConfirmDialog, AutocompleteSelect } from '../common';
+import { AutocompleteSelect, ConfirmDialog, CurrencyInput, SatKeySelector } from '../common';
 import { connectionStatus } from '../../lib/connectionStatus';
 import { syncManager } from '../../lib/syncManager';
-import { isMissingDatabaseFunction } from '../../lib/saleSync';
-import {
-  ModifySaleTransactionPayload,
-  RefundSaleFromEditPayload,
-  transactionService,
-} from '../../services/transactionService';
+import { EditSaleTransactionDetailsPayload, transactionService } from '../../services/transactionService';
 import { useCustomerStore } from '../../store/customerStore';
 import { useProductStore } from '../../store/productStore';
 import { useSatKeyStore } from '../../store/satKeyStore';
 import { useTransactionStore } from '../../store/transactionStore';
-import { CategoryCode, Transaction } from '../../types';
+import { CategoryCode, PaymentMethod, Transaction, TransactionItem } from '../../types';
 import { CATEGORY_OPTIONS } from '../../constants/categories';
 import { es } from '../../i18n/es';
-import { formatCurrency, generateId } from '../../utils/formatters';
+import { formatCurrency } from '../../utils/formatters';
 import { getProductSatSnapshot } from '../../utils/satKeyHelpers';
-import { getSaleEditNotesPayload } from '../../utils/saleEditNotes';
+import { allocateSaleSubtotal, hasInventoryMovement, rescalePaymentAmounts } from '../../utils/saleEditPricing';
 
 interface EditableLine {
   lineId: string;
@@ -74,43 +46,63 @@ interface EditSaleTransactionModalProps {
   onSaved: (updatedTransaction: Transaction) => void;
 }
 
-const PENDING_BALANCE_EPSILON = 0.01;
-type AutoSettlementMethod = 'cash' | 'transfer' | 'card' | null;
+const EPSILON = 0.001;
 
-function pickMainPaymentMethod(
-  cashAmount: number,
-  transferAmount: number,
-  cardAmount: number
-): AutoSettlementMethod {
-  if (cashAmount >= transferAmount && cashAmount >= cardAmount) return 'cash';
-  if (transferAmount >= cashAmount && transferAmount >= cardAmount) return 'transfer';
-  if (cardAmount >= cashAmount && cardAmount >= transferAmount) return 'card';
-  return 'cash'; // unreachable: conditions above are exhaustive for non-negative amounts
+function isoToLocalDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
-export function EditSaleTransactionModal({
-  transaction,
-  isOpen,
-  onClose,
-  onSaved,
-}: EditSaleTransactionModalProps) {
+function localDateTimeToIso(value: string): string | null {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function roundMoney(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function lineAsTransactionItem(line: EditableLine): TransactionItem {
+  return {
+    productId: line.productId || '',
+    productName: line.productName,
+    quantity: line.quantity,
+    unitPrice: line.unitPrice,
+    totalPrice: Number((line.quantity * line.unitPrice).toFixed(6)),
+    satKeyId: line.satKeyId,
+    satKeyCode: line.satKeyCode,
+    satKeyDescription: line.satKeyDescription,
+    category: line.category as CategoryCode | undefined,
+    brand: line.brand,
+    color: line.color,
+    size: line.size,
+  };
+}
+
+export function EditSaleTransactionModal({ transaction, isOpen, onClose, onSaved }: EditSaleTransactionModalProps) {
   const toast = useToast();
   const { products, loadFromSupabase: loadProducts } = useProductStore();
-  const { satKeys } = useSatKeyStore();
+  const satKeys = useSatKeyStore((state) => state.satKeys);
   const loadCustomers = useCustomerStore((state) => state.loadFromSupabase);
   const loadTransactions = useTransactionStore((state) => state.loadFromSupabase);
-  const {
-    isOpen: isConfirmOpen,
-    onOpen: onConfirmOpen,
-    onClose: onConfirmClose,
-  } = useDisclosure();
-  const {
-    isOpen: isUnregisteredOpen,
-    onOpen: onUnregisteredOpen,
-    onClose: onUnregisteredClose,
-  } = useDisclosure();
+  const transactions = useTransactionStore((state) => state.transactions);
+  const getEffectivePendingMap = useTransactionStore((state) => state.getEffectivePendingMap);
+  const confirm = useDisclosure();
+  const unregistered = useDisclosure();
 
   const [lines, setLines] = useState<EditableLine[]>([]);
+  const [dateValue, setDateValue] = useState('');
+  const [notes, setNotes] = useState('');
+  const [targetTotal, setTargetTotal] = useState(0);
+  const [useMixedPayment, setUseMixedPayment] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer' | 'card'>('cash');
+  const [amountToPay, setAmountToPay] = useState(0);
+  const [cashAmount, setCashAmount] = useState(0);
+  const [transferAmount, setTransferAmount] = useState(0);
+  const [cardAmount, setCardAmount] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
   const [addProductId, setAddProductId] = useState<string | null>(null);
   const [addQuantity, setAddQuantity] = useState(1);
   const [selectedUpsFilter, setSelectedUpsFilter] = useState<number | ''>('');
@@ -119,125 +111,84 @@ export function EditSaleTransactionModal({
   const [unregQty, setUnregQty] = useState(1);
   const [unregCategory, setUnregCategory] = useState<CategoryCode | ''>('');
   const [unregBrand, setUnregBrand] = useState('');
-  const [notes, setNotes] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-  const [lineSeed, setLineSeed] = useState(0);
-
-  const originalPaidAmount = useMemo(() => {
-    if (!transaction) return 0;
-    return transaction.cashAmount + transaction.transferAmount + transaction.cardAmount;
-  }, [transaction]);
-
-  const subtotal = useMemo(
-    () =>
-      lines.reduce((sum, line) => {
-        return sum + line.quantity * line.unitPrice;
-      }, 0),
-    [lines]
-  );
 
   const discount = transaction?.discount || 0;
-  const total = subtotal - discount;
-  const oldTotal = transaction?.total || 0;
-  const oldUnpaid = Math.max(0, oldTotal - originalPaidAmount);
-  const shouldAutoKeepPaid =
-    oldUnpaid <= PENDING_BALANCE_EPSILON && total > originalPaidAmount;
-  const autoSettlementDelta = shouldAutoKeepPaid
-    ? total - originalPaidAmount
-    : 0;
+  const originalPaid = transaction ? transaction.cashAmount + transaction.transferAmount + transaction.cardAmount : 0;
+  const paidAmount = useMixedPayment ? cashAmount + transferAmount + cardAmount : amountToPay;
+  const pending = Math.max(0, targetTotal - paidAmount);
+  const originalDebt = transaction ? Math.max(0, transaction.total - originalPaid) : 0;
+  const originalEffectivePending = useMemo(() => {
+    if (!transaction?.customerId) return originalDebt;
+    return getEffectivePendingMap(transaction.customerId).get(transaction.id) ?? originalDebt;
+  }, [getEffectivePendingMap, originalDebt, transaction, transactions]);
+  const installmentApplied = Math.max(0, roundMoney(originalDebt - originalEffectivePending));
+  const paymentLockedByInstallments = installmentApplied > EPSILON;
+  const effectivePending = Math.max(0, roundMoney(pending - installmentApplied));
+  const paymentExceedsTotal = paidAmount - targetTotal > EPSILON;
+  const creditWithoutCustomer = pending > EPSILON && !transaction?.customerId;
+  const parsedDate = localDateTimeToIso(dateValue);
 
-  const mainPaymentMethod = useMemo<AutoSettlementMethod>(() => {
-    if (!transaction) return null;
-    return pickMainPaymentMethod(
-      transaction.cashAmount,
-      transaction.transferAmount,
-      transaction.cardAmount
-    );
-  }, [transaction]);
+  const allocatedItems = useMemo(() => {
+    if (lines.length === 0) return [];
+    try {
+      return allocateSaleSubtotal(lines.map(lineAsTransactionItem), targetTotal, discount);
+    } catch {
+      return [];
+    }
+  }, [discount, lines, targetTotal]);
 
-  const effectiveCashAmount = (transaction?.cashAmount || 0) +
-    (shouldAutoKeepPaid && mainPaymentMethod === 'cash' ? autoSettlementDelta : 0);
-  const effectiveTransferAmount = (transaction?.transferAmount || 0) +
-    (shouldAutoKeepPaid && mainPaymentMethod === 'transfer' ? autoSettlementDelta : 0);
-  const effectiveCardAmount = (transaction?.cardAmount || 0) +
-    (shouldAutoKeepPaid && mainPaymentMethod === 'card' ? autoSettlementDelta : 0);
-  const effectivePaidAmount =
-    effectiveCashAmount + effectiveTransferAmount + effectiveCardAmount;
-  const pending = Math.max(0, total - effectivePaidAmount);
-
-  const lineProductIds = useMemo(
-    () => new Set(lines.map((line) => line.productId).filter(Boolean) as string[]),
-    [lines]
+  const inventoryWillMove = useMemo(
+    () => !!transaction && hasInventoryMovement(transaction.items, lines.map(lineAsTransactionItem)),
+    [lines, transaction],
   );
 
-  const selectableProducts = useMemo(() => {
-    return products
-      .filter((product) => product.availableQty > 0 || lineProductIds.has(product.id))
-      .filter((product) => Number(product.upsBatch) > 0)
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [lineProductIds, products]);
+  const effectivePaymentMethod = useMemo<PaymentMethod>(() => {
+    const hasPending = pending > EPSILON;
+    if (useMixedPayment) {
+      const count = [cashAmount, transferAmount, cardAmount].filter((amount) => amount > 0).length;
+      if (count > 1) return 'mixed';
+      if (hasPending) return 'credit';
+      if (cashAmount > 0) return 'cash';
+      if (transferAmount > 0) return 'transfer';
+      if (cardAmount > 0) return 'card';
+      return 'credit';
+    }
+    return hasPending ? 'credit' : paymentMethod;
+  }, [cardAmount, cashAmount, paymentMethod, pending, transferAmount, useMixedPayment]);
 
-  const upsFilterOptions = useMemo(() => {
-    const uniqueUps = Array.from(
-      new Set(
-        selectableProducts
-          .map((product) => Number(product.upsBatch))
-          .filter((upsBatch) => Number.isFinite(upsBatch) && upsBatch > 0)
-      )
-    ).sort((a, b) => a - b);
-
-    return uniqueUps.map((upsBatch) => ({
-      value: upsBatch,
-      label: `UPS ${upsBatch}`,
-    }));
-  }, [selectableProducts]);
-
-  const filteredSelectableProducts = useMemo(() => {
-    if (selectedUpsFilter === '') return selectableProducts;
-    return selectableProducts.filter(
-      (product) => Number(product.upsBatch) === Number(selectedUpsFilter)
-    );
-  }, [selectableProducts, selectedUpsFilter]);
-
-  const productOptions = useMemo(
-    () =>
-      filteredSelectableProducts.map((product) => ({
-        value: product.id,
-        label: `${product.name} - UPS ${product.upsBatch} (${product.availableQty} disp.)`,
-      })),
-    [filteredSelectableProducts]
-  );
-
-  const selectedProduct = useMemo(
-    () => filteredSelectableProducts.find((product) => product.id === addProductId),
-    [addProductId, filteredSelectableProducts]
-  );
-  const unregisteredCategoryOptions = useMemo(
-    () => [{ value: '', label: es.transactions.unregisteredNoCategory }, ...CATEGORY_OPTIONS],
-    []
-  );
-
-  const totalBelowPaidFloor = total + PENDING_BALANCE_EPSILON < effectivePaidAmount;
-  const canSave = !isSaving && lines.length > 0;
-  const refundAmount = totalBelowPaidFloor
-    ? Math.max(effectivePaidAmount - total, 0)
-    : 0;
-  const autoSettlementMethodLabel =
-    mainPaymentMethod === 'transfer'
-      ? es.sales.transfer
-      : mainPaymentMethod === 'card'
-        ? es.sales.card
-        : es.sales.cash;
+  const lineProductIds = useMemo(() => new Set(lines.flatMap((line) => line.productId ? [line.productId] : [])), [lines]);
+  const selectableProducts = useMemo(() => products
+    .filter((product) => product.availableQty > 0 || lineProductIds.has(product.id))
+    .filter((product) => Number(product.upsBatch) > 0)
+    .sort((a, b) => a.name.localeCompare(b.name)), [lineProductIds, products]);
+  const upsFilterOptions = useMemo(() => Array.from(new Set(selectableProducts
+    .map((product) => Number(product.upsBatch))
+    .filter((ups) => Number.isFinite(ups) && ups > 0)))
+    .sort((a, b) => a - b)
+    .map((ups) => ({ value: ups, label: `UPS ${ups}` })), [selectableProducts]);
+  const filteredProducts = useMemo(() => selectedUpsFilter === ''
+    ? selectableProducts
+    : selectableProducts.filter((product) => Number(product.upsBatch) === selectedUpsFilter),
+  [selectableProducts, selectedUpsFilter]);
+  const productOptions = useMemo(() => filteredProducts.map((product) => ({
+    value: product.id,
+    label: `${product.name} - UPS ${product.upsBatch} (${product.availableQty} disp.)`,
+  })), [filteredProducts]);
+  const selectedProduct = filteredProducts.find((product) => product.id === addProductId);
+  const categoryOptions = useMemo(() => [{ value: '', label: es.transactions.unregisteredNoCategory }, ...CATEGORY_OPTIONS], []);
+  const canSave = !isSaving && lines.length > 0 && allocatedItems.length === lines.length &&
+    !!parsedDate && targetTotal >= 0 && !paymentExceedsTotal && !creditWithoutCustomer;
 
   useEffect(() => {
     if (!isOpen || !transaction) return;
-
-    const initialLines: EditableLine[] = transaction.items.map((item, index) => ({
-      lineId: `${transaction.id}-${index}-${Date.now()}`,
+    setLines(transaction.items.map((item, index) => ({
+      lineId: `${transaction.id}-${index}`,
       productId: item.productId || null,
       productName: item.productName,
       quantity: item.quantity,
-      unitPrice: item.unitPrice,
+      // total_price is the stable historical line weight even when a deployed
+      // database previously stored unit_price with only two decimals.
+      unitPrice: item.quantity > 0 ? item.totalPrice / item.quantity : item.unitPrice,
       satKeyId: item.satKeyId,
       satKeyCode: item.satKeyCode,
       satKeyDescription: item.satKeyDescription,
@@ -246,188 +197,143 @@ export function EditSaleTransactionModal({
       color: item.color,
       size: item.size,
       isUnregistered: !item.productId,
-    }));
-
-    setLines(initialLines);
+    })));
+    setDateValue(isoToLocalDateTime(transaction.date));
+    setNotes(transaction.notes || '');
+    setTargetTotal(transaction.total);
+    const payments = [transaction.cashAmount, transaction.transferAmount, transaction.cardAmount];
+    setUseMixedPayment(payments.filter((amount) => amount > 0).length > 1);
+    setCashAmount(transaction.cashAmount);
+    setTransferAmount(transaction.transferAmount);
+    setCardAmount(transaction.cardAmount);
+    setAmountToPay(payments.reduce((sum, amount) => sum + amount, 0));
+    setPaymentMethod(transaction.cardAmount > 0 ? 'card' : transaction.transferAmount > 0 ? 'transfer' : 'cash');
     setAddProductId(null);
     setAddQuantity(1);
     setSelectedUpsFilter('');
-    setUnregName('');
-    setUnregPrice(0);
-    setUnregQty(1);
-    setUnregCategory('');
-    setUnregBrand('');
-    setNotes(transaction.notes || '');
-    setLineSeed((current) => current + 1);
   }, [isOpen, transaction]);
 
   useEffect(() => {
-    if (!addProductId) return;
-    const existsInFilter = filteredSelectableProducts.some(
-      (product) => product.id === addProductId
-    );
-    if (!existsInFilter) {
-      setAddProductId(null);
-    }
-  }, [addProductId, filteredSelectableProducts]);
+    if (addProductId && !filteredProducts.some((product) => product.id === addProductId)) setAddProductId(null);
+  }, [addProductId, filteredProducts]);
 
-  const handleClose = () => {
-    if (isSaving) return;
-    onConfirmClose();
-    onClose();
+  const setTotalAndKeepFullPayment = (nextValue: number) => {
+    const nextTotal = Math.max(0, roundMoney(nextValue));
+    const wasFullyPaid = Math.abs(paidAmount - targetTotal) <= EPSILON;
+    if (wasFullyPaid) {
+      if (useMixedPayment) {
+        if (paidAmount > 0) {
+          const nextAmounts = rescalePaymentAmounts({
+            cash: cashAmount,
+            transfer: transferAmount,
+            card: cardAmount,
+          }, nextTotal);
+          setCashAmount(nextAmounts.cash);
+          setTransferAmount(nextAmounts.transfer);
+          setCardAmount(nextAmounts.card);
+        } else {
+          setCashAmount(nextTotal);
+        }
+      } else {
+        setAmountToPay(nextTotal);
+      }
+    }
+    setTargetTotal(nextTotal);
   };
 
-  const handleAddProductLine = () => {
-    if (!selectedProduct || addQuantity <= 0) return;
+  const updateLinesAndTotal = (updater: (current: EditableLine[]) => EditableLine[]) => {
+    const next = updater(lines);
+    const nextSubtotal = next.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
+    setLines(next);
+    setTotalAndKeepFullPayment(Math.max(0, nextSubtotal - discount));
+  };
 
-    setLines((current) => {
-      const existingIdx = current.findIndex(
-        (line) => line.productId === selectedProduct.id
-      );
+  const handlePaymentModeChange = (mixed: boolean) => {
+    if (mixed) {
+      setCashAmount(paymentMethod === 'cash' ? amountToPay : 0);
+      setTransferAmount(paymentMethod === 'transfer' ? amountToPay : 0);
+      setCardAmount(paymentMethod === 'card' ? amountToPay : 0);
+    } else {
+      const totalPaid = roundMoney(cashAmount + transferAmount + cardAmount);
+      setAmountToPay(totalPaid);
+      setPaymentMethod(cardAmount > 0 ? 'card' : transferAmount > 0 ? 'transfer' : 'cash');
+    }
+    setUseMixedPayment(mixed);
+  };
 
-      if (existingIdx >= 0) {
-        const next = [...current];
-        next[existingIdx] = {
-          ...next[existingIdx],
-          quantity: next[existingIdx].quantity + addQuantity,
-        };
-        return next;
+  const handleAddProduct = () => {
+    if (!selectedProduct || addQuantity < 1) return;
+    updateLinesAndTotal((current) => {
+      const existingIndex = current.findIndex((line) => line.productId === selectedProduct.id);
+      if (existingIndex >= 0) {
+        return current.map((line, index) => index === existingIndex ? { ...line, quantity: line.quantity + addQuantity } : line);
       }
-
-      return [
-        ...current,
-        {
-          lineId: `${selectedProduct.id}-${lineSeed}-${Date.now()}`,
-          productId: selectedProduct.id,
-          productName: selectedProduct.name,
-          quantity: addQuantity,
-          unitPrice: selectedProduct.unitPrice,
-          ...getProductSatSnapshot(selectedProduct, satKeys),
-          category: selectedProduct.category,
-          brand: selectedProduct.brand,
-          color: selectedProduct.color,
-          size: selectedProduct.size,
-          isUnregistered: false,
-        },
-      ];
+      return [...current, {
+        lineId: `${selectedProduct.id}-${Date.now()}`,
+        productId: selectedProduct.id,
+        productName: selectedProduct.name,
+        quantity: addQuantity,
+        unitPrice: selectedProduct.unitPrice,
+        ...getProductSatSnapshot(selectedProduct, satKeys),
+        category: selectedProduct.category,
+        brand: selectedProduct.brand,
+        color: selectedProduct.color,
+        size: selectedProduct.size,
+        isUnregistered: false,
+      }];
     });
-
     setAddProductId(null);
     setAddQuantity(1);
   };
 
-  const resetUnregisteredForm = () => {
-    setUnregName('');
-    setUnregPrice(0);
-    setUnregQty(1);
-    setUnregCategory('');
-    setUnregBrand('');
+  const resetUnregistered = () => {
+    setUnregName(''); setUnregPrice(0); setUnregQty(1); setUnregCategory(''); setUnregBrand('');
   };
 
-  const handleCloseUnregistered = () => {
-    if (isSaving) return;
-    resetUnregisteredForm();
-    onUnregisteredClose();
+  const handleAddUnregistered = () => {
+    const productName = unregName.trim();
+    if (!productName || unregPrice < 0 || unregQty < 1) return;
+    updateLinesAndTotal((current) => [...current, {
+      lineId: `unregistered-${Date.now()}`,
+      productId: null,
+      productName,
+      quantity: unregQty,
+      unitPrice: unregPrice,
+      category: unregCategory || undefined,
+      brand: unregBrand.trim() || undefined,
+      isUnregistered: true,
+    }]);
+    resetUnregistered();
+    unregistered.onClose();
   };
 
-  const handleAddUnregisteredLine = () => {
-    if (isSaving) return;
-    const trimmedName = unregName.trim();
-    const trimmedBrand = unregBrand.trim();
-    if (!trimmedName || unregPrice <= 0 || unregQty < 1) return;
+  const paymentAmounts = () => useMixedPayment
+    ? { cash: cashAmount, transfer: transferAmount, card: cardAmount }
+    : {
+        cash: paymentMethod === 'cash' ? amountToPay : 0,
+        transfer: paymentMethod === 'transfer' ? amountToPay : 0,
+        card: paymentMethod === 'card' ? amountToPay : 0,
+      };
 
-    setLines((current) => {
-      const existingIdx = current.findIndex(
-        (line) =>
-          line.productId === null &&
-          line.productName.toLowerCase() === trimmedName.toLowerCase() &&
-          line.unitPrice === unregPrice
-      );
-
-      if (existingIdx >= 0) {
-        const next = [...current];
-        next[existingIdx] = {
-          ...next[existingIdx],
-          quantity: next[existingIdx].quantity + unregQty,
-        };
-        return next;
-      }
-
-      return [
-        ...current,
-        {
-          lineId: `unregistered-${lineSeed}-${Date.now()}`,
-          productId: null,
-          productName: trimmedName,
-          quantity: unregQty,
-          unitPrice: unregPrice,
-          category: unregCategory || undefined,
-          brand: trimmedBrand || undefined,
-          color: undefined,
-          size: undefined,
-          isUnregistered: true,
-        },
-      ];
-    });
-
-    resetUnregisteredForm();
-    onUnregisteredClose();
-  };
-
-  const handleQuantityChange = (lineId: string, quantity: number) => {
-    if (!Number.isFinite(quantity) || quantity < 1) return;
-    setLines((current) =>
-      current.map((line) =>
-        line.lineId === lineId ? { ...line, quantity: Math.trunc(quantity) } : line
-      )
-    );
-  };
-
-  const handleRemoveLine = (lineId: string) => {
-    setLines((current) => current.filter((line) => line.lineId !== lineId));
-  };
-
-  const buildPayload = (): ModifySaleTransactionPayload | null => {
-    if (!transaction) return null;
-
+  const buildPayload = (): EditSaleTransactionDetailsPayload | null => {
+    if (!transaction || !parsedDate || allocatedItems.length !== lines.length) return null;
+    const amounts = paymentAmounts();
     return {
       transactionId: transaction.id,
-      autoKeepPaidIfFullyPaid: true,
-      discount: transaction.discount,
-      discountNote: transaction.discountNote,
-      ...getSaleEditNotesPayload(notes),
+      expectedUpdatedAt: transaction.updatedAt || transaction.createdAt,
+      date: parsedDate,
+      notes: notes.trim() || undefined,
+      total: roundMoney(targetTotal),
+      cashAmount: roundMoney(amounts.cash),
+      transferAmount: roundMoney(amounts.transfer),
+      cardAmount: roundMoney(amounts.card),
+      // Send source weights. The RPC owns the single authoritative allocation.
       items: lines.map((line) => ({
         productId: line.productId,
         productName: line.productName,
         quantity: line.quantity,
-        unitPrice: line.unitPrice,
-        totalPrice: line.quantity * line.unitPrice,
-        satKeyId: line.satKeyId,
-        satKeyCode: line.satKeyCode,
-        satKeyDescription: line.satKeyDescription,
-        category: line.category,
-        brand: line.brand,
-        color: line.color,
-        size: line.size,
-      })),
-    };
-  };
-
-  const buildRefundPayload = (): RefundSaleFromEditPayload | null => {
-    if (!transaction) return null;
-
-    return {
-      transactionId: transaction.id,
-      returnTransactionId: `${transaction.id}-refund-${generateId()}`,
-      reason: 'Refund from Clientes modify sale',
-      discount: transaction.discount,
-      ...getSaleEditNotesPayload(notes),
-      items: lines.map((line) => ({
-        productId: line.productId,
-        productName: line.productName,
-        quantity: line.quantity,
-        unitPrice: line.unitPrice,
-        totalPrice: line.quantity * line.unitPrice,
+        unitPrice: Number(line.unitPrice.toFixed(6)),
+        totalPrice: Number((line.quantity * line.unitPrice).toFixed(6)),
         satKeyId: line.satKeyId,
         satKeyCode: line.satKeyCode,
         satKeyDescription: line.satKeyDescription,
@@ -440,190 +346,51 @@ export function EditSaleTransactionModal({
   };
 
   const notifyError = (error: unknown) => {
-    const message =
-      error && typeof error === 'object' && 'message' in error
-        ? String((error as any).message || '')
-        : String(error || '');
+    const message = error instanceof Error ? error.message : String(error || '');
     const lower = message.toLowerCase();
-
-    if (isMissingDatabaseFunction(error, 'modify_sale_transaction')) {
-      toast({
-        title: es.errors.transactionModifyRpcMissing,
-        status: 'error',
-        duration: 4500,
-        isClosable: true,
-      });
-      return;
-    }
-    if (isMissingDatabaseFunction(error, 'refund_sale_transaction_from_edit')) {
-      toast({
-        title: es.errors.transactionRefundRpcMissing,
-        status: 'error',
-        duration: 4500,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (lower.includes('paid_floor_violation')) {
-      toast({
-        title: es.errors.transactionModifyPaidFloor,
-        status: 'error',
-        duration: 4000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (lower.includes('insufficient_stock')) {
-      toast({
-        title: es.errors.transactionModifyInsufficientStock,
-        description: message,
-        status: 'error',
-        duration: 4500,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (lower.includes('sold_qty_underflow')) {
-      toast({
-        title: es.errors.transactionModifySoldUnderflow,
-        description: message,
-        status: 'error',
-        duration: 4500,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (
-      lower.includes('transaction_not_sale') ||
-      lower.includes('invalid_items_payload') ||
-      lower.includes('transaction_requires_at_least_one_item')
-    ) {
-      toast({
-        title: es.errors.transactionModifyInvalidPayload,
-        description: message,
-        status: 'error',
-        duration: 4500,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (
-      lower.includes('refund_payload_add_not_allowed') ||
-      lower.includes('refund_payload_increase_not_allowed') ||
-      lower.includes('refund_payload_no_refund_change') ||
-      lower.includes('refund_payload_invalid_totals') ||
-      lower.includes('refund_not_required') ||
-      lower.includes('refund_total_invalid')
-    ) {
-      toast({
-        title: es.errors.transactionRefundInvalidPayload,
-        description: message,
-        status: 'error',
-        duration: 4500,
-        isClosable: true,
-      });
-      return;
-    }
-
-    toast({
-      title: es.errors.saveError,
-      description: message || es.errors.genericError,
-      status: 'error',
-      duration: 4500,
-      isClosable: true,
-    });
+    const title = lower.includes('payment_exceeds') ? 'El pago supera el total de la venta'
+      : lower.includes('credit_requires') ? 'El crédito requiere un cliente registrado'
+        : lower.includes('sale_payment_locked_by_installments') ? 'El pago está protegido porque ya existen abonos'
+          : lower.includes('sale_modified_concurrently') ? 'La venta cambió en otro dispositivo'
+            : lower.includes('insufficient_role') ? 'Tu cuenta no tiene permiso para modificar ventas'
+        : lower.includes('sat_key_not_active') ? 'La clave SAT seleccionada ya no está activa'
+          : lower.includes('insufficient_stock') ? 'No hay existencias suficientes para modificar la venta'
+            : lower.includes('sold_qty_underflow') ? 'Las cantidades vendidas ya no permiten este cambio'
+              : lower.includes('migración 026') ? 'Falta desplegar la migración 026' : es.errors.saveError;
+    const description = lower.includes('sale_modified_concurrently')
+      ? 'Otro usuario guardó cambios mientras este formulario estaba abierto. Ciérralo y vuelve a abrir la venta para revisar la versión más reciente.'
+      : lower.includes('sale_payment_locked_by_installments')
+        ? 'La venta ya tiene abonos aplicados. El pago original debe conservarse; modifica únicamente los demás datos.'
+        : message;
+    toast({ title, description, status: 'error', duration: 7000, isClosable: true });
   };
 
   const handleConfirmSave = async () => {
     const payload = buildPayload();
-    const refundPayload = buildRefundPayload();
-    if (!payload || !refundPayload || !transaction) return;
-    if (!canSave) return;
-
+    if (!payload || !canSave || !transaction) return;
     setIsSaving(true);
     try {
-      const conn = connectionStatus.getStatus();
-      if (!conn.isOnline || !conn.isSupabaseConnected) {
-        toast({
-          title: es.errors.transactionModifyRequiresOnline,
-          status: 'error',
-          duration: 4000,
-          isClosable: true,
-        });
-        return;
-      }
-
+      const connection = connectionStatus.getStatus();
+      if (!connection.isOnline || !connection.isSupabaseConnected) throw new Error(es.errors.transactionModifyRequiresOnline);
       await syncManager.syncPendingOperations();
       const syncStatus = syncManager.getStatus();
-      if (syncStatus.pendingCount > 0) {
-        toast({
-          title: es.errors.transactionModifyPendingSync,
-          description: `${syncStatus.pendingCount} ${es.transactions.pendingSyncSuffix}`,
-          status: 'error',
-          duration: 4500,
-          isClosable: true,
-        });
-        return;
+      if (syncStatus.pendingCount > 0 || syncStatus.deadLetterCount > 0) {
+        throw new Error('Hay cambios locales pendientes. Sincronízalos antes de modificar la venta.');
       }
-      if (syncStatus.deadLetterCount > 0) {
-        toast({
-          title: es.errors.transactionModifyDeadLetter,
-          description: `${syncStatus.deadLetterCount} ${es.transactions.failedSyncSuffix}`,
-          status: 'error',
-          duration: 4500,
-          isClosable: true,
-        });
-        return;
-      }
-
-      let updatedTransaction = transaction;
-      let successTitle = es.success.transactionModified;
-      let successDescription = '';
-
-      if (totalBelowPaidFloor) {
-        const refundResult =
-          await transactionService.refundSaleTransactionFromEdit(refundPayload);
-        const sourceAfterRefund = await transactionService.getById(transaction.id);
-        if (sourceAfterRefund) {
-          updatedTransaction = sourceAfterRefund;
-        }
-        successTitle = es.success.transactionRefunded;
-        successDescription =
-          `${formatCurrency(refundResult.refundTotal)} (${refundResult.refundedItemCount} ${es.transactions.refundedLinesLabel})`;
-      } else {
-        const modifyResult =
-          await transactionService.modifySaleTransaction(payload);
-        updatedTransaction = modifyResult.transaction;
-        successDescription =
-          `${formatCurrency(modifyResult.result.oldTotal)} -> ${formatCurrency(modifyResult.result.newTotal)}`;
-      }
-
+      const { result, transaction: updatedTransaction } = await transactionService.editSaleTransactionDetails(payload);
       let refreshFailed = false;
       try {
         await Promise.all([loadProducts(), loadCustomers(), loadTransactions()]);
       } catch {
         refreshFailed = true;
       }
-
       onSaved(updatedTransaction);
-      onConfirmClose();
+      confirm.onClose();
       onClose();
-
       toast({
-        title: refreshFailed
-          ? es.errors.transactionModifyRefreshWarning
-          : successTitle,
-        description: refreshFailed
-          ? `${successDescription}. ${es.errors.transactionModifyRefreshWarning}`
-          : successDescription,
-        status: refreshFailed ? 'warning' : 'success',
-        duration: 4500,
-        isClosable: true,
+        title: refreshFailed ? 'Venta guardada; no se pudo recargar todo' : es.success.transactionModified,
+        description: `${formatCurrency(result.oldTotal)} → ${formatCurrency(result.newTotal)}`,
+        status: refreshFailed ? 'warning' : 'success', duration: 5000, isClosable: true,
       });
     } catch (error) {
       notifyError(error);
@@ -632,353 +399,186 @@ export function EditSaleTransactionModal({
     }
   };
 
+  const handleClose = () => {
+    if (isSaving) return;
+    confirm.onClose();
+    onClose();
+  };
+
   if (!transaction) return null;
+  const paymentLabel = effectivePaymentMethod === 'mixed' ? 'Mixto'
+    : effectivePaymentMethod === 'cash' ? 'Efectivo'
+      : effectivePaymentMethod === 'transfer' ? 'Transferencia'
+        : effectivePaymentMethod === 'card' ? 'Tarjeta' : 'Crédito';
 
   return (
     <>
-      <Modal
-        isOpen={isOpen}
-        onClose={handleClose}
-        size="4xl"
-        scrollBehavior="inside"
-      >
+      <Modal isOpen={isOpen} onClose={handleClose} size="4xl" scrollBehavior="inside">
         <ModalOverlay />
-        <ModalContent mx={4}>
-          <ModalHeader>{es.transactions.editSaleTitle}</ModalHeader>
-          <ModalCloseButton />
-
+        <ModalContent mx={{ base: 2, md: 4 }} maxH={{ base: 'calc(100dvh - 16px)', md: 'calc(100vh - 48px)' }}>
+          <ModalHeader>Modificar venta</ModalHeader>
+          <ModalCloseButton size="lg" />
           <ModalBody>
-            <VStack align="stretch" spacing={4}>
-              <Box bg="gray.50" p={3} borderRadius="md">
-                <HStack justify="space-between" flexWrap="wrap">
-                  <Text fontSize="sm" color="gray.600">
-                    ID: {transaction.id}
-                  </Text>
-                  <Badge colorScheme="blue">
-                    {es.transactions.saleTypeLabel}
-                  </Badge>
-                </HStack>
-              </Box>
+            <VStack align="stretch" spacing={5}>
+              <HStack justify="space-between" p={3} bg="gray.50" borderRadius="md" flexWrap="wrap">
+                <Text fontSize="sm" color="gray.600">ID: {transaction.id}</Text>
+                <Badge colorScheme="blue">Venta</Badge>
+              </HStack>
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                <FormControl isRequired>
+                  <FormLabel>Fecha y hora</FormLabel>
+                  <Input type="datetime-local" value={dateValue} onChange={(event) => setDateValue(event.target.value)} minH="48px" />
+                </FormControl>
+                <FormControl isRequired isInvalid={targetTotal < 0}>
+                  <FormLabel>Total final</FormLabel>
+                  <CurrencyInput value={targetTotal} onChange={setTotalAndKeepFullPayment} size="lg" />
+                  <Text fontSize="xs" color="gray.500" mt={1}>El descuento histórico de {formatCurrency(discount)} se conserva.</Text>
+                </FormControl>
+              </SimpleGrid>
 
-              <Box border="1px solid" borderColor="gray.200" borderRadius="md" p={3}>
+              <Box>
+                <Text fontWeight="semibold" mb={3}>Productos y claves SAT</Text>
                 <VStack align="stretch" spacing={3}>
-                  <Text fontWeight="semibold">{es.transactions.addProductsLabel}</Text>
-                  <HStack align="end" flexWrap="wrap">
-                    <FormControl minW="180px" maxW="220px">
-                      <FormLabel fontSize="sm">{es.products.upsBatch}</FormLabel>
-                      <AutocompleteSelect
-                        options={upsFilterOptions}
-                        value={selectedUpsFilter}
-                        onChange={(value) =>
-                          setSelectedUpsFilter(value === '' ? '' : Number(value))
-                        }
-                        placeholder={es.transactions.selectUpsPlaceholder}
-                      />
-                    </FormControl>
-                    <FormControl minW="260px" flex={1}>
-                      <FormLabel fontSize="sm">{es.transactions.productLabel}</FormLabel>
-                      <AutocompleteSelect
-                        options={productOptions}
-                        value={addProductId || ''}
-                        onChange={(value) => setAddProductId(value ? String(value) : null)}
-                        placeholder={es.transactions.selectProductPlaceholder}
-                      />
-                    </FormControl>
-                    <FormControl maxW="120px">
-                      <FormLabel fontSize="sm">{es.sales.quantity}</FormLabel>
-                      <NumberInput
-                        min={1}
-                        value={addQuantity}
-                        onChange={(_, valueNumber) => setAddQuantity(Math.max(1, valueNumber || 1))}
-                      >
-                        <NumberInputField />
-                        <NumberInputStepper>
-                          <NumberIncrementStepper />
-                          <NumberDecrementStepper />
-                        </NumberInputStepper>
-                      </NumberInput>
-                    </FormControl>
-                    <Button
-                      leftIcon={<Icon as={FiPlus} />}
-                      colorScheme="brand"
-                      onClick={handleAddProductLine}
-                      isDisabled={!selectedProduct}
-                    >
-                      {es.actions.add}
-                    </Button>
-                    <Button
-                      leftIcon={<Icon as={FiPlus} />}
-                      colorScheme="orange"
-                      variant="outline"
-                      onClick={onUnregisteredOpen}
-                    >
-                      {es.transactions.addUnregisteredLineButton}
-                    </Button>
-                  </HStack>
-                  {selectedUpsFilter !== '' && productOptions.length === 0 && (
-                    <Text fontSize="sm" color="gray.500">
-                      {es.transactions.noProductsForUps}
-                    </Text>
-                  )}
-                  <Text fontSize="xs" color="gray.400">
-                    {es.transactions.onlyUpsProductsNote}
-                  </Text>
-                </VStack>
-              </Box>
-
-              <VStack align="stretch" spacing={3}>
-                {lines.map((line) => {
-                  const lineTotal = line.quantity * line.unitPrice;
-                  return (
-                    <Box
-                      key={line.lineId}
-                      border="1px solid"
-                      borderColor="gray.200"
-                      borderRadius="md"
-                      p={3}
-                    >
-                      <VStack align="stretch" spacing={2}>
-                        <HStack justify="space-between" align="start">
-                          <VStack align="start" spacing={0}>
-                            <Text fontWeight="medium">{line.productName}</Text>
-                            {line.isUnregistered && (
-                              <Badge colorScheme="orange" variant="outline">
-                                {es.transactions.unregisteredLineLabel}
-                              </Badge>
-                            )}
-                          </VStack>
-                          <IconButton
-                            aria-label={es.actions.delete}
-                            icon={<Icon as={FiMinusCircle} />}
-                            colorScheme="red"
-                            variant="ghost"
-                            onClick={() => handleRemoveLine(line.lineId)}
+                  {lines.map((line, index) => {
+                    const allocated = allocatedItems[index];
+                    return (
+                      <Box key={line.lineId} borderWidth="1px" borderColor="gray.200" borderRadius="lg" p={4}>
+                        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} alignItems="start">
+                          <Box>
+                            <HStack flexWrap="wrap"><Text fontWeight="semibold">{line.productName}</Text>{line.isUnregistered && <Badge colorScheme="orange">UPS 0</Badge>}</HStack>
+                            <Text fontSize="sm" color="gray.600" mt={1}>
+                              {line.quantity} × {formatCurrency(allocated?.unitPrice ?? line.unitPrice)} · Total línea{' '}
+                              <Text as="span" fontWeight="bold" color="gray.800">{formatCurrency(allocated?.totalPrice ?? line.quantity * line.unitPrice)}</Text>
+                            </Text>
+                          </Box>
+                          <SatKeySelector
+                            value={{ satKeyId: line.satKeyId, satKeyCode: line.satKeyCode, satKeyDescription: line.satKeyDescription }}
+                            category={line.category}
+                            label={`Clave SAT de ${line.productName}`}
+                            onChange={(snapshot) => setLines((current) => current.map((item) => item.lineId === line.lineId ? {
+                              ...item,
+                              satKeyId: snapshot.satKeyId,
+                              satKeyCode: snapshot.satKeyCode,
+                              satKeyDescription: snapshot.satKeyDescription,
+                            } : item))}
                           />
-                        </HStack>
-
-                        <HStack spacing={3} align="end" flexWrap="wrap">
-                          <FormControl maxW="120px">
-                            <FormLabel fontSize="sm">{es.sales.quantity}</FormLabel>
-                            <NumberInput
-                              min={1}
-                              value={line.quantity}
-                              onChange={(_, valueNumber) =>
-                                handleQuantityChange(line.lineId, Math.max(1, valueNumber || 1))
-                              }
-                            >
-                              <NumberInputField />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                          </FormControl>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500">
-                              {es.transactions.unitPriceLabel}
-                            </Text>
-                            <Text fontWeight="semibold">{formatCurrency(line.unitPrice)}</Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500">
-                              {es.transactions.lineTotalLabel}
-                            </Text>
-                            <Text fontWeight="semibold">{formatCurrency(lineTotal)}</Text>
-                          </Box>
-                        </HStack>
-                      </VStack>
-                    </Box>
-                  );
-                })}
-              </VStack>
-
-              {lines.length === 0 && (
-                <Alert status="warning" borderRadius="md">
-                  <AlertIcon />
-                  {es.transactions.atLeastOneItemRequired}
-                </Alert>
-              )}
-
-              <FormControl>
-                <FormLabel>{es.sales.notes}</FormLabel>
-                <Textarea
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                  placeholder={es.transactions.editSaleNotesPlaceholder}
-                  resize="vertical"
-                  rows={3}
-                />
-              </FormControl>
-
-              <Divider />
-
-              <Box bg="gray.50" p={3} borderRadius="md">
-                <VStack align="stretch" spacing={2}>
-                  <HStack justify="space-between">
-                    <Text>{es.sales.subtotal}</Text>
-                    <Text>{formatCurrency(subtotal)}</Text>
-                  </HStack>
-                  <HStack justify="space-between">
-                    <Text>{es.sales.discount}</Text>
-                    <Text>{formatCurrency(discount)}</Text>
-                  </HStack>
-                  <HStack justify="space-between">
-                    <Text fontWeight="semibold">{es.sales.total}</Text>
-                    <Text fontWeight="bold">{formatCurrency(total)}</Text>
-                  </HStack>
-                  <HStack justify="space-between">
-                    <Text>{es.transactions.paidLabel}</Text>
-                    <Text>{formatCurrency(effectivePaidAmount)}</Text>
-                  </HStack>
-                  {shouldAutoKeepPaid && (
-                    <Text fontSize="sm" color="blue.600">
-                      {es.transactions.autoSettlementNotice}{' '}
-                      +{formatCurrency(autoSettlementDelta)} ({autoSettlementMethodLabel})
-                    </Text>
-                  )}
-                  <HStack justify="space-between">
-                    <Text>{es.transactions.pendingLabel}</Text>
-                    <Text color={pending > 0 ? 'orange.600' : 'green.600'}>
-                      {formatCurrency(pending)}
-                    </Text>
-                  </HStack>
+                        </SimpleGrid>
+                      </Box>
+                    );
+                  })}
                 </VStack>
               </Box>
+              {lines.length === 0 && <Alert status="warning" borderRadius="md"><AlertIcon />Agrega al menos un producto.</Alert>}
 
-              {totalBelowPaidFloor && (
-                <Alert status="warning" borderRadius="md">
-                  <AlertIcon />
-                  {es.transactions.refundModeWarning}{' '}
-                  {formatCurrency(refundAmount)}.
+              <Accordion allowToggle borderWidth="1px" borderColor="gray.200" borderRadius="lg" overflow="visible">
+                <AccordionItem border="none">
+                  <AccordionButton minH="52px" _expanded={{ bg: 'blue.50' }}>
+                    <Box flex="1" textAlign="left" fontWeight="semibold">Agregar o quitar productos</Box><AccordionIcon />
+                  </AccordionButton>
+                  <AccordionPanel pb={5} overflow="visible">
+                    <VStack align="stretch" spacing={5}>
+                      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+                        <FormControl><FormLabel>UPS</FormLabel><AutocompleteSelect options={upsFilterOptions} value={selectedUpsFilter} onChange={(value) => setSelectedUpsFilter(value === '' ? '' : Number(value))} placeholder="Buscar UPS" /></FormControl>
+                        <FormControl><FormLabel>Producto</FormLabel><AutocompleteSelect options={productOptions} value={addProductId || ''} onChange={(value) => setAddProductId(value ? String(value) : null)} placeholder="Buscar producto" /></FormControl>
+                      </SimpleGrid>
+                      <HStack align="end" flexWrap="wrap">
+                        <FormControl maxW="140px"><FormLabel>Cantidad</FormLabel><NumberInput min={1} value={addQuantity} onChange={(_, value) => setAddQuantity(Math.max(1, Math.trunc(value || 1)))}><NumberInputField /><NumberInputStepper><NumberIncrementStepper /><NumberDecrementStepper /></NumberInputStepper></NumberInput></FormControl>
+                        <Button leftIcon={<Icon as={FiPlus} />} colorScheme="brand" onClick={handleAddProduct} isDisabled={!selectedProduct}>Agregar producto</Button>
+                        <Button leftIcon={<Icon as={FiPlus} />} colorScheme="orange" variant="outline" onClick={unregistered.onOpen}>Agregar UPS 0</Button>
+                      </HStack>
+                      <Divider />
+                      {lines.map((line) => (
+                        <HStack key={line.lineId} justify="space-between" align="end" flexWrap="wrap" p={3} bg="gray.50" borderRadius="md">
+                          <Text fontWeight="medium" flex="1" minW="180px">{line.productName}</Text>
+                          <FormControl maxW="140px"><FormLabel fontSize="sm">Cantidad</FormLabel><NumberInput min={1} value={line.quantity} onChange={(_, value) => updateLinesAndTotal((current) => current.map((item) => item.lineId === line.lineId ? { ...item, quantity: Math.max(1, Math.trunc(value || 1)) } : item))}><NumberInputField /><NumberInputStepper><NumberIncrementStepper /><NumberDecrementStepper /></NumberInputStepper></NumberInput></FormControl>
+                          <IconButton aria-label={`Eliminar ${line.productName}`} icon={<Icon as={FiMinusCircle} />} colorScheme="red" variant="outline" minW="48px" minH="48px" onClick={() => updateLinesAndTotal((current) => current.filter((item) => item.lineId !== line.lineId))} />
+                        </HStack>
+                      ))}
+                    </VStack>
+                  </AccordionPanel>
+                </AccordionItem>
+              </Accordion>
+
+              {paymentLockedByInstallments && (
+                <Alert status="info" borderRadius="md" alignItems="flex-start">
+                  <AlertIcon mt={1} />
+                  <Box>
+                    <Text fontWeight="semibold">Esta venta ya recibió {formatCurrency(installmentApplied)} en abonos.</Text>
+                    <Text fontSize="sm" mt={1}>
+                      El desglose de pago original queda en solo lectura para no contar esos abonos dos veces. Todavía puedes modificar el total, la fecha, la nota y las claves SAT.
+                    </Text>
+                  </Box>
                 </Alert>
               )}
+
+              <Box borderWidth="1px" borderColor="gray.200" borderRadius="lg" p={4}>
+                <HStack justify="space-between" mb={4} flexWrap="wrap">
+                  <Text fontWeight="semibold">Forma de pago</Text>
+                  <FormControl display="flex" alignItems="center" w="auto"><FormLabel htmlFor="edit-mixed-payment" mb="0" fontSize="sm">Pago mixto</FormLabel><Switch id="edit-mixed-payment" isChecked={useMixedPayment} isDisabled={paymentLockedByInstallments} onChange={(event) => handlePaymentModeChange(event.target.checked)} /></FormControl>
+                </HStack>
+                {!useMixedPayment ? (
+                  <VStack align="stretch" spacing={4}>
+                    <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={3}>
+                      {(['cash', 'transfer', 'card'] as const).map((method) => (
+                        <Button key={method} minH="48px" variant={paymentMethod === method ? 'solid' : 'outline'} colorScheme={paymentMethod === method ? 'brand' : 'gray'} isDisabled={paymentLockedByInstallments} onClick={() => setPaymentMethod(method)}>
+                          {method === 'cash' ? 'Efectivo' : method === 'transfer' ? 'Transferencia' : 'Tarjeta'}
+                        </Button>
+                      ))}
+                    </SimpleGrid>
+                    <FormControl><FormLabel>Monto registrado en la venta</FormLabel><CurrencyInput value={amountToPay} onChange={setAmountToPay} size="lg" isDisabled={paymentLockedByInstallments} isInvalid={paymentExceedsTotal} /></FormControl>
+                  </VStack>
+                ) : (
+                  <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                    <FormControl><FormLabel>Efectivo</FormLabel><CurrencyInput value={cashAmount} onChange={setCashAmount} isDisabled={paymentLockedByInstallments} /></FormControl>
+                    <FormControl><FormLabel>Transferencia</FormLabel><CurrencyInput value={transferAmount} onChange={setTransferAmount} isDisabled={paymentLockedByInstallments} /></FormControl>
+                    <FormControl><FormLabel>Tarjeta</FormLabel><CurrencyInput value={cardAmount} onChange={setCardAmount} isDisabled={paymentLockedByInstallments} /></FormControl>
+                  </SimpleGrid>
+                )}
+              </Box>
+              {paymentExceedsTotal && <Alert status="error" borderRadius="md"><AlertIcon />El pago supera el nuevo total. Ajusta los importes antes de guardar.</Alert>}
+              {creditWithoutCustomer && <Alert status="error" borderRadius="md"><AlertIcon />Una venta a crédito requiere un cliente registrado.</Alert>}
+              <FormControl><FormLabel>Nota de la venta</FormLabel><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={4} resize="vertical" /></FormControl>
+
+              <Box bg="gray.50" borderRadius="lg" p={4}>
+                <Text fontWeight="semibold" mb={3}>Resumen antes de confirmar</Text>
+                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
+                  <HStack justify="space-between"><Text>Total anterior</Text><Text>{formatCurrency(transaction.total)}</Text></HStack>
+                  <HStack justify="space-between"><Text>Total nuevo</Text><Text fontWeight="bold">{formatCurrency(targetTotal)}</Text></HStack>
+                  <HStack justify="space-between"><Text>Pago original de la venta</Text><Text>{formatCurrency(originalPaid)}</Text></HStack>
+                  <HStack justify="space-between"><Text>Pago nuevo en la venta</Text><Text fontWeight="bold">{formatCurrency(paidAmount)}</Text></HStack>
+                  {paymentLockedByInstallments && <HStack justify="space-between"><Text>Abonos ya aplicados</Text><Text color="blue.700">{formatCurrency(installmentApplied)}</Text></HStack>}
+                  <HStack justify="space-between"><Text>Saldo pendiente tras abonos</Text><Text color={effectivePending > EPSILON ? 'orange.700' : 'green.700'}>{formatCurrency(effectivePending)}</Text></HStack>
+                  <HStack justify="space-between"><Text>Método resultante</Text><Badge colorScheme={effectivePaymentMethod === 'credit' ? 'orange' : 'blue'}>{paymentLabel}</Badge></HStack>
+                </SimpleGrid>
+                <Alert status={inventoryWillMove ? 'warning' : 'info'} mt={4} borderRadius="md"><AlertIcon />{inventoryWillMove ? 'Sí habrá movimiento de inventario por cambios de producto o cantidad.' : 'No habrá movimiento de inventario.'}</Alert>
+              </Box>
             </VStack>
           </ModalBody>
-
-          <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={handleClose} isDisabled={isSaving}>
-              {es.actions.cancel}
-            </Button>
-            <Button
-              colorScheme="brand"
-              onClick={onConfirmOpen}
-              isDisabled={!canSave}
-              isLoading={isSaving}
-            >
-              {es.actions.save}
-            </Button>
-          </ModalFooter>
+          <ModalFooter><Button variant="ghost" mr={3} onClick={handleClose} isDisabled={isSaving}>Cancelar</Button><Button colorScheme="brand" onClick={confirm.onOpen} isDisabled={!canSave} isLoading={isSaving}>Guardar cambios</Button></ModalFooter>
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={isUnregisteredOpen} onClose={handleCloseUnregistered} isCentered>
-        <ModalOverlay />
-        <ModalContent mx={4}>
-          <ModalHeader>{es.transactions.addUnregisteredModalTitle}</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <VStack spacing={4} align="stretch">
-              <FormControl isRequired>
-                <FormLabel>{es.transactions.unregisteredNameLabel}</FormLabel>
-                <Input
-                  value={unregName}
-                  onChange={(event) => setUnregName(event.target.value)}
-                  placeholder={es.transactions.unregisteredNamePlaceholder}
-                  autoFocus
-                />
-              </FormControl>
-
-              <FormControl isRequired>
-                <FormLabel>{es.transactions.unregisteredPriceLabel}</FormLabel>
-                <NumberInput
-                  min={0}
-                  precision={2}
-                  value={unregPrice}
-                  onChange={(_, valueNumber) => setUnregPrice(Math.max(0, valueNumber || 0))}
-                >
-                  <NumberInputField />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </FormControl>
-
-              <FormControl isRequired>
-                <FormLabel>{es.sales.quantity}</FormLabel>
-                <NumberInput
-                  min={1}
-                  value={unregQty}
-                  onChange={(_, valueNumber) => setUnregQty(Math.max(1, Math.trunc(valueNumber || 1)))}
-                >
-                  <NumberInputField />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </FormControl>
-
-              <FormControl>
-                <FormLabel>{es.transactions.unregisteredCategoryLabel}</FormLabel>
-                <AutocompleteSelect
-                  options={unregisteredCategoryOptions}
-                  value={unregCategory}
-                  onChange={(value) => setUnregCategory(value === '' ? '' : (value as CategoryCode))}
-                  placeholder={es.transactions.unregisteredNoCategory}
-                />
-              </FormControl>
-
-              <FormControl>
-                <FormLabel>{es.products.brand}</FormLabel>
-                <Input
-                  value={unregBrand}
-                  onChange={(event) => setUnregBrand(event.target.value)}
-                  placeholder={es.transactions.unregisteredBrandPlaceholder}
-                />
-              </FormControl>
-
-              {unregPrice > 0 && unregQty > 0 && (
-                <HStack justify="space-between" p={3} bg="orange.50" borderRadius="md">
-                  <Text fontWeight="medium">{es.sales.total}</Text>
-                  <Text fontWeight="bold" color="orange.700">
-                    {formatCurrency(unregPrice * unregQty)}
-                  </Text>
-                </HStack>
-              )}
-            </VStack>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={handleCloseUnregistered}>
-              {es.actions.cancel}
-            </Button>
-            <Button
-              colorScheme="orange"
-              onClick={handleAddUnregisteredLine}
-              isDisabled={!unregName.trim() || unregPrice <= 0 || unregQty < 1}
-            >
-              {es.transactions.addUnregisteredConfirm}
-            </Button>
-          </ModalFooter>
+      <Modal isOpen={unregistered.isOpen} onClose={() => { resetUnregistered(); unregistered.onClose(); }} isCentered>
+        <ModalOverlay /><ModalContent mx={4}><ModalHeader>Agregar producto UPS 0</ModalHeader><ModalCloseButton />
+          <ModalBody><VStack align="stretch" spacing={4}>
+            <FormControl isRequired><FormLabel>Nombre</FormLabel><Input value={unregName} onChange={(event) => setUnregName(event.target.value)} autoFocus /></FormControl>
+            <FormControl isRequired><FormLabel>Precio base</FormLabel><CurrencyInput value={unregPrice} onChange={setUnregPrice} /></FormControl>
+            <FormControl isRequired><FormLabel>Cantidad</FormLabel><NumberInput min={1} value={unregQty} onChange={(_, value) => setUnregQty(Math.max(1, Math.trunc(value || 1)))}><NumberInputField /><NumberInputStepper><NumberIncrementStepper /><NumberDecrementStepper /></NumberInputStepper></NumberInput></FormControl>
+            <FormControl><FormLabel>Categoría</FormLabel><AutocompleteSelect options={categoryOptions} value={unregCategory} onChange={(value) => setUnregCategory(value ? value as CategoryCode : '')} /></FormControl>
+            <FormControl><FormLabel>Marca</FormLabel><Input value={unregBrand} onChange={(event) => setUnregBrand(event.target.value)} /></FormControl>
+          </VStack></ModalBody>
+          <ModalFooter><Button variant="ghost" mr={3} onClick={() => { resetUnregistered(); unregistered.onClose(); }}>Cancelar</Button><Button colorScheme="orange" onClick={handleAddUnregistered} isDisabled={!unregName.trim() || unregQty < 1}>Agregar</Button></ModalFooter>
         </ModalContent>
       </Modal>
 
       <ConfirmDialog
-        isOpen={isConfirmOpen}
-        onClose={onConfirmClose}
+        isOpen={confirm.isOpen}
+        onClose={confirm.onClose}
         onConfirm={handleConfirmSave}
-        title={
-          totalBelowPaidFloor
-            ? es.transactions.refundConfirmTitle
-            : es.transactions.modifyConfirmTitle
-        }
-        message={
-          totalBelowPaidFloor
-            ? `${es.transactions.refundConfirmMessage} ${formatCurrency(refundAmount)}.`
-            : es.transactions.modifyConfirmMessage
-        }
-        confirmText={es.actions.confirm}
-        cancelText={es.actions.cancel}
+        title="Confirmar modificación de venta"
+        message={`Total ${formatCurrency(transaction.total)} → ${formatCurrency(targetTotal)}. Pago registrado ${formatCurrency(originalPaid)} → ${formatCurrency(paidAmount)}.${paymentLockedByInstallments ? ` Abonos conservados ${formatCurrency(installmentApplied)}.` : ''} Saldo pendiente tras abonos ${formatCurrency(effectivePending)}. ${inventoryWillMove ? 'Habrá movimiento de inventario.' : 'No habrá movimiento de inventario.'}`}
+        confirmText="Confirmar y guardar"
+        cancelText="Cancelar"
         colorScheme="brand"
         isLoading={isSaving}
       />

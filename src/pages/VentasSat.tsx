@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Heading,
@@ -19,13 +19,15 @@ import {
   Flex,
   useToast,
 } from '@chakra-ui/react';
-import { FiCalendar, FiDownload } from 'react-icons/fi';
+import { FiCalendar, FiDownload, FiFileText } from 'react-icons/fi';
 import { useTransactionStore } from '../store/transactionStore';
+import { useStaffStore } from '../store/staffStore';
 import { formatCurrency } from '../utils/formatters';
-import { buildSatSalesRows, SatSalesDateRange } from '../utils/satSalesReport';
+import { buildSatSalesRows, groupSatSalesRows, SatSalesDateRange } from '../utils/satSalesReport';
 import { exportSatSalesToExcel } from '../utils/excelExport';
+import { generateExitNotePdf } from '../utils/exitNotePdf';
 
-const ITEMS_PER_PAGE = 30;
+const GROUPS_PER_PAGE = 15;
 
 type DateFilter = 'all' | 'today' | 'week' | 'month';
 
@@ -83,15 +85,26 @@ function getDateRangeForFilter(filter: DateFilter): SatSalesDateRange {
 export function VentasSat() {
   const toast = useToast();
   const { transactions } = useTransactionStore();
+  const staff = useStaffStore((state) => state.staff);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [generatingTransactionId, setGeneratingTransactionId] = useState<string | null>(null);
+  const transactionById = useMemo(
+    () => new Map(transactions.map((transaction) => [transaction.id, transaction])),
+    [transactions],
+  );
+  const staffById = useMemo(
+    () => new Map(staff.map((member) => [member.id, member.name])),
+    [staff],
+  );
 
   const rows = useMemo(
     () => buildSatSalesRows(transactions, getDateRangeForFilter(dateFilter)),
     [transactions, dateFilter],
   );
+  const groups = useMemo(() => groupSatSalesRows(rows), [rows]);
 
-  const totalPages = Math.max(1, Math.ceil(rows.length / ITEMS_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil(groups.length / GROUPS_PER_PAGE));
 
   // Clamp back down if the row count shrinks (e.g. a realtime update removes
   // transactions) while the user is on a now out-of-range page.
@@ -99,10 +112,10 @@ export function VentasSat() {
     setCurrentPage((page) => Math.min(page, totalPages));
   }, [totalPages]);
 
-  const paginatedRows = useMemo(() => {
-    const start = (currentPage - 1) * ITEMS_PER_PAGE;
-    return rows.slice(start, start + ITEMS_PER_PAGE);
-  }, [rows, currentPage]);
+  const paginatedGroups = useMemo(() => {
+    const start = (currentPage - 1) * GROUPS_PER_PAGE;
+    return groups.slice(start, start + GROUPS_PER_PAGE);
+  }, [groups, currentPage]);
 
   const handleFilterChange = (value: DateFilter) => {
     setDateFilter(value);
@@ -127,6 +140,30 @@ export function VentasSat() {
       status: 'success',
       duration: 3000,
     });
+  };
+
+  const handleGenerateExitNote = async (transactionId: string) => {
+    const transaction = transactionById.get(transactionId);
+    if (!transaction) {
+      toast({ title: 'No se encontró la venta completa', status: 'error', duration: 3500 });
+      return;
+    }
+    setGeneratingTransactionId(transactionId);
+    try {
+      const sellerName = transaction.soldBy ? staffById.get(transaction.soldBy) : undefined;
+      await generateExitNotePdf(transaction, sellerName);
+      toast({ title: 'Nota de salida generada', status: 'success', duration: 3000 });
+    } catch (error) {
+      toast({
+        title: 'No se pudo generar la nota de salida',
+        description: error instanceof Error ? error.message : String(error),
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setGeneratingTransactionId(null);
+    }
   };
 
   return (
@@ -158,7 +195,7 @@ export function VentasSat() {
           gap={4}
           mb={4}
         >
-          <Text color="gray.500">{rows.length} renglon(es) de venta</Text>
+          <Text color="gray.500">{groups.length} venta(s) · {rows.length} renglón(es)</Text>
           <Button
             leftIcon={<Icon as={FiDownload} />}
             onClick={handleDownload}
@@ -183,37 +220,46 @@ export function VentasSat() {
                     <Th>Clave SAT</Th>
                     <Th>Descripción SAT</Th>
                     <Th isNumeric>Cantidad</Th>
-                    <Th isNumeric>Total</Th>
+                    <Th isNumeric>Total línea</Th>
+                    <Th isNumeric>Total venta</Th>
                     <Th>Pago</Th>
                     <Th>Cliente</Th>
                     <Th>Comentarios</Th>
+                    <Th>Acción</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {paginatedRows.map((row, index) => (
-                    <Tr key={`${row.saleDate}-${row.description}-${index}`}>
-                      <Td>{row.saleDate}</Td>
-                      <Td>
-                        <Text noOfLines={1}>{row.description}</Text>
-                      </Td>
-                      <Td>
-                        <Badge colorScheme={row.satStatus === 'Con clave' ? 'teal' : 'gray'}>
-                          {row.satCode}
-                        </Badge>
-                      </Td>
-                      <Td>
-                        <Text noOfLines={1}>{row.satDescription}</Text>
-                      </Td>
-                      <Td isNumeric>{row.quantity}</Td>
-                      <Td isNumeric>{formatCurrency(row.lineTotal)}</Td>
-                      <Td>{row.paymentMethod}</Td>
-                      <Td>
-                        <Text noOfLines={1}>{row.customerName}</Text>
-                      </Td>
-                      <Td>
-                        <Text noOfLines={1}>{row.notes}</Text>
-                      </Td>
-                    </Tr>
+                  {paginatedGroups.map((group) => (
+                    <Fragment key={group.transactionId}>
+                      {group.rows.map((row, index) => (
+                        <Tr key={`${group.transactionId}-${row.lineIndex}`} borderTopWidth={index === 0 ? '2px' : undefined} borderTopColor="gray.200">
+                          {index === 0 && <Td rowSpan={group.rows.length}>{row.saleDate}</Td>}
+                          <Td><Text noOfLines={1}>{row.description}</Text></Td>
+                          <Td><Badge colorScheme={row.satStatus === 'Con clave' ? 'teal' : 'gray'}>{row.satCode}</Badge></Td>
+                          <Td><Text noOfLines={1}>{row.satDescription}</Text></Td>
+                          <Td isNumeric>{row.quantity}</Td>
+                          <Td isNumeric>{formatCurrency(row.lineTotal)}</Td>
+                          {index === 0 && <Td isNumeric rowSpan={group.rows.length} fontWeight="bold">{formatCurrency(group.transactionTotal)}</Td>}
+                          {index === 0 && <Td rowSpan={group.rows.length}>{row.paymentMethod}</Td>}
+                          {index === 0 && <Td rowSpan={group.rows.length}><Text noOfLines={2}>{row.customerName}</Text></Td>}
+                          {index === 0 && <Td rowSpan={group.rows.length}><Text noOfLines={3}>{row.notes}</Text></Td>}
+                          {index === 0 && (
+                            <Td rowSpan={group.rows.length}>
+                              <Button
+                                size="sm"
+                                minH="48px"
+                                leftIcon={<Icon as={FiFileText} />}
+                                onClick={() => handleGenerateExitNote(group.transactionId)}
+                                isLoading={generatingTransactionId === group.transactionId}
+                                loadingText="Generando"
+                              >
+                                Generar nota de salida
+                              </Button>
+                            </Td>
+                          )}
+                        </Tr>
+                      ))}
+                    </Fragment>
                   ))}
                 </Tbody>
               </Table>

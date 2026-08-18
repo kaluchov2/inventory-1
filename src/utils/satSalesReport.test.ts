@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Transaction } from '../types';
-import { buildMonthlySatSalesRows, getPaymentMethodLabel } from './satSalesReport';
+import { buildMonthlySatSalesRows, getPaymentMethodLabel, groupSatSalesRows } from './satSalesReport';
 
 const transaction: Transaction = {
   id: 'tx-1',
@@ -49,6 +49,10 @@ describe('buildMonthlySatSalesRows', () => {
     const rows = buildMonthlySatSalesRows([transaction], '2026-03');
 
     expect(rows[0]).toMatchObject({
+      transactionId: 'tx-1',
+      transactionTotal: 400,
+      lineIndex: 1,
+      lineCount: 3,
       description: 'Camisa',
       satCode: '02002',
       satDescription: 'Ropa',
@@ -84,6 +88,21 @@ describe('buildMonthlySatSalesRows', () => {
     );
 
     expect(rows).toHaveLength(3);
+  });
+});
+
+describe('groupSatSalesRows', () => {
+  it('keeps every sale together as one report group', () => {
+    const rows = buildMonthlySatSalesRows([
+      transaction,
+      { ...transaction, id: 'tx-2', total: 450 },
+    ], '2026-03');
+    const groups = groupSatSalesRows(rows);
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0].rows).toHaveLength(3);
+    expect(groups[0].transactionTotal).toBe(400);
+    expect(groups[1].rows.every((row) => row.transactionId === 'tx-2')).toBe(true);
   });
 });
 

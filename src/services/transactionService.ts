@@ -4,6 +4,8 @@ import {
   isWalkInCustomerName,
   WALK_IN_CUSTOMER_LABELS,
 } from '../utils/customerNameUtils';
+import { isEditSaleRpcUnavailableError } from './transactionServiceErrors';
+export { isEditSaleRpcUnavailableError } from './transactionServiceErrors';
 
 /**
  * Transaction Service
@@ -54,6 +56,39 @@ export interface ModifySaleTransactionResult {
   itemCount: number;
 }
 
+export interface EditSaleTransactionDetailsPayload {
+  transactionId: string;
+  expectedUpdatedAt: string;
+  date: string;
+  notes?: string;
+  total: number;
+  cashAmount: number;
+  transferAmount: number;
+  cardAmount: number;
+  items: ModifySaleTransactionItemInput[];
+}
+
+export interface EditSaleTransactionDetailsResult {
+  transactionId: string;
+  oldTotal: number;
+  newTotal: number;
+  oldPaidAmount: number;
+  paidAmount: number;
+  cashAmount: number;
+  transferAmount: number;
+  cardAmount: number;
+  oldUnpaid: number;
+  newUnpaid: number;
+  deltaUnpaid: number;
+  installmentApplied: number;
+  effectiveRemainingBalance: number;
+  paymentMethod: Transaction['paymentMethod'];
+  inventoryChanged: boolean;
+  itemCount: number;
+  date: string;
+  updatedAt: string;
+}
+
 export interface RefundSaleFromEditPayload {
   transactionId: string;
   returnTransactionId: string;
@@ -97,6 +132,7 @@ export const transactionService = {
       .from('transactions')
       .select('*, transaction_items(*)')
       .eq('is_deleted', false)
+      .order('id', { referencedTable: 'transaction_items', ascending: true })
       .order('date', { ascending: false });
 
     if (error) throw error;
@@ -112,6 +148,7 @@ export const transactionService = {
       .select('*, transaction_items(*)')
       .eq('id', id)
       .eq('is_deleted', false)
+      .order('id', { referencedTable: 'transaction_items', ascending: true })
       .single();
 
     if (error) {
@@ -130,6 +167,7 @@ export const transactionService = {
       .select('*, transaction_items(*)')
       .eq('customer_id', customerId)
       .eq('is_deleted', false)
+      .order('id', { referencedTable: 'transaction_items', ascending: true })
       .order('date', { ascending: false });
 
     if (error) throw error;
@@ -146,6 +184,7 @@ export const transactionService = {
       .eq('customer_id', customerId)
       .eq('type', 'sale')
       .eq('is_deleted', false)
+      .order('id', { referencedTable: 'transaction_items', ascending: true })
       .order('date', { ascending: false });
 
     if (byIdError) throw byIdError;
@@ -164,6 +203,7 @@ export const transactionService = {
       .ilike('customer_name', namePattern)
       .eq('type', 'sale')
       .eq('is_deleted', false)
+      .order('id', { referencedTable: 'transaction_items', ascending: true })
       .order('date', { ascending: false });
 
     if (byNameError) throw byNameError;
@@ -187,6 +227,7 @@ export const transactionService = {
       .is('customer_id', null)
       .eq('type', 'sale')
       .eq('is_deleted', false)
+      .order('id', { referencedTable: 'transaction_items', ascending: true })
       .order('date', { ascending: false });
 
     if (byNullCustomerError) throw byNullCustomerError;
@@ -205,6 +246,7 @@ export const transactionService = {
           .ilike('customer_name', `%${candidate}%`)
           .eq('type', 'sale')
           .eq('is_deleted', false)
+          .order('id', { referencedTable: 'transaction_items', ascending: true })
           .order('date', { ascending: false })
       )
     );
@@ -341,6 +383,32 @@ export const transactionService = {
     return { result, transaction };
   },
 
+  async editSaleTransactionDetails(
+    payload: EditSaleTransactionDetailsPayload
+  ): Promise<{ result: EditSaleTransactionDetailsResult; transaction: Transaction }> {
+    const client = getSupabaseClient();
+
+    const { data, error } = await (client as any).rpc('edit_sale_transaction_details', {
+      edit_payload: payload,
+    });
+
+    if (error) {
+      const rpcUnavailable = isEditSaleRpcUnavailableError(error);
+      if (rpcUnavailable) {
+        throw new Error(
+          'La edición segura no está disponible. Despliega la migración 026 antes de guardar.'
+        );
+      }
+      throw error;
+    }
+
+    const result = parseEditSaleTransactionDetailsResult(data);
+    const transaction = await this.getById(payload.transactionId);
+    if (!transaction) throw new Error('edited_transaction_not_found');
+
+    return { result, transaction };
+  },
+
   async undoSaleTransaction(
     payload: UndoSaleTransactionPayload
   ): Promise<UndoSaleTransactionResult> {
@@ -400,6 +468,39 @@ function parseModifySaleResult(data: any): ModifySaleTransactionResult {
   };
 }
 
+function parseEditSaleTransactionDetailsResult(data: any): EditSaleTransactionDetailsResult {
+  const raw = Array.isArray(data) ? data[0] : data;
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('edit_sale_transaction_details_invalid_response');
+  }
+
+  const paymentMethod = raw.paymentMethod;
+  const validPaymentMethod =
+    paymentMethod === 'cash' || paymentMethod === 'transfer' ||
+    paymentMethod === 'card' || paymentMethod === 'mixed' || paymentMethod === 'credit';
+
+  return {
+    transactionId: String(raw.transactionId ?? ''),
+    oldTotal: Number(raw.oldTotal ?? 0),
+    newTotal: Number(raw.newTotal ?? 0),
+    oldPaidAmount: Number(raw.oldPaidAmount ?? 0),
+    paidAmount: Number(raw.paidAmount ?? 0),
+    cashAmount: Number(raw.cashAmount ?? 0),
+    transferAmount: Number(raw.transferAmount ?? 0),
+    cardAmount: Number(raw.cardAmount ?? 0),
+    oldUnpaid: Number(raw.oldUnpaid ?? 0),
+    newUnpaid: Number(raw.newUnpaid ?? 0),
+    deltaUnpaid: Number(raw.deltaUnpaid ?? 0),
+    installmentApplied: Number(raw.installmentApplied ?? 0),
+    effectiveRemainingBalance: Number(raw.effectiveRemainingBalance ?? raw.newUnpaid ?? 0),
+    paymentMethod: validPaymentMethod ? paymentMethod : 'credit',
+    inventoryChanged: Boolean(raw.inventoryChanged),
+    itemCount: Number(raw.itemCount ?? 0),
+    date: String(raw.date ?? ''),
+    updatedAt: String(raw.updatedAt ?? ''),
+  };
+}
+
 function parseUndoSaleResult(data: any): UndoSaleTransactionResult {
   const raw = Array.isArray(data) ? data[0] : data;
   if (!raw || typeof raw !== 'object') {
@@ -439,7 +540,11 @@ function parseRefundFromEditResult(data: any): RefundSaleFromEditResult {
 }
 
 function convertFromDbFormat(data: any): Transaction {
-  const items: TransactionItem[] = data.transaction_items?.map((item: any) => ({
+  const orderedItems = [...(data.transaction_items || [])].sort((left: any, right: any) =>
+    Number(left.line_no ?? Number.MAX_SAFE_INTEGER) - Number(right.line_no ?? Number.MAX_SAFE_INTEGER) ||
+    String(left.id || '').localeCompare(String(right.id || ''))
+  );
+  const items: TransactionItem[] = orderedItems.map((item: any) => ({
     productId: item.product_id,
     productName: item.product_name,
     quantity: item.quantity,
@@ -452,7 +557,7 @@ function convertFromDbFormat(data: any): Transaction {
     brand: item.brand || undefined,
     color: item.color || undefined,
     size: item.size || undefined,
-  })) || [];
+  }));
 
   return {
     id: data.id,
@@ -476,7 +581,9 @@ function convertFromDbFormat(data: any): Transaction {
     date: data.date,
     paymentDate: data.payment_date || undefined,
     type: data.type,
+    soldBy: data.sold_by || undefined,
     createdAt: data.created_at,
+    updatedAt: data.updated_at || data.created_at,
   };
 }
 
@@ -502,6 +609,8 @@ function convertToDbFormat(transaction: Transaction): any {
     date: transaction.date,
     payment_date: transaction.paymentDate || null,
     type: transaction.type,
+    sold_by: transaction.soldBy || null,
     created_at: transaction.createdAt,
+    updated_at: transaction.updatedAt || transaction.createdAt,
   };
 }

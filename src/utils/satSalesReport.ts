@@ -2,6 +2,10 @@ import { Transaction } from '../types';
 import { formatDate } from './formatters';
 
 export interface MonthlySatSalesRow {
+  transactionId: string;
+  transactionTotal: number;
+  lineIndex: number;
+  lineCount: number;
   saleDate: string;
   description: string;
   paymentMethod: string;
@@ -26,10 +30,14 @@ export function getPaymentMethodLabel(paymentMethod: Transaction['paymentMethod'
 }
 
 function mapTransactionToSatRows(transaction: Transaction): MonthlySatSalesRow[] {
-  return transaction.items.map((item) => {
+  return transaction.items.map((item, index) => {
     const hasSatKey = !!item.satKeyCode;
 
     return {
+      transactionId: transaction.id,
+      transactionTotal: transaction.total,
+      lineIndex: index + 1,
+      lineCount: transaction.items.length,
       saleDate: formatDate(transaction.date),
       description: item.productName,
       paymentMethod: getPaymentMethodLabel(transaction.paymentMethod),
@@ -43,6 +51,29 @@ function mapTransactionToSatRows(transaction: Transaction): MonthlySatSalesRow[]
       notes: transaction.notes || '',
     };
   });
+}
+
+export interface SatSaleGroup {
+  transactionId: string;
+  transactionTotal: number;
+  rows: MonthlySatSalesRow[];
+}
+
+export function groupSatSalesRows(rows: MonthlySatSalesRow[]): SatSaleGroup[] {
+  const groups = new Map<string, SatSaleGroup>();
+  rows.forEach((row) => {
+    const current = groups.get(row.transactionId);
+    if (current) {
+      current.rows.push(row);
+    } else {
+      groups.set(row.transactionId, {
+        transactionId: row.transactionId,
+        transactionTotal: row.transactionTotal,
+        rows: [row],
+      });
+    }
+  });
+  return Array.from(groups.values());
 }
 
 export interface SatSalesDateRange {

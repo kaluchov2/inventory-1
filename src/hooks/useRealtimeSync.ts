@@ -27,6 +27,7 @@ type TableName =
   | 'products'
   | 'customers'
   | 'transactions'
+  | 'staff'
   | 'sat_keys'
   | 'sat_category_suggestions';
 
@@ -115,6 +116,10 @@ export function useRealtimeCustomers(callbacks: RealtimeCallbacks) {
 
 export function useRealtimeTransactions(callbacks: RealtimeCallbacks) {
   useRealtimeSync({ table: 'transactions', ...callbacks });
+}
+
+export function useRealtimeStaff(callbacks: RealtimeCallbacks) {
+  useRealtimeSync({ table: 'staff', ...callbacks });
 }
 
 export function useRealtimeSatKeys(callbacks: RealtimeCallbacks) {

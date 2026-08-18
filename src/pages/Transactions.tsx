@@ -23,8 +23,9 @@ import {
   VStack,
   useToast,
 } from "@chakra-ui/react";
-import { FiSearch } from "react-icons/fi";
+import { FiEdit2, FiList, FiSearch } from "react-icons/fi";
 import { AutocompleteSelect } from "../components/common";
+import { EditSaleTransactionModal } from "../components/customers/EditSaleTransactionModal";
 import { es } from "../i18n/es";
 import { transactionService } from "../services/transactionService";
 import { useCustomerStore } from "../store/customerStore";
@@ -38,6 +39,8 @@ import {
 import { formatCurrency, formatDateTime } from "../utils/formatters";
 
 const WALK_IN_OPTION_VALUE = "__WALK_IN__";
+const PAGE_SIZE = 20;
+type SearchMode = "date" | "allSales";
 
 function getLocalDateKey(value: string): string {
   const parsed = new Date(value);
@@ -50,8 +53,8 @@ function getLocalDateKey(value: string): string {
 
 function mergeTransactions(remote: Transaction[], local: Transaction[]) {
   const merged = new Map<string, Transaction>();
-  remote.forEach((tx) => merged.set(tx.id, tx));
   local.forEach((tx) => merged.set(tx.id, tx));
+  remote.forEach((tx) => merged.set(tx.id, tx));
   return Array.from(merged.values());
 }
 
@@ -69,6 +72,9 @@ export function Transactions() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Transaction[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchMode, setSearchMode] = useState<SearchMode>("date");
+  const [page, setPage] = useState(1);
+  const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
 
   const customerOptions = useMemo(
     () => [
@@ -91,7 +97,13 @@ export function Transactions() {
     return { count: searchResults.length, total };
   }, [searchResults]);
 
-  const handleSearch = async () => {
+  const pageCount = Math.max(1, Math.ceil(searchResults.length / PAGE_SIZE));
+  const visibleResults = useMemo(
+    () => searchResults.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [page, searchResults],
+  );
+
+  const handleSearch = async (mode: SearchMode) => {
     if (!selectedCustomerId) {
       toast({
         title: "Seleccione un cliente",
@@ -100,7 +112,7 @@ export function Transactions() {
       });
       return;
     }
-    if (!selectedDate) {
+    if (mode === "date" && !selectedDate) {
       toast({
         title: "Seleccione una fecha",
         status: "warning",
@@ -111,6 +123,8 @@ export function Transactions() {
 
     setIsSearching(true);
     setHasSearched(true);
+    setSearchMode(mode);
+    setPage(1);
 
     const isWalkIn = selectedCustomerId === WALK_IN_OPTION_VALUE;
     const targetName = isWalkIn
@@ -169,10 +183,27 @@ export function Transactions() {
           normalizeCustomerKey(tx.customerName) === targetName
         );
       })
-      .filter((tx) => getLocalDateKey(tx.date) === selectedDate)
+      .filter((tx) => mode === "allSales"
+        ? tx.type === "sale"
+        : getLocalDateKey(tx.date) === selectedDate)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     setSearchResults(filtered);
+  };
+
+  const handleTransactionSaved = (updatedTransaction: Transaction) => {
+    setSearchResults((current) => {
+      const replaced = current.some((tx) => tx.id === updatedTransaction.id)
+        ? current.map((tx) => tx.id === updatedTransaction.id ? updatedTransaction : tx)
+        : [...current, updatedTransaction];
+      return replaced
+        .filter((tx) => searchMode === "allSales"
+          ? tx.type === "sale"
+          : getLocalDateKey(tx.date) === selectedDate)
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    });
+    setTransactionToEdit(null);
+    setPage(1);
   };
 
   return (
@@ -210,12 +241,23 @@ export function Transactions() {
             <Button
               colorScheme="blue"
               leftIcon={<Icon as={FiSearch} />}
-              onClick={handleSearch}
+              onClick={() => handleSearch("date")}
               isLoading={isSearching}
               loadingText="Consultando..."
               isDisabled={!selectedCustomerId || !selectedDate}
             >
               Buscar
+            </Button>
+            <Button
+              colorScheme="brand"
+              variant="outline"
+              leftIcon={<Icon as={FiList} />}
+              onClick={() => handleSearch("allSales")}
+              isLoading={isSearching}
+              loadingText="Consultando..."
+              isDisabled={!selectedCustomerId}
+            >
+              Todas las ventas
             </Button>
           </HStack>
         </VStack>
@@ -224,11 +266,11 @@ export function Transactions() {
       {hasSearched && (
         <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
           <Stat bg="white" p={4} borderRadius="lg" boxShadow="sm">
-            <StatLabel>Transacciones encontradas</StatLabel>
+            <StatLabel>{searchMode === "allSales" ? "Ventas encontradas" : "Transacciones encontradas"}</StatLabel>
             <StatNumber>{summary.count}</StatNumber>
           </Stat>
           <Stat bg="white" p={4} borderRadius="lg" boxShadow="sm">
-            <StatLabel>Total transaccionado</StatLabel>
+            <StatLabel>{searchMode === "allSales" ? "Total vendido" : "Total transaccionado"}</StatLabel>
             <StatNumber color="green.600">
               {formatCurrency(summary.total)}
             </StatNumber>
@@ -249,7 +291,9 @@ export function Transactions() {
         ) : searchResults.length === 0 ? (
           <Alert status="warning" borderRadius="md">
             <AlertIcon />
-            No se encontraron transacciones para ese cliente en esa fecha.
+            {searchMode === "allSales"
+              ? "No se encontraron ventas para ese cliente."
+              : "No se encontraron transacciones para ese cliente en esa fecha."}
           </Alert>
         ) : (
           <Box overflowX="auto">
@@ -262,10 +306,11 @@ export function Transactions() {
                   <Th>Artículos</Th>
                   <Th isNumeric>Total</Th>
                   <Th>Método</Th>
+                  <Th>Acciones</Th>
                 </Tr>
               </Thead>
               <Tbody>
-                {searchResults.map((tx) => (
+                {visibleResults.map((tx) => (
                   <Tr key={tx.id}>
                     <Td>{formatDateTime(tx.date)}</Td>
                     <Td fontWeight="medium">{tx.customerName || es.customers.walkIn}</Td>
@@ -301,13 +346,47 @@ export function Transactions() {
                                 : "Crédito"}
                       </Badge>
                     </Td>
+                    <Td>
+                      {tx.type === "sale" && (
+                        <Button
+                          size="sm"
+                          minH="48px"
+                          leftIcon={<Icon as={FiEdit2} />}
+                          onClick={() => setTransactionToEdit(tx)}
+                        >
+                          Modificar
+                        </Button>
+                      )}
+                    </Td>
                   </Tr>
                 ))}
               </Tbody>
             </Table>
+            {pageCount > 1 && (
+              <HStack justify="space-between" mt={4} flexWrap="wrap">
+                <Text fontSize="sm" color="gray.600">
+                  Página {page} de {pageCount} · {searchResults.length} resultados
+                </Text>
+                <HStack>
+                  <Button size="sm" onClick={() => setPage((current) => Math.max(1, current - 1))} isDisabled={page === 1}>
+                    Anterior
+                  </Button>
+                  <Button size="sm" onClick={() => setPage((current) => Math.min(pageCount, current + 1))} isDisabled={page === pageCount}>
+                    Siguiente
+                  </Button>
+                </HStack>
+              </HStack>
+            )}
           </Box>
         )}
       </Box>
+
+      <EditSaleTransactionModal
+        transaction={transactionToEdit}
+        isOpen={!!transactionToEdit}
+        onClose={() => setTransactionToEdit(null)}
+        onSaved={handleTransactionSaved}
+      />
     </VStack>
   );
 }

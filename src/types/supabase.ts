@@ -441,6 +441,7 @@ export type Database = {
           payment_date: string | null;
           type: 'sale' | 'return' | 'adjustment' | 'installment_payment';
           created_at: string;
+          updated_at: string;
           created_by: string | null;
           is_deleted: boolean;
           deleted_at: string | null;
@@ -468,6 +469,7 @@ export type Database = {
           payment_date?: string | null;
           type: 'sale' | 'return' | 'adjustment' | 'installment_payment';
           created_at?: string;
+          updated_at?: string;
           created_by?: string | null;
           is_deleted?: boolean;
           deleted_at?: string | null;
@@ -495,6 +497,7 @@ export type Database = {
           payment_date?: string | null;
           type?: 'sale' | 'return' | 'adjustment' | 'installment_payment';
           created_at?: string;
+          updated_at?: string;
           created_by?: string | null;
           is_deleted?: boolean;
           deleted_at?: string | null;
@@ -525,6 +528,7 @@ export type Database = {
           brand: string | null;
           color: string | null;
           size: string | null;
+          line_no: number;
         };
         Insert: {
           id?: string;
@@ -541,6 +545,7 @@ export type Database = {
           brand?: string | null;
           color?: string | null;
           size?: string | null;
+          line_no?: number;
         };
         Update: {
           id?: string;
@@ -557,6 +562,7 @@ export type Database = {
           brand?: string | null;
           color?: string | null;
           size?: string | null;
+          line_no?: number;
         };
         Relationships: [];
       };

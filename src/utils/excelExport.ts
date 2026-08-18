@@ -281,25 +281,14 @@ export function exportSatSalesToExcel(
   rows: MonthlySatSalesRow[],
   label: string,
 ): void {
-  const data = rows.map((row) => ({
-    'Fecha de Venta': row.saleDate,
-    'Descripcion': row.description,
-    'Forma de Pago': row.paymentMethod,
-    'Clave SAT': row.satCode,
-    'Descripcion SAT': row.satDescription,
-    'Cantidad': row.quantity,
-    'Precio Unitario': row.unitPrice,
-    'Total Linea': row.lineTotal,
-    'Cliente': row.customerName,
-    'Estado SAT': row.satStatus,
-    'Comentarios': row.notes,
-  }));
+  const data = buildSatSalesExcelRows(rows);
 
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Ventas SAT');
 
   const headers = [
+    'ID Venta',
     'Fecha de Venta',
     'Descripcion',
     'Forma de Pago',
@@ -308,14 +297,16 @@ export function exportSatSalesToExcel(
     'Cantidad',
     'Precio Unitario',
     'Total Linea',
+    'Total Venta',
     'Cliente',
     'Estado SAT',
     'Comentarios',
   ];
 
-  applyCurrencyFormat(worksheet, headers, ['Precio Unitario', 'Total Linea']);
+  applyCurrencyFormat(worksheet, headers, ['Precio Unitario', 'Total Linea', 'Total Venta']);
 
   worksheet['!cols'] = [
+    { wch: 24 },
     { wch: 16 },
     { wch: 40 },
     { wch: 16 },
@@ -324,12 +315,31 @@ export function exportSatSalesToExcel(
     { wch: 10 },
     { wch: 14 },
     { wch: 14 },
+    { wch: 14 },
     { wch: 28 },
     { wch: 16 },
     { wch: 30 },
   ];
 
   XLSX.writeFile(workbook, `ventas_sat_${label}.xlsx`);
+}
+
+export function buildSatSalesExcelRows(rows: MonthlySatSalesRow[]) {
+  return rows.map((row) => ({
+    'ID Venta': row.transactionId,
+    'Fecha de Venta': row.saleDate,
+    'Descripcion': row.description,
+    'Forma de Pago': row.paymentMethod,
+    'Clave SAT': row.satCode,
+    'Descripcion SAT': row.satDescription,
+    'Cantidad': row.quantity,
+    'Precio Unitario': row.unitPrice,
+    'Total Linea': row.lineTotal,
+    'Total Venta': row.lineIndex === 1 ? row.transactionTotal : '',
+    'Cliente': row.customerName,
+    'Estado SAT': row.satStatus,
+    'Comentarios': row.notes,
+  }));
 }
 
 // Export transactions filtered by customer

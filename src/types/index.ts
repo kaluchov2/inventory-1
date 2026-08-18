@@ -205,6 +205,7 @@ export interface Transaction {
 
   type: TransactionType;
   createdAt: string;
+  updatedAt?: string;
 }
 
 // ============================================

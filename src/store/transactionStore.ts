@@ -7,6 +7,8 @@ import { transactionService } from '../services/transactionService';
 import { supabase } from '../lib/supabase';
 import { syncQueue } from '../lib/syncQueue';
 import { SaleSyncPayload, syncRecordedSale } from '../lib/saleSync';
+import { getEffectiveSalePendingMap } from '../utils/saleEditPricing';
+import { createRealtimeRefreshGate } from '../utils/realtimeRefreshGate';
 export { createSaleTransaction } from '../utils/transactionHelpers';
 
 interface TransactionFilters {
@@ -17,7 +19,7 @@ interface TransactionFilters {
   type: TransactionType | '';
 }
 
-interface TransactionStore {
+export interface TransactionStore {
   transactions: Transaction[];
   filters: TransactionFilters;
   isLoading: boolean;
@@ -37,6 +39,7 @@ interface TransactionStore {
 
   // Sync actions
   loadFromSupabase: () => Promise<void>;
+  refreshTransactionFromSupabase: (id: string, realtimeGeneration?: number) => Promise<void>;
   handleRealtimeUpdate: (transaction: any) => void;
   handleRealtimeDelete: (transaction: any) => void;
 
@@ -59,6 +62,8 @@ const defaultFilters: TransactionFilters = {
   type: '',
 };
 
+const realtimeRefreshGate = createRealtimeRefreshGate(50);
+
 export const useTransactionStore = create<TransactionStore>()(
   persist(
     (set, get) => ({
@@ -73,6 +78,7 @@ export const useTransactionStore = create<TransactionStore>()(
           ...transactionData,
           id: options?.presetId || generateId(),
           createdAt: now,
+          updatedAt: now,
         };
 
         set((state) => ({
@@ -105,12 +111,14 @@ export const useTransactionStore = create<TransactionStore>()(
               is_installment: txBody.isInstallment,
               installment_amount: txBody.installmentAmount || null,
               remaining_balance: txBody.remainingBalance || null,
+              sold_by: txBody.soldBy || null,
               ups_batch: txBody.upsBatch || null,
               notes: txBody.notes || null,
               date: txBody.date,
               payment_date: txBody.paymentDate || null,
               type: txBody.type,
               created_at: txBody.createdAt,
+              updated_at: txBody.updatedAt || txBody.createdAt,
               is_deleted: false,
             };
             // Await the fallback so failures are visible — not fire-and-forget
@@ -273,26 +281,50 @@ export const useTransactionStore = create<TransactionStore>()(
         }
       },
 
+      refreshTransactionFromSupabase: async (id, realtimeGeneration) => {
+        if (!supabase || !id) return;
+        if (realtimeGeneration !== undefined && !realtimeRefreshGate.isCurrent(id, realtimeGeneration)) return;
+        try {
+          const transaction = await transactionService.getById(id);
+          if (realtimeGeneration !== undefined && !realtimeRefreshGate.isCurrent(id, realtimeGeneration)) return;
+          set((state) => ({
+            transactions: transaction
+              ? state.transactions.some((item) => item.id === id)
+                ? state.transactions.map((item) => item.id === id ? transaction : item)
+                : [...state.transactions, transaction]
+              : state.transactions.filter((item) => item.id !== id),
+          }));
+        } catch (error) {
+          console.error(`[Realtime] Failed to rehydrate transaction ${id}:`, error);
+        }
+      },
+
       handleRealtimeUpdate: (dbTransaction) => {
         if (dbTransaction.is_deleted) {
+          realtimeRefreshGate.invalidate(dbTransaction.id);
           set((state) => ({
             transactions: state.transactions.filter((t) => t.id !== dbTransaction.id),
           }));
           return;
         }
-        const converted = convertDbTransaction(dbTransaction);
-        const local = get().transactions.find(t => t.id === converted.id);
-
-        if (!local || new Date(converted.createdAt) > new Date(local.createdAt)) {
-          set((state) => ({
-            transactions: state.transactions.some(t => t.id === converted.id)
-              ? state.transactions.map(t => t.id === converted.id ? converted : t)
-              : [...state.transactions, converted],
-          }));
+        const localTransaction = get().transactions.find((transaction) => transaction.id === dbTransaction.id);
+        if (
+          localTransaction?.updatedAt &&
+          dbTransaction.updated_at &&
+          new Date(localTransaction.updatedAt).getTime() >= new Date(dbTransaction.updated_at).getTime()
+        ) {
+          return;
         }
+        // Realtime only includes the transactions row. Re-fetch by id so notes,
+        // totals and the complete transaction_items snapshots arrive together.
+        // Bursts for one sale are coalesced and stale HTTP responses are discarded.
+        realtimeRefreshGate.schedule(dbTransaction.id, (generation) => {
+          void get().refreshTransactionFromSupabase(dbTransaction.id, generation);
+        });
       },
 
       handleRealtimeDelete: (dbTransaction) => {
+        realtimeRefreshGate.invalidate(dbTransaction.id);
         if (dbTransaction.is_deleted) {
           set((state) => ({
             transactions: state.transactions.filter(t => t.id !== dbTransaction.id),
@@ -388,38 +420,7 @@ export const useTransactionStore = create<TransactionStore>()(
       },
 
       getEffectivePendingMap: (customerId: string) => {
-        const allTx = get().transactions;
-
-        // Get all sale transactions for this customer that had original debt
-        const sales = allTx
-          .filter(t =>
-            t.customerId === customerId &&
-            t.type === 'sale' &&
-            (t.cashAmount + t.transferAmount + t.cardAmount) < t.total
-          )
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-        // Sum all installment payments for this customer
-        const totalInstallments = allTx
-          .filter(t => t.customerId === customerId && t.type === 'installment_payment')
-          .reduce((sum, t) => sum + t.total, 0);
-
-        // Distribute installment payments FIFO across unpaid sales
-        let remaining = totalInstallments;
-        const pendingMap = new Map<string, number>();
-
-        for (const sale of sales) {
-          const originalDebt = sale.total - (sale.cashAmount + sale.transferAmount + sale.cardAmount);
-          if (remaining >= originalDebt) {
-            remaining -= originalDebt;
-            pendingMap.set(sale.id, 0);
-          } else {
-            pendingMap.set(sale.id, originalDebt - remaining);
-            remaining = 0;
-          }
-        }
-
-        return pendingMap;
+        return getEffectiveSalePendingMap(get().transactions, customerId);
       },
     }),
     {
@@ -441,33 +442,6 @@ export const useTransactionStore = create<TransactionStore>()(
     }
   )
 );
-
-function convertDbTransaction(dbTransaction: any): Transaction {
-  return {
-    id: dbTransaction.id,
-    customerId: dbTransaction.customer_id || undefined,
-    customerName: dbTransaction.customer_name,
-    items: [], // Items are fetched separately in service
-    subtotal: dbTransaction.subtotal,
-    discount: dbTransaction.discount,
-    discountNote: dbTransaction.discount_note || undefined,
-    total: dbTransaction.total,
-    paymentMethod: dbTransaction.payment_method,
-    cashAmount: dbTransaction.cash_amount,
-    transferAmount: dbTransaction.transfer_amount,
-    cardAmount: dbTransaction.card_amount,
-    actualCardAmount: dbTransaction.actual_card_amount || undefined,
-    isInstallment: dbTransaction.is_installment,
-    installmentAmount: dbTransaction.installment_amount || undefined,
-    remainingBalance: dbTransaction.remaining_balance || undefined,
-    upsBatch: dbTransaction.ups_batch || undefined,
-    notes: dbTransaction.notes || undefined,
-    date: dbTransaction.date,
-    paymentDate: dbTransaction.payment_date || undefined,
-    type: dbTransaction.type,
-    createdAt: dbTransaction.created_at,
-  };
-}
 
 function mergeTransactions(local: Transaction[], remote: Transaction[]): Transaction[] {
   const remoteMap = new Map(remote.map(t => [t.id, t]));

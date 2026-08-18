@@ -170,15 +170,17 @@ export function VentasSat() {
     <VStack spacing={{ base: 4, md: 6 }} align="stretch">
       <HStack justify="space-between" wrap="wrap" gap={3}>
         <Heading size={{ base: 'lg', md: 'xl' }}>Ventas SAT</Heading>
-        <HStack flexShrink={0}>
+        <HStack flexShrink={0} w={{ base: 'full', sm: 'auto' }}>
           <Icon as={FiCalendar} display={{ base: 'none', sm: 'block' }} />
           <Select
             value={dateFilter}
             onChange={(e) => handleFilterChange(e.target.value as DateFilter)}
-            w={{ base: 'full', sm: 'auto' }}
-            minW={{ base: '150px', sm: '190px' }}
+            w="full"
+            minW={{ base: '0', sm: '220px' }}
             bg="white"
-            size={{ base: 'sm', md: 'md' }}
+            size="md"
+            minH="52px"
+            py={0}
           >
             <option value="all">Todas</option>
             <option value="today">Hoy</option>

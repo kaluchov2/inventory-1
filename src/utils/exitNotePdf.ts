@@ -84,7 +84,6 @@ function ensureVerticalSpace(doc: JsPdfDocument, y: number, required: number): n
 
 export async function buildExitNotePdf(
   transaction: Transaction,
-  soldByName?: string,
 ): Promise<JsPdfDocument> {
   const [{ jsPDF }, { autoTable }] = await Promise.all([
     import('jspdf'),
@@ -95,8 +94,6 @@ export async function buildExitNotePdf(
   await installPdfFonts(doc);
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 15;
-  const paid = transaction.cashAmount + transaction.transferAmount + transaction.cardAmount;
-  const pending = Math.max(transaction.total - paid, 0);
   const itemSubtotal = transaction.items.reduce((sum, item) => sum + item.totalPrice, 0);
   const subtotal = Number.isFinite(transaction.subtotal) ? transaction.subtotal : itemSubtotal;
 
@@ -118,17 +115,16 @@ export async function buildExitNotePdf(
   doc.text(`Folio / ID: ${transaction.id}`, margin, 34);
   doc.text(`Fecha: ${formatSaleDate(transaction.date)}`, margin, 40);
   doc.text(`Cliente: ${transaction.customerName || 'Cliente de paso'}`, margin, 46);
-  doc.text(`Vendedor: ${soldByName || 'No especificado'}`, margin, 52);
 
   autoTable(doc, {
-    startY: 60,
+    startY: 54,
     margin: { left: margin, right: margin, bottom: 24 },
     theme: 'grid',
-    head: [['Producto', 'Clave SAT', 'Descripción SAT', 'Cant.', 'P. unitario', 'Importe']],
+    head: [['Producto', 'Marca', 'Clave SAT', 'Cant.', 'P. unitario', 'Importe']],
     body: transaction.items.map((item) => [
       item.productName,
+      item.brand || 'Sin marca',
       item.satKeyCode || 'Sin clave SAT',
-      item.satKeyDescription || 'Sin clave SAT',
       String(item.quantity),
       formatExitNoteUnitPrice(item),
       formatCurrency(item.totalPrice),
@@ -147,12 +143,12 @@ export async function buildExitNotePdf(
       fontStyle: 'bold',
     },
     columnStyles: {
-      0: { cellWidth: 40 },
-      1: { cellWidth: 25 },
-      2: { cellWidth: 45 },
+      0: { cellWidth: 45 },
+      1: { cellWidth: 30 },
+      2: { cellWidth: 25 },
       3: { cellWidth: 14, halign: 'right' },
-      4: { cellWidth: 27, halign: 'right' },
-      5: { cellWidth: 29, halign: 'right' },
+      4: { cellWidth: 30, halign: 'right' },
+      5: { cellWidth: 36, halign: 'right' },
     },
     showHead: 'everyPage',
     rowPageBreak: 'avoid',
@@ -187,10 +183,6 @@ export async function buildExitNotePdf(
     doc.text(line, margin, y);
     y += 5;
   });
-  doc.setFont('DejaVu', 'bold');
-  doc.text(`Saldo pendiente: ${formatCurrency(pending)}`, margin, y);
-  y += 9;
-
   if (transaction.notes?.trim()) {
     const noteLines = doc.splitTextToSize(`Notas: ${transaction.notes.trim()}`, pageWidth - margin * 2) as string[];
     doc.setFont('DejaVu', 'normal');
@@ -221,8 +213,7 @@ export async function buildExitNotePdf(
 
 export async function generateExitNotePdf(
   transaction: Transaction,
-  soldByName?: string,
 ): Promise<void> {
-  const doc = await buildExitNotePdf(transaction, soldByName);
+  const doc = await buildExitNotePdf(transaction);
   doc.save(`nota_salida_${sanitizeExitNoteFolio(transaction.id)}.pdf`);
 }

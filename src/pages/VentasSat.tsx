@@ -15,13 +15,13 @@ import {
   Select,
   Icon,
   Button,
+  IconButton,
   ButtonGroup,
   Flex,
   useToast,
 } from '@chakra-ui/react';
 import { FiCalendar, FiDownload, FiFileText } from 'react-icons/fi';
 import { useTransactionStore } from '../store/transactionStore';
-import { useStaffStore } from '../store/staffStore';
 import { formatCurrency } from '../utils/formatters';
 import { buildSatSalesRows, groupSatSalesRows, SatSalesDateRange } from '../utils/satSalesReport';
 import { exportSatSalesToExcel } from '../utils/excelExport';
@@ -85,7 +85,6 @@ function getDateRangeForFilter(filter: DateFilter): SatSalesDateRange {
 export function VentasSat() {
   const toast = useToast();
   const { transactions } = useTransactionStore();
-  const staff = useStaffStore((state) => state.staff);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [generatingTransactionId, setGeneratingTransactionId] = useState<string | null>(null);
@@ -93,11 +92,6 @@ export function VentasSat() {
     () => new Map(transactions.map((transaction) => [transaction.id, transaction])),
     [transactions],
   );
-  const staffById = useMemo(
-    () => new Map(staff.map((member) => [member.id, member.name])),
-    [staff],
-  );
-
   const rows = useMemo(
     () => buildSatSalesRows(transactions, getDateRangeForFilter(dateFilter)),
     [transactions, dateFilter],
@@ -150,8 +144,7 @@ export function VentasSat() {
     }
     setGeneratingTransactionId(transactionId);
     try {
-      const sellerName = transaction.soldBy ? staffById.get(transaction.soldBy) : undefined;
-      await generateExitNotePdf(transaction, sellerName);
+      await generateExitNotePdf(transaction);
       toast({ title: 'Nota de salida generada', status: 'success', duration: 3000 });
     } catch (error) {
       toast({
@@ -247,16 +240,16 @@ export function VentasSat() {
                           {index === 0 && <Td rowSpan={group.rows.length}><Text noOfLines={3}>{row.notes}</Text></Td>}
                           {index === 0 && (
                             <Td rowSpan={group.rows.length}>
-                              <Button
+                              <IconButton
                                 size="sm"
                                 minH="48px"
-                                leftIcon={<Icon as={FiFileText} />}
+                                minW="48px"
+                                icon={<Icon as={FiFileText} />}
+                                aria-label="Generar nota de salida"
+                                title="Generar nota de salida"
                                 onClick={() => handleGenerateExitNote(group.transactionId)}
                                 isLoading={generatingTransactionId === group.transactionId}
-                                loadingText="Generando"
-                              >
-                                Generar nota de salida
-                              </Button>
+                              />
                             </Td>
                           )}
                         </Tr>

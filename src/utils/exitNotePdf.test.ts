@@ -62,7 +62,7 @@ describe('exit note PDF', () => {
   });
 
   it('builds a multi-page PDF with document bytes', async () => {
-    const doc = await buildExitNotePdf(transaction, 'María López');
+    const doc = await buildExitNotePdf(transaction);
     const bytes = doc.output('arraybuffer');
     expect(bytes.byteLength).toBeGreaterThan(10_000);
     expect(doc.getNumberOfPages()).toBeGreaterThan(1);

@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabase';
 import { syncQueue } from '../lib/syncQueue';
 import { SaleSyncPayload, syncRecordedSale } from '../lib/saleSync';
 import { getEffectiveSalePendingMap } from '../utils/saleEditPricing';
-import { createRealtimeRefreshGate } from '../utils/realtimeRefreshGate';
+import { createRealtimeRefreshGate, shouldRefreshTransactionVersion } from '../utils/realtimeRefreshGate';
 export { createSaleTransaction } from '../utils/transactionHelpers';
 
 interface TransactionFilters {
@@ -118,7 +118,6 @@ export const useTransactionStore = create<TransactionStore>()(
               payment_date: txBody.paymentDate || null,
               type: txBody.type,
               created_at: txBody.createdAt,
-              updated_at: txBody.updatedAt || txBody.createdAt,
               is_deleted: false,
             };
             // Await the fallback so failures are visible — not fire-and-forget
@@ -308,11 +307,7 @@ export const useTransactionStore = create<TransactionStore>()(
           return;
         }
         const localTransaction = get().transactions.find((transaction) => transaction.id === dbTransaction.id);
-        if (
-          localTransaction?.updatedAt &&
-          dbTransaction.updated_at &&
-          new Date(localTransaction.updatedAt).getTime() >= new Date(dbTransaction.updated_at).getTime()
-        ) {
+        if (!shouldRefreshTransactionVersion(localTransaction?.updatedAt, dbTransaction.updated_at)) {
           return;
         }
         // Realtime only includes the transactions row. Re-fetch by id so notes,

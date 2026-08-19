@@ -11,6 +11,11 @@ const hardeningMigration = readFileSync(
   'utf8',
 );
 
+const timelineMigration = readFileSync(
+  new URL('../../supabase/migrations/028_fix_installment_timeline_and_sale_versions.sql', import.meta.url),
+  'utf8',
+);
+
 describe('edit_sale_transaction_details migrations', () => {
   it('keeps migration 026 as the deployable base RPC', () => {
     expect(baseMigration).toContain(
@@ -71,5 +76,19 @@ describe('edit_sale_transaction_details migrations', () => {
     expect(hardeningMigration).toContain('ADD COLUMN IF NOT EXISTS line_no integer');
     expect(hardeningMigration).toContain('idx_transaction_items_transaction_line');
     expect(hardeningMigration).toContain('transaction_id, line_no, product_id');
+  });
+
+  it('allocates installments only to debt that existed at payment time', () => {
+    expect(timelineMigration).toContain("account_transaction.type IN ('sale', 'installment_payment')");
+    expect(timelineMigration).toContain("CASE WHEN account_transaction.type = 'sale' THEN 0 ELSE 1 END");
+    expect(timelineMigration).toContain('payment_remaining := account_event.amount');
+    expect(timelineMigration).toContain('requested_paid < old_paid');
+    expect(timelineMigration).toContain('new_unpaid < installment_applied');
+  });
+
+  it('makes transaction versions server-owned and returns the trigger version', () => {
+    expect(timelineMigration).toContain('NEW.updated_at := clock_timestamp()');
+    expect(timelineMigration).toContain('RETURNING updated_at INTO next_updated_at');
+    expect(timelineMigration).toContain('migration_028_expected_version_update_not_found');
   });
 });

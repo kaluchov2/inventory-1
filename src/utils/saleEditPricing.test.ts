@@ -111,4 +111,25 @@ describe('getEffectiveSalePendingMap', () => {
     expect(pending.get('sale-a')).toBe(0);
     expect(pending.get('sale-b')).toBe(300);
   });
+
+  it('does not carry an orphan payment into a future sale', () => {
+    const pending = getEffectiveSalePendingMap([
+      transaction({ id: 'payment-before', type: 'installment_payment', total: 500, date: '2025-01-01T12:00:00.000Z' }),
+      transaction({ id: 'sale-after', type: 'sale', total: 300, date: '2026-01-01T12:00:00.000Z' }),
+    ], 'customer-1');
+
+    expect(pending.get('sale-after')).toBe(300);
+  });
+
+  it('uses later payments after earlier debt was already settled', () => {
+    const pending = getEffectiveSalePendingMap([
+      transaction({ id: 'sale-old', type: 'sale', total: 100, date: '2026-01-01T12:00:00.000Z' }),
+      transaction({ id: 'payment-old', type: 'installment_payment', total: 100, date: '2026-01-02T12:00:00.000Z' }),
+      transaction({ id: 'sale-target', type: 'sale', total: 300, date: '2026-02-01T12:00:00.000Z' }),
+      transaction({ id: 'payment-new', type: 'installment_payment', total: 50, date: '2026-02-02T12:00:00.000Z' }),
+    ], 'customer-1');
+
+    expect(pending.get('sale-old')).toBe(0);
+    expect(pending.get('sale-target')).toBe(250);
+  });
 });

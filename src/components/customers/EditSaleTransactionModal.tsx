@@ -122,9 +122,11 @@ export function EditSaleTransactionModal({ transaction, isOpen, onClose, onSaved
     return getEffectivePendingMap(transaction.customerId).get(transaction.id) ?? originalDebt;
   }, [getEffectivePendingMap, originalDebt, transaction, transactions]);
   const installmentApplied = Math.max(0, roundMoney(originalDebt - originalEffectivePending));
-  const paymentLockedByInstallments = installmentApplied > EPSILON;
+  const hasAppliedInstallments = installmentApplied > EPSILON;
   const effectivePending = Math.max(0, roundMoney(pending - installmentApplied));
   const paymentExceedsTotal = paidAmount - targetTotal > EPSILON;
+  const paymentDecreaseBlocked = hasAppliedInstallments && originalPaid - paidAmount > EPSILON;
+  const installmentOverpaymentBlocked = hasAppliedInstallments && installmentApplied - pending > EPSILON;
   const creditWithoutCustomer = pending > EPSILON && !transaction?.customerId;
   const parsedDate = localDateTimeToIso(dateValue);
 
@@ -177,7 +179,8 @@ export function EditSaleTransactionModal({ transaction, isOpen, onClose, onSaved
   const selectedProduct = filteredProducts.find((product) => product.id === addProductId);
   const categoryOptions = useMemo(() => [{ value: '', label: es.transactions.unregisteredNoCategory }, ...CATEGORY_OPTIONS], []);
   const canSave = !isSaving && lines.length > 0 && allocatedItems.length === lines.length &&
-    !!parsedDate && targetTotal >= 0 && !paymentExceedsTotal && !creditWithoutCustomer;
+    !!parsedDate && targetTotal >= 0 && !paymentExceedsTotal && !paymentDecreaseBlocked &&
+    !installmentOverpaymentBlocked && !creditWithoutCustomer;
 
   useEffect(() => {
     if (!isOpen || !transaction) return;
@@ -350,7 +353,7 @@ export function EditSaleTransactionModal({ transaction, isOpen, onClose, onSaved
     const lower = message.toLowerCase();
     const title = lower.includes('payment_exceeds') ? 'El pago supera el total de la venta'
       : lower.includes('credit_requires') ? 'El crédito requiere un cliente registrado'
-        : lower.includes('sale_payment_locked_by_installments') ? 'El pago está protegido porque ya existen abonos'
+        : lower.includes('sale_payment_locked_by_installments') ? 'El cambio de pago no es compatible con los abonos'
           : lower.includes('sale_modified_concurrently') ? 'La venta cambió en otro dispositivo'
             : lower.includes('insufficient_role') ? 'Tu cuenta no tiene permiso para modificar ventas'
         : lower.includes('sat_key_not_active') ? 'La clave SAT seleccionada ya no está activa'
@@ -360,7 +363,7 @@ export function EditSaleTransactionModal({ transaction, isOpen, onClose, onSaved
     const description = lower.includes('sale_modified_concurrently')
       ? 'Otro usuario guardó cambios mientras este formulario estaba abierto. Ciérralo y vuelve a abrir la venta para revisar la versión más reciente.'
       : lower.includes('sale_payment_locked_by_installments')
-        ? 'La venta ya tiene abonos aplicados. El pago original debe conservarse; modifica únicamente los demás datos.'
+        ? 'Puedes corregir el método o aumentar el pago, pero no reducir el pago original ni dejar una deuda menor que los abonos ya aplicados.'
         : message;
     toast({ title, description, status: 'error', duration: 7000, isClosable: true });
   };
@@ -499,13 +502,13 @@ export function EditSaleTransactionModal({ transaction, isOpen, onClose, onSaved
                 </AccordionItem>
               </Accordion>
 
-              {paymentLockedByInstallments && (
+              {hasAppliedInstallments && (
                 <Alert status="info" borderRadius="md" alignItems="flex-start">
                   <AlertIcon mt={1} />
                   <Box>
                     <Text fontWeight="semibold">Esta venta ya recibió {formatCurrency(installmentApplied)} en abonos.</Text>
                     <Text fontSize="sm" mt={1}>
-                      El desglose de pago original queda en solo lectura para no contar esos abonos dos veces. Todavía puedes modificar el total, la fecha, la nota y las claves SAT.
+                      Puedes corregir el método o aumentar el pago registrado. No puedes reducir el pago original ni dejar una deuda menor que los abonos aplicados.
                     </Text>
                   </Box>
                 </Alert>
@@ -514,28 +517,30 @@ export function EditSaleTransactionModal({ transaction, isOpen, onClose, onSaved
               <Box borderWidth="1px" borderColor="gray.200" borderRadius="lg" p={4}>
                 <HStack justify="space-between" mb={4} flexWrap="wrap">
                   <Text fontWeight="semibold">Forma de pago</Text>
-                  <FormControl display="flex" alignItems="center" w="auto"><FormLabel htmlFor="edit-mixed-payment" mb="0" fontSize="sm">Pago mixto</FormLabel><Switch id="edit-mixed-payment" isChecked={useMixedPayment} isDisabled={paymentLockedByInstallments} onChange={(event) => handlePaymentModeChange(event.target.checked)} /></FormControl>
+                  <FormControl display="flex" alignItems="center" w="auto"><FormLabel htmlFor="edit-mixed-payment" mb="0" fontSize="sm">Pago mixto</FormLabel><Switch id="edit-mixed-payment" isChecked={useMixedPayment} onChange={(event) => handlePaymentModeChange(event.target.checked)} /></FormControl>
                 </HStack>
                 {!useMixedPayment ? (
                   <VStack align="stretch" spacing={4}>
                     <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={3}>
                       {(['cash', 'transfer', 'card'] as const).map((method) => (
-                        <Button key={method} minH="48px" variant={paymentMethod === method ? 'solid' : 'outline'} colorScheme={paymentMethod === method ? 'brand' : 'gray'} isDisabled={paymentLockedByInstallments} onClick={() => setPaymentMethod(method)}>
+                        <Button key={method} minH="48px" variant={paymentMethod === method ? 'solid' : 'outline'} colorScheme={paymentMethod === method ? 'brand' : 'gray'} onClick={() => setPaymentMethod(method)}>
                           {method === 'cash' ? 'Efectivo' : method === 'transfer' ? 'Transferencia' : 'Tarjeta'}
                         </Button>
                       ))}
                     </SimpleGrid>
-                    <FormControl><FormLabel>Monto registrado en la venta</FormLabel><CurrencyInput value={amountToPay} onChange={setAmountToPay} size="lg" isDisabled={paymentLockedByInstallments} isInvalid={paymentExceedsTotal} /></FormControl>
+                    <FormControl><FormLabel>Monto registrado en la venta</FormLabel><CurrencyInput value={amountToPay} onChange={setAmountToPay} size="lg" isInvalid={paymentExceedsTotal || paymentDecreaseBlocked || installmentOverpaymentBlocked} /></FormControl>
                   </VStack>
                 ) : (
                   <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-                    <FormControl><FormLabel>Efectivo</FormLabel><CurrencyInput value={cashAmount} onChange={setCashAmount} isDisabled={paymentLockedByInstallments} /></FormControl>
-                    <FormControl><FormLabel>Transferencia</FormLabel><CurrencyInput value={transferAmount} onChange={setTransferAmount} isDisabled={paymentLockedByInstallments} /></FormControl>
-                    <FormControl><FormLabel>Tarjeta</FormLabel><CurrencyInput value={cardAmount} onChange={setCardAmount} isDisabled={paymentLockedByInstallments} /></FormControl>
+                    <FormControl><FormLabel>Efectivo</FormLabel><CurrencyInput value={cashAmount} onChange={setCashAmount} isInvalid={paymentDecreaseBlocked || installmentOverpaymentBlocked} /></FormControl>
+                    <FormControl><FormLabel>Transferencia</FormLabel><CurrencyInput value={transferAmount} onChange={setTransferAmount} isInvalid={paymentDecreaseBlocked || installmentOverpaymentBlocked} /></FormControl>
+                    <FormControl><FormLabel>Tarjeta</FormLabel><CurrencyInput value={cardAmount} onChange={setCardAmount} isInvalid={paymentDecreaseBlocked || installmentOverpaymentBlocked} /></FormControl>
                   </SimpleGrid>
                 )}
               </Box>
               {paymentExceedsTotal && <Alert status="error" borderRadius="md"><AlertIcon />El pago supera el nuevo total. Ajusta los importes antes de guardar.</Alert>}
+              {paymentDecreaseBlocked && <Alert status="error" borderRadius="md"><AlertIcon />Esta venta tiene abonos aplicados. El pago nuevo no puede ser menor que el pago original.</Alert>}
+              {installmentOverpaymentBlocked && <Alert status="error" borderRadius="md"><AlertIcon />La deuda nueva no alcanza para conservar los abonos ya aplicados. Ajusta el total o el pago.</Alert>}
               {creditWithoutCustomer && <Alert status="error" borderRadius="md"><AlertIcon />Una venta a crédito requiere un cliente registrado.</Alert>}
               <FormControl><FormLabel>Nota de la venta</FormLabel><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={4} resize="vertical" /></FormControl>
 
@@ -546,7 +551,7 @@ export function EditSaleTransactionModal({ transaction, isOpen, onClose, onSaved
                   <HStack justify="space-between"><Text>Total nuevo</Text><Text fontWeight="bold">{formatCurrency(targetTotal)}</Text></HStack>
                   <HStack justify="space-between"><Text>Pago original de la venta</Text><Text>{formatCurrency(originalPaid)}</Text></HStack>
                   <HStack justify="space-between"><Text>Pago nuevo en la venta</Text><Text fontWeight="bold">{formatCurrency(paidAmount)}</Text></HStack>
-                  {paymentLockedByInstallments && <HStack justify="space-between"><Text>Abonos ya aplicados</Text><Text color="blue.700">{formatCurrency(installmentApplied)}</Text></HStack>}
+                  {hasAppliedInstallments && <HStack justify="space-between"><Text>Abonos ya aplicados</Text><Text color="blue.700">{formatCurrency(installmentApplied)}</Text></HStack>}
                   <HStack justify="space-between"><Text>Saldo pendiente tras abonos</Text><Text color={effectivePending > EPSILON ? 'orange.700' : 'green.700'}>{formatCurrency(effectivePending)}</Text></HStack>
                   <HStack justify="space-between"><Text>Método resultante</Text><Badge colorScheme={effectivePaymentMethod === 'credit' ? 'orange' : 'blue'}>{paymentLabel}</Badge></HStack>
                 </SimpleGrid>
@@ -576,7 +581,7 @@ export function EditSaleTransactionModal({ transaction, isOpen, onClose, onSaved
         onClose={confirm.onClose}
         onConfirm={handleConfirmSave}
         title="Confirmar modificación de venta"
-        message={`Total ${formatCurrency(transaction.total)} → ${formatCurrency(targetTotal)}. Pago registrado ${formatCurrency(originalPaid)} → ${formatCurrency(paidAmount)}.${paymentLockedByInstallments ? ` Abonos conservados ${formatCurrency(installmentApplied)}.` : ''} Saldo pendiente tras abonos ${formatCurrency(effectivePending)}. ${inventoryWillMove ? 'Habrá movimiento de inventario.' : 'No habrá movimiento de inventario.'}`}
+        message={`Total ${formatCurrency(transaction.total)} → ${formatCurrency(targetTotal)}. Pago registrado ${formatCurrency(originalPaid)} → ${formatCurrency(paidAmount)}.${hasAppliedInstallments ? ` Abonos conservados ${formatCurrency(installmentApplied)}.` : ''} Saldo pendiente tras abonos ${formatCurrency(effectivePending)}. ${inventoryWillMove ? 'Habrá movimiento de inventario.' : 'No habrá movimiento de inventario.'}`}
         confirmText="Confirmar y guardar"
         cancelText="Cancelar"
         colorScheme="brand"

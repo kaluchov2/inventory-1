@@ -109,35 +109,50 @@ export function hasInventoryMovement(
   return Array.from(ids).some((id) => (previous.get(id) || 0) !== (next.get(id) || 0));
 }
 
-/** Mirrors the database's deterministic FIFO allocation of customer abonos. */
+/**
+ * Mirrors the database's chronological FIFO allocation of customer abonos.
+ * A payment can only reduce sales that already existed at that moment; excess
+ * money is not carried forward into future sales because customer balances do
+ * not store a credit balance.
+ */
 export function getEffectiveSalePendingMap(
   transactions: Transaction[],
   customerId: string,
 ): Map<string, number> {
-  const sales = transactions
+  const accountEvents = transactions
     .filter((transaction) =>
       transaction.customerId === customerId &&
-      transaction.type === 'sale' &&
-      transaction.cashAmount + transaction.transferAmount + transaction.cardAmount < transaction.total
+      (transaction.type === 'sale' || transaction.type === 'installment_payment')
     )
     .sort((left, right) => {
       const dateDifference = new Date(left.date).getTime() - new Date(right.date).getTime();
-      return dateDifference || left.id.localeCompare(right.id);
+      if (dateDifference) return dateDifference;
+      if (left.type !== right.type) return left.type === 'sale' ? -1 : 1;
+      return left.id.localeCompare(right.id);
     });
 
-  let remainingInstallments = transactions
-    .filter((transaction) => transaction.customerId === customerId && transaction.type === 'installment_payment')
-    .reduce((sum, transaction) => sum + transaction.total, 0);
   const pendingMap = new Map<string, number>();
+  const openSales: Array<{ id: string; remaining: number }> = [];
 
-  sales.forEach((sale) => {
-    const originalDebt = Math.max(
-      sale.total - sale.cashAmount - sale.transferAmount - sale.cardAmount,
-      0,
-    );
-    const applied = Math.min(originalDebt, Math.max(remainingInstallments, 0));
-    pendingMap.set(sale.id, Math.max(originalDebt - applied, 0));
-    remainingInstallments -= applied;
+  accountEvents.forEach((event) => {
+    if (event.type === 'sale') {
+      const originalDebt = Math.max(
+        event.total - event.cashAmount - event.transferAmount - event.cardAmount,
+        0,
+      );
+      pendingMap.set(event.id, originalDebt);
+      openSales.push({ id: event.id, remaining: originalDebt });
+      return;
+    }
+
+    let paymentRemaining = Math.max(event.total, 0);
+    for (const sale of openSales) {
+      if (paymentRemaining <= 0) break;
+      const applied = Math.min(sale.remaining, paymentRemaining);
+      sale.remaining -= applied;
+      paymentRemaining -= applied;
+      pendingMap.set(sale.id, sale.remaining);
+    }
   });
 
   return pendingMap;

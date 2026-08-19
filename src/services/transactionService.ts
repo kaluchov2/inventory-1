@@ -611,6 +611,5 @@ function convertToDbFormat(transaction: Transaction): any {
     type: transaction.type,
     sold_by: transaction.soldBy || null,
     created_at: transaction.createdAt,
-    updated_at: transaction.updatedAt || transaction.createdAt,
   };
 }

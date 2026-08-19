@@ -1,8 +1,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRealtimeRefreshGate } from './realtimeRefreshGate';
+import { createRealtimeRefreshGate, shouldRefreshTransactionVersion } from './realtimeRefreshGate';
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe('shouldRefreshTransactionVersion', () => {
+  it('rehydrates different PostgreSQL versions inside the same millisecond', () => {
+    expect(shouldRefreshTransactionVersion(
+      '2026-08-19T10:00:00.123100Z',
+      '2026-08-19T10:00:00.123900Z',
+    )).toBe(true);
+  });
+
+  it('skips exact and certainly older remote versions', () => {
+    expect(shouldRefreshTransactionVersion(
+      '2026-08-19T10:00:01.000Z',
+      '2026-08-19T10:00:01.000Z',
+    )).toBe(false);
+    expect(shouldRefreshTransactionVersion(
+      '2026-08-19T10:00:02.000Z',
+      '2026-08-19T10:00:01.999999Z',
+    )).toBe(false);
+  });
 });
 
 describe('createRealtimeRefreshGate', () => {

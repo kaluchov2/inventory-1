@@ -1412,7 +1412,6 @@ export class SyncManager {
         payment_date: data.paymentDate || null,
         type: data.type,
         created_at: data.createdAt,
-        updated_at: data.updatedAt || data.createdAt,
         is_deleted: false,
       };
     } else if (type === "drop") {

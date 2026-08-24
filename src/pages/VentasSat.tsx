@@ -44,6 +44,11 @@ function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+function isOnOrAfterDay(dateValue: string, dayStart: Date): boolean {
+  const date = new Date(dateValue);
+  return !Number.isNaN(date.getTime()) && date.getTime() >= dayStart.getTime();
+}
+
 function addDays(date: Date, days: number): Date {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
@@ -110,6 +115,7 @@ export function VentasSat() {
     const start = (currentPage - 1) * GROUPS_PER_PAGE;
     return groups.slice(start, start + GROUPS_PER_PAGE);
   }, [groups, currentPage]);
+  const todayStart = startOfLocalDay(new Date());
 
   const handleFilterChange = (value: DateFilter) => {
     setDateFilter(value);
@@ -172,8 +178,9 @@ export function VentasSat() {
             minW={{ base: '0', sm: '220px' }}
             bg="white"
             size="md"
+            height="52px"
             minH="52px"
-            py={0}
+            sx={{ paddingBlock: 0 }}
           >
             <option value="all">Todas</option>
             <option value="today">Hoy</option>
@@ -224,38 +231,47 @@ export function VentasSat() {
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {paginatedGroups.map((group) => (
-                    <Fragment key={group.transactionId}>
-                      {group.rows.map((row, index) => (
-                        <Tr key={`${group.transactionId}-${row.lineIndex}`} borderTopWidth={index === 0 ? '2px' : undefined} borderTopColor="gray.200">
-                          {index === 0 && <Td rowSpan={group.rows.length}>{row.saleDate}</Td>}
-                          <Td><Text noOfLines={1}>{row.description}</Text></Td>
-                          <Td><Badge colorScheme={row.satStatus === 'Con clave' ? 'teal' : 'gray'}>{row.satCode}</Badge></Td>
-                          <Td><Text noOfLines={1}>{row.satDescription}</Text></Td>
-                          <Td isNumeric>{row.quantity}</Td>
-                          <Td isNumeric>{formatCurrency(row.lineTotal)}</Td>
-                          {index === 0 && <Td isNumeric rowSpan={group.rows.length} fontWeight="bold">{formatCurrency(group.transactionTotal)}</Td>}
-                          {index === 0 && <Td rowSpan={group.rows.length}>{row.paymentMethod}</Td>}
-                          {index === 0 && <Td rowSpan={group.rows.length}><Text noOfLines={2}>{row.customerName}</Text></Td>}
-                          {index === 0 && <Td rowSpan={group.rows.length}><Text noOfLines={3}>{row.notes}</Text></Td>}
-                          {index === 0 && (
-                            <Td rowSpan={group.rows.length}>
-                              <IconButton
-                                size="sm"
-                                minH="48px"
-                                minW="48px"
-                                icon={<Icon as={FiFileText} />}
-                                aria-label="Generar nota de salida"
-                                title="Generar nota de salida"
-                                onClick={() => handleGenerateExitNote(group.transactionId)}
-                                isLoading={generatingTransactionId === group.transactionId}
-                              />
-                            </Td>
-                          )}
-                        </Tr>
-                      ))}
-                    </Fragment>
-                  ))}
+                  {paginatedGroups.map((group) => {
+                    const transaction = transactionById.get(group.transactionId);
+                    const canGenerateExitNote = transaction
+                      ? isOnOrAfterDay(transaction.date, todayStart)
+                      : false;
+
+                    return (
+                      <Fragment key={group.transactionId}>
+                        {group.rows.map((row, index) => (
+                          <Tr key={`${group.transactionId}-${row.lineIndex}`} borderTopWidth={index === 0 ? '2px' : undefined} borderTopColor="gray.200">
+                            {index === 0 && <Td rowSpan={group.rows.length}>{row.saleDate}</Td>}
+                            <Td><Text noOfLines={1}>{row.description}</Text></Td>
+                            <Td><Badge colorScheme={row.satStatus === 'Con clave' ? 'teal' : 'gray'}>{row.satCode}</Badge></Td>
+                            <Td><Text noOfLines={1}>{row.satDescription}</Text></Td>
+                            <Td isNumeric>{row.quantity}</Td>
+                            <Td isNumeric>{formatCurrency(row.lineTotal)}</Td>
+                            {index === 0 && <Td isNumeric rowSpan={group.rows.length} fontWeight="bold">{formatCurrency(group.transactionTotal)}</Td>}
+                            {index === 0 && <Td rowSpan={group.rows.length}>{row.paymentMethod}</Td>}
+                            {index === 0 && <Td rowSpan={group.rows.length}><Text noOfLines={2}>{row.customerName}</Text></Td>}
+                            {index === 0 && <Td rowSpan={group.rows.length}><Text noOfLines={3}>{row.notes}</Text></Td>}
+                            {index === 0 && (
+                              <Td rowSpan={group.rows.length}>
+                                {canGenerateExitNote && (
+                                  <IconButton
+                                    size="sm"
+                                    minH="48px"
+                                    minW="48px"
+                                    icon={<Icon as={FiFileText} />}
+                                    aria-label="Generar nota de salida"
+                                    title="Generar nota de salida"
+                                    onClick={() => handleGenerateExitNote(group.transactionId)}
+                                    isLoading={generatingTransactionId === group.transactionId}
+                                  />
+                                )}
+                              </Td>
+                            )}
+                          </Tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
                 </Tbody>
               </Table>
             </Box>

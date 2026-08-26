@@ -27,7 +27,13 @@ import {
 import { es } from '../../i18n/es';
 import { useAuthStore } from '../../store/authStore';
 import { SyncStatus } from '../common/SyncStatus';
-import { VENTAS_SAT_PATH, isViewerRole } from '../../constants/viewerAccess';
+import {
+  CUSTOMERS_PATH,
+  HOME_PATH,
+  PRODUCTS_PATH,
+  VENTAS_SAT_PATH,
+  isViewerRole,
+} from '../../constants/viewerAccess';
 
 interface NavItem {
   icon: typeof FiHome;
@@ -36,9 +42,9 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { icon: FiHome, label: es.nav.home, path: '/' },
-  { icon: FiPackage, label: es.nav.products, path: '/productos' },
-  { icon: FiUsers, label: es.nav.customers, path: '/clientes' },
+  { icon: FiHome, label: es.nav.home, path: HOME_PATH },
+  { icon: FiPackage, label: es.nav.products, path: PRODUCTS_PATH },
+  { icon: FiUsers, label: es.nav.customers, path: CUSTOMERS_PATH },
   { icon: FiShoppingCart, label: es.nav.sales, path: '/ventas' },
   { icon: FiCamera, label: es.nav.scanner, path: '/escaner' },
   { icon: FiGrid, label: es.nav.qrGenerator, path: '/codigos' },
@@ -51,6 +57,9 @@ const navItems: NavItem[] = [
 ];
 
 const viewerNavItems: NavItem[] = [
+  { icon: FiHome, label: es.nav.home, path: HOME_PATH },
+  { icon: FiPackage, label: es.nav.products, path: PRODUCTS_PATH },
+  { icon: FiUsers, label: es.nav.customers, path: CUSTOMERS_PATH },
   { icon: FiDollarSign, label: es.nav.ventasSat, path: VENTAS_SAT_PATH },
 ];
 

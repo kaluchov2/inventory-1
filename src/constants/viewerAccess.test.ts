@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canModifyOperationalData,
+  CUSTOMERS_PATH,
   getPostLoginPath,
   hasUnverifiedAuthenticatedProfile,
+  HOME_PATH,
   isViewerRole,
+  isViewerPathAllowed,
+  PRODUCTS_PATH,
   VENTAS_SAT_PATH,
 } from './viewerAccess';
 
@@ -14,11 +19,28 @@ describe('viewerAccess', () => {
     expect(isViewerRole(undefined)).toBe(false);
   });
 
-  it('routes viewers to Ventas SAT after login without changing other users', () => {
-    expect(getPostLoginPath('viewer')).toBe(VENTAS_SAT_PATH);
-    expect(getPostLoginPath('admin')).toBe('/');
-    expect(getPostLoginPath('user')).toBe('/');
-    expect(getPostLoginPath(undefined)).toBe('/');
+  it('routes every role to Home after login', () => {
+    expect(getPostLoginPath('viewer')).toBe(HOME_PATH);
+    expect(getPostLoginPath('admin')).toBe(HOME_PATH);
+    expect(getPostLoginPath('user')).toBe(HOME_PATH);
+    expect(getPostLoginPath(undefined)).toBe(HOME_PATH);
+  });
+
+  it('allows viewers to open only the read-only pages assigned to them', () => {
+    expect(isViewerPathAllowed(HOME_PATH)).toBe(true);
+    expect(isViewerPathAllowed(PRODUCTS_PATH)).toBe(true);
+    expect(isViewerPathAllowed(`${PRODUCTS_PATH}/`)).toBe(true);
+    expect(isViewerPathAllowed(CUSTOMERS_PATH)).toBe(true);
+    expect(isViewerPathAllowed(VENTAS_SAT_PATH)).toBe(true);
+    expect(isViewerPathAllowed('/ventas')).toBe(false);
+    expect(isViewerPathAllowed('/configuracion')).toBe(false);
+  });
+
+  it('marks viewers as read-only without changing admin or user permissions', () => {
+    expect(canModifyOperationalData('viewer')).toBe(false);
+    expect(canModifyOperationalData('admin')).toBe(true);
+    expect(canModifyOperationalData('user')).toBe(true);
+    expect(canModifyOperationalData(undefined)).toBe(true);
   });
 
   it('blocks every authenticated account until its profile role is verified', () => {

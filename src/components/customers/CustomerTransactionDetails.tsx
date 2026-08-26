@@ -35,6 +35,7 @@ import { exportSingleTransactionToExcel } from '../../utils/excelExport';
 interface CustomerTransactionDetailsProps {
   customer: Customer;
   onReceivePayment: (customer: Customer) => void;
+  canModifyData: boolean;
 }
 
 const PAGE_SIZE = 5;
@@ -89,6 +90,7 @@ function getLatestTransactionsForCustomer(
 export function CustomerTransactionDetails({
   customer,
   onReceivePayment,
+  canModifyData,
 }: CustomerTransactionDetailsProps) {
   const toast = useToast();
   const {
@@ -222,6 +224,7 @@ export function CustomerTransactionDetails({
   }, [customer.id, customer.name]);
 
   const handleUndoClick = (transaction: Transaction) => {
+    if (!canModifyData) return;
     setTransactionToUndo(transaction);
     onUndoConfirmOpen();
   };
@@ -251,7 +254,7 @@ export function CustomerTransactionDetails({
   };
 
   const handleConfirmUndo = async () => {
-    if (!transactionToUndo) return;
+    if (!canModifyData || !transactionToUndo) return;
 
     setIsUndoing(true);
     try {
@@ -380,15 +383,17 @@ export function CustomerTransactionDetails({
               compras anteriores no rastreadas.
             </Text>
           </Alert>
-          <Button
-            leftIcon={<Icon as={FiDollarSign} />}
-            colorScheme="green"
-            size="sm"
-            alignSelf="flex-end"
-            onClick={() => onReceivePayment(customer)}
-          >
-            {es.sales.receiveInstallment}
-          </Button>
+          {canModifyData && (
+            <Button
+              leftIcon={<Icon as={FiDollarSign} />}
+              colorScheme="green"
+              size="sm"
+              alignSelf="flex-end"
+              onClick={() => onReceivePayment(customer)}
+            >
+              {es.sales.receiveInstallment}
+            </Button>
+          )}
         </VStack>
       </Box>
     ) : unpaidTransactions.length === 0 ? (
@@ -511,14 +516,16 @@ export function CustomerTransactionDetails({
                 {formatCurrency(totalPending)}
               </Badge>
             </HStack>
-            <Button
-              leftIcon={<Icon as={FiDollarSign} />}
-              colorScheme="green"
-              size="sm"
-              onClick={() => onReceivePayment(customer)}
-            >
-              {es.sales.receiveInstallment}
-            </Button>
+            {canModifyData && (
+              <Button
+                leftIcon={<Icon as={FiDollarSign} />}
+                colorScheme="green"
+                size="sm"
+                onClick={() => onReceivePayment(customer)}
+              >
+                {es.sales.receiveInstallment}
+              </Button>
+            )}
           </HStack>
         </VStack>
       </Box>
@@ -624,7 +631,7 @@ export function CustomerTransactionDetails({
                           colorScheme="teal"
                           onClick={() => handleExportTransaction(transaction)}
                         />
-                        {transaction.type === 'sale' && (
+                        {canModifyData && transaction.type === 'sale' && (
                           <IconButton
                             aria-label={es.actions.modify}
                             icon={<Icon as={FiEdit2} />}
@@ -634,7 +641,7 @@ export function CustomerTransactionDetails({
                             onClick={() => setTransactionToEdit(transaction)}
                           />
                         )}
-                        {transaction.type === 'sale' && (
+                        {canModifyData && transaction.type === 'sale' && (
                           <IconButton
                             aria-label={es.actions.undo}
                             icon={<Icon as={FiRotateCcw} />}
@@ -725,34 +732,38 @@ export function CustomerTransactionDetails({
         </VStack>
       </Box>
 
-      <EditSaleTransactionModal
-        transaction={transactionToEdit}
-        isOpen={!!transactionToEdit}
-        onClose={() => setTransactionToEdit(null)}
-        onSaved={(updatedTransaction) => {
-          setLatestTransactions((current) => {
-            const merged = mergeTransactions([updatedTransaction], current);
-            return getLatestTransactionsForCustomer(merged, customer.id, customer.name);
-          });
-          setVisibleCount(PAGE_SIZE);
-        }}
-      />
+      {canModifyData && (
+        <>
+          <EditSaleTransactionModal
+            transaction={transactionToEdit}
+            isOpen={!!transactionToEdit}
+            onClose={() => setTransactionToEdit(null)}
+            onSaved={(updatedTransaction) => {
+              setLatestTransactions((current) => {
+                const merged = mergeTransactions([updatedTransaction], current);
+                return getLatestTransactionsForCustomer(merged, customer.id, customer.name);
+              });
+              setVisibleCount(PAGE_SIZE);
+            }}
+          />
 
-      <ConfirmDialog
-        isOpen={isUndoConfirmOpen}
-        onClose={() => {
-          if (isUndoing) return;
-          onUndoConfirmClose();
-          setTransactionToUndo(null);
-        }}
-        onConfirm={handleConfirmUndo}
-        title={es.transactions.undoConfirmTitle}
-        message={es.transactions.undoConfirmMessage}
-        confirmText={es.actions.undo}
-        cancelText={es.actions.cancel}
-        colorScheme="red"
-        isLoading={isUndoing}
-      />
+          <ConfirmDialog
+            isOpen={isUndoConfirmOpen}
+            onClose={() => {
+              if (isUndoing) return;
+              onUndoConfirmClose();
+              setTransactionToUndo(null);
+            }}
+            onConfirm={handleConfirmUndo}
+            title={es.transactions.undoConfirmTitle}
+            message={es.transactions.undoConfirmMessage}
+            confirmText={es.actions.undo}
+            cancelText={es.actions.cancel}
+            colorScheme="red"
+            isLoading={isUndoing}
+          />
+        </>
+      )}
     </VStack>
   );
 }

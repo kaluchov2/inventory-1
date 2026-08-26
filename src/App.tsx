@@ -20,9 +20,10 @@ import { SyncInitializer } from './components/common/SyncInitializer';
 import { InstallPrompt } from './components/common/InstallPrompt';
 import { PwaUpdatePrompt } from './components/common/PwaUpdatePrompt';
 import {
-  VENTAS_SAT_PATH,
+  HOME_PATH,
   hasUnverifiedAuthenticatedProfile,
   isViewerRole,
+  isViewerPathAllowed,
 } from './constants/viewerAccess';
 
 // Protected route wrapper
@@ -51,9 +52,9 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   // Allow access if authenticated OR in offline mode
   if (isAuthenticated || isOfflineMode) {
-    // Viewer accounts are restricted to the Ventas SAT page only
-    if (isViewerRole(user?.role) && location.pathname !== VENTAS_SAT_PATH) {
-      return <Navigate to={VENTAS_SAT_PATH} replace />;
+    // Viewer accounts can browse only their assigned read-only pages.
+    if (isViewerRole(user?.role) && !isViewerPathAllowed(location.pathname)) {
+      return <Navigate to={HOME_PATH} replace />;
     }
     return <>{children}</>;
   }

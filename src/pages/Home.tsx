@@ -25,10 +25,17 @@ import {
 import { StatCard } from "../components/common";
 import { useProductStore } from "../store/productStore";
 import { useCustomerStore } from "../store/customerStore";
+import { useAuthStore } from "../store/authStore";
 import { formatCurrency } from "../utils/formatters";
 import { es } from "../i18n/es";
 import { getReviewQty } from "../utils/productHelpers";
 import { UPS_BATCH_OPTIONS } from "../constants/colors";
+import {
+  CUSTOMERS_PATH,
+  PRODUCTS_PATH,
+  VENTAS_SAT_PATH,
+  canModifyOperationalData,
+} from "../constants/viewerAccess";
 
 const whatsNewItems = [
   "Ventas: ahora puedes escanear articulos desde Ventas y revisar cliente, productos y total antes de registrar.",
@@ -43,6 +50,8 @@ export function Home() {
 
   const { products, getTotalInventoryValue } = useProductStore();
   const { getTotalOutstandingBalance } = useCustomerStore();
+  const user = useAuthStore((state) => state.user);
+  const canModifyData = canModifyOperationalData(user?.role);
 
   const filteredProducts = selectedUps
     ? products.filter((p) => Number(p.upsBatch) === selectedUps)
@@ -59,7 +68,7 @@ export function Home() {
   const reviewProducts = filteredProducts.filter((p) => getReviewQty(p) > 0);
   const outstandingBalance = getTotalOutstandingBalance();
 
-  const quickActions = [
+  const managementQuickActions = [
     {
       label: es.sales.registerSale,
       icon: FiShoppingCart,
@@ -70,7 +79,7 @@ export function Home() {
       label: es.products.addProduct,
       icon: FiPackage,
       color: "brand",
-      path: "/productos?action=new",
+      path: `${PRODUCTS_PATH}?action=new`,
     },
     {
       label: es.sales.receiveInstallment,
@@ -82,9 +91,32 @@ export function Home() {
       label: es.nav.products,
       icon: FiClipboard,
       color: "gray",
-      path: "/productos",
+      path: PRODUCTS_PATH,
     },
   ];
+
+  const readOnlyQuickActions = [
+    {
+      label: es.nav.products,
+      icon: FiClipboard,
+      color: "gray",
+      path: PRODUCTS_PATH,
+    },
+    {
+      label: es.nav.customers,
+      icon: FiUsers,
+      color: "blue",
+      path: CUSTOMERS_PATH,
+    },
+    {
+      label: es.nav.ventasSat,
+      icon: FiDollarSign,
+      color: "purple",
+      path: VENTAS_SAT_PATH,
+    },
+  ];
+
+  const quickActions = canModifyData ? managementQuickActions : readOnlyQuickActions;
 
   return (
     <VStack spacing={{ base: 4, md: 6, lg: 8 }} align="stretch">
@@ -190,15 +222,17 @@ export function Home() {
             </HStack>
           ))}
         </VStack>
-        <Button
-          mt={4}
-          size="sm"
-          colorScheme="blue"
-          variant="outline"
-          onClick={() => navigate("/soporte")}
-        >
-          Ver Preguntas Frecuentes
-        </Button>
+        {canModifyData && (
+          <Button
+            mt={4}
+            size="sm"
+            colorScheme="blue"
+            variant="outline"
+            onClick={() => navigate("/soporte")}
+          >
+            Ver Preguntas Frecuentes
+          </Button>
+        )}
       </Box>
 
       {/* Quick Actions */}

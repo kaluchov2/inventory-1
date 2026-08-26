@@ -73,8 +73,10 @@ import { useProductStore } from "../store/productStore";
 import { useTransactionStore, createSaleTransaction } from "../store/transactionStore";
 import { useCustomerStore } from "../store/customerStore";
 import { useSatKeyStore } from "../store/satKeyStore";
+import { useAuthStore } from "../store/authStore";
 import { getReviewQty, deriveStatus } from "../utils/productHelpers";
 import { getProductSatSnapshot } from "../utils/satKeyHelpers";
+import { canModifyOperationalData } from "../constants/viewerAccess";
 
 // Helper function to get payment status for a product
 function getPaymentStatusForProduct(
@@ -167,6 +169,7 @@ function ProductCard({
   viewMode,
   paymentStatus,
   satKeyDisplay,
+  canModifyData,
 }: {
   product: Product;
   onEdit: () => void;
@@ -176,6 +179,7 @@ function ProductCard({
   viewMode: 'available' | 'sold' | 'review' | 'other';
   paymentStatus?: { status: 'paid' | 'pending' | 'unknown'; amount: number };
   satKeyDisplay: SatKeyDisplay;
+  canModifyData: boolean;
 }) {
   const { customers } = useCustomerStore();
   const navigate = useNavigate();
@@ -206,37 +210,39 @@ function ProductCard({
             {product.name}
           </Text>
         </VStack>
-        <Menu>
-          <MenuButton
-            as={IconButton}
-            icon={<Icon as={FiMoreVertical} />}
-            variant="ghost"
-            size="sm"
-            aria-label="Acciones"
-          />
-          <MenuList>
-            <MenuItem icon={<Icon as={FiEdit2} />} onClick={onEdit}>
-              {es.actions.edit}
-            </MenuItem>
-            {getReviewQty(product) > 0 && onResolve && (
-              <MenuItem icon={<Icon as={FiCheckCircle} />} onClick={onResolve}>
-                Resolver
+        {canModifyData && (
+          <Menu>
+            <MenuButton
+              as={IconButton}
+              icon={<Icon as={FiMoreVertical} />}
+              variant="ghost"
+              size="sm"
+              aria-label="Acciones"
+            />
+            <MenuList>
+              <MenuItem icon={<Icon as={FiEdit2} />} onClick={onEdit}>
+                {es.actions.edit}
               </MenuItem>
-            )}
-            {viewMode === 'sold' && product.soldQty > 0 && paymentStatus?.status === 'paid' && onRefund && (
-              <MenuItem icon={<Icon as={FiRotateCcw} />} color="orange.500" onClick={onRefund}>
-                Devolucion
+              {getReviewQty(product) > 0 && onResolve && (
+                <MenuItem icon={<Icon as={FiCheckCircle} />} onClick={onResolve}>
+                  Resolver
+                </MenuItem>
+              )}
+              {viewMode === 'sold' && product.soldQty > 0 && paymentStatus?.status === 'paid' && onRefund && (
+                <MenuItem icon={<Icon as={FiRotateCcw} />} color="orange.500" onClick={onRefund}>
+                  Devolucion
+                </MenuItem>
+              )}
+              <MenuItem
+                icon={<Icon as={FiTrash2} />}
+                color="red.500"
+                onClick={onDelete}
+              >
+                {es.actions.delete}
               </MenuItem>
-            )}
-            <MenuItem
-              icon={<Icon as={FiTrash2} />}
-              color="red.500"
-              onClick={onDelete}
-            >
-              {es.actions.delete}
-            </MenuItem>
-          </MenuList>
-        </Menu>
+            </MenuList>
+          </Menu>
+        )}
       </Flex>
 
       {(product.brand || product.color || product.size) && (
@@ -338,7 +344,7 @@ function ProductCard({
       </Flex>
 
       {/* Resolve Button - Mobile (Review tab) */}
-      {getReviewQty(product) > 0 && viewMode === 'review' && onResolve && (
+      {canModifyData && getReviewQty(product) > 0 && viewMode === 'review' && onResolve && (
         <Button
           mt={3}
           size="sm"
@@ -352,17 +358,19 @@ function ProductCard({
       )}
 
       {/* Print QR Button - Mobile */}
-      <Button
-        mt={2}
-        size="sm"
-        variant="outline"
-        colorScheme="gray"
-        leftIcon={<Icon as={FiPrinter} />}
-        onClick={() => navigate(`/codigos?ups=${product.upsBatch}&seq=${product.productNumber ?? product.dropSequence ?? ''}`)}
-        w="full"
-      >
-        Imprimir QR
-      </Button>
+      {canModifyData && (
+        <Button
+          mt={2}
+          size="sm"
+          variant="outline"
+          colorScheme="gray"
+          leftIcon={<Icon as={FiPrinter} />}
+          onClick={() => navigate(`/codigos?ups=${product.upsBatch}&seq=${product.productNumber ?? product.dropSequence ?? ''}`)}
+          w="full"
+        >
+          Imprimir QR
+        </Button>
+      )}
     </Box>
   );
 }
@@ -372,6 +380,8 @@ export function Products() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isMobile = useBreakpointValue({ base: true, lg: false });
+  const user = useAuthStore((state) => state.user);
+  const canModifyData = canModifyOperationalData(user?.role);
 
   const {
     products,
@@ -476,7 +486,7 @@ export function Products() {
 
   // Check if we should open form or switch tab from URL params
   useState(() => {
-    if (searchParams.get("action") === "new") {
+    if (canModifyData && searchParams.get("action") === "new") {
       onFormOpen();
     }
     const tab = searchParams.get("tab");
@@ -575,26 +585,31 @@ export function Products() {
   }, [showAll, setFilters]);
 
   const handleAddProduct = () => {
+    if (!canModifyData) return;
     setSelectedProduct(null);
     onFormOpen();
   };
 
   const handleEditProduct = (product: Product) => {
+    if (!canModifyData) return;
     setSelectedProduct(product);
     onFormOpen();
   };
 
   const handleDeleteClick = (product: Product) => {
+    if (!canModifyData) return;
     setProductToDelete(product);
     onDeleteOpen();
   };
 
   const handleResolveClick = (product: Product) => {
+    if (!canModifyData) return;
     setProductToResolve(product);
     onResolveOpen();
   };
 
   const handleRefundClick = (product: Product) => {
+    if (!canModifyData) return;
     const relatedTransaction = transactions.find(
       (t) => t.type === 'sale' && t.items.some((item) => item.productId === product.id)
     );
@@ -605,6 +620,7 @@ export function Products() {
   };
 
   const handleFormSubmit = async (data: any, addAnother?: boolean) => {
+    if (!canModifyData) return;
     setIsLoading(true);
     try {
       if (selectedProduct) {
@@ -682,6 +698,7 @@ export function Products() {
   };
 
   const handleConfirmDelete = () => {
+    if (!canModifyData) return;
     if (productToDelete) {
       deleteProduct(productToDelete.id);
       toast({
@@ -699,7 +716,7 @@ export function Products() {
   const isResolvingRef = useRef(false);
 
   const handleConfirmResolve = (resolveData: ResolveData) => {
-    if (!productToResolve || isResolvingRef.current) return;
+    if (!canModifyData || !productToResolve || isResolvingRef.current) return;
     isResolvingRef.current = true;
     const product = productToResolve;
     onResolveClose();
@@ -841,7 +858,7 @@ export function Products() {
   const isRefundingRef = useRef(false);
 
   const handleConfirmRefund = (refundData: RefundData) => {
-    if (!productToRefund || isRefundingRef.current) return;
+    if (!canModifyData || !productToRefund || isRefundingRef.current) return;
     isRefundingRef.current = true;
     const product = productToRefund;
     const originalTransaction = refundTransaction!;
@@ -967,25 +984,27 @@ export function Products() {
       {/* Header */}
       <Flex justify="space-between" align="center" wrap="wrap" gap={3}>
         <Heading size={{ base: "lg", md: "xl" }}>{es.products.title}</Heading>
-        <HStack spacing={2}>
-          <Button
-            leftIcon={<Icon as={FiHelpCircle} />}
-            variant="outline"
-            colorScheme="gray"
-            size={{ base: "md", md: "lg" }}
-            onClick={() => navigate('/soporte')}
-          >
-            Preguntas Frecuentes
-          </Button>
-          <Button
-            leftIcon={<Icon as={FiPlus} />}
-            colorScheme="brand"
-            size={{ base: "md", md: "lg" }}
-            onClick={handleAddProduct}
-          >
-            {es.products.addProduct}
-          </Button>
-        </HStack>
+        {canModifyData && (
+          <HStack spacing={2}>
+            <Button
+              leftIcon={<Icon as={FiHelpCircle} />}
+              variant="outline"
+              colorScheme="gray"
+              size={{ base: "md", md: "lg" }}
+              onClick={() => navigate('/soporte')}
+            >
+              Preguntas Frecuentes
+            </Button>
+            <Button
+              leftIcon={<Icon as={FiPlus} />}
+              colorScheme="brand"
+              size={{ base: "md", md: "lg" }}
+              onClick={handleAddProduct}
+            >
+              {es.products.addProduct}
+            </Button>
+          </HStack>
+        )}
       </Flex>
 
       {/* View Mode Tabs */}
@@ -1043,44 +1062,48 @@ export function Products() {
         </TabPanels>
       </Tabs>
 
-      {/* Product Form Modal */}
-      <ProductForm
-        isOpen={isFormOpen}
-        onClose={onFormClose}
-        onSubmit={handleFormSubmit}
-        product={selectedProduct}
-        isLoading={isLoading}
-        initialUpsBatch={filters.upsBatch ? Number(filters.upsBatch) : undefined}
-      />
+      {canModifyData && (
+        <>
+          {/* Product Form Modal */}
+          <ProductForm
+            isOpen={isFormOpen}
+            onClose={onFormClose}
+            onSubmit={handleFormSubmit}
+            product={selectedProduct}
+            isLoading={isLoading}
+            initialUpsBatch={filters.upsBatch ? Number(filters.upsBatch) : undefined}
+          />
 
-      {/* Delete Confirmation */}
-      <ConfirmDialog
-        isOpen={isDeleteOpen}
-        onClose={onDeleteClose}
-        onConfirm={handleConfirmDelete}
-        title={es.actions.delete}
-        message={es.products.deleteConfirm}
-        confirmText={es.actions.delete}
-      />
+          {/* Delete Confirmation */}
+          <ConfirmDialog
+            isOpen={isDeleteOpen}
+            onClose={onDeleteClose}
+            onConfirm={handleConfirmDelete}
+            title={es.actions.delete}
+            message={es.products.deleteConfirm}
+            confirmText={es.actions.delete}
+          />
 
-      {/* Resolve Review Modal */}
-      <ResolveReviewModal
-        isOpen={isResolveOpen}
-        onClose={onResolveClose}
-        product={productToResolve}
-        onConfirm={handleConfirmResolve}
-        isLoading={isLoading}
-      />
+          {/* Resolve Review Modal */}
+          <ResolveReviewModal
+            isOpen={isResolveOpen}
+            onClose={onResolveClose}
+            product={productToResolve}
+            onConfirm={handleConfirmResolve}
+            isLoading={isLoading}
+          />
 
-      {/* Refund Modal */}
-      <RefundModal
-        isOpen={isRefundOpen}
-        onClose={onRefundClose}
-        product={productToRefund}
-        transaction={refundTransaction}
-        onConfirm={handleConfirmRefund}
-        isLoading={isLoading}
-      />
+          {/* Refund Modal */}
+          <RefundModal
+            isOpen={isRefundOpen}
+            onClose={onRefundClose}
+            product={productToRefund}
+            transaction={refundTransaction}
+            onConfirm={handleConfirmRefund}
+            isLoading={isLoading}
+          />
+        </>
+      )}
     </VStack>
   );
 
@@ -1224,9 +1247,9 @@ export function Products() {
           <Box bg="white" borderRadius="xl" boxShadow="sm">
             <EmptyState
               title={viewMode === 'available' ? es.products.noProducts : viewMode === 'sold' ? "No hay productos vendidos" : viewMode === 'review' ? "No hay productos por revisar" : "No hay productos en esta categoría"}
-              message={viewMode === 'available' ? "Agregue productos para comenzar" : viewMode === 'sold' ? "Los productos vendidos aparecerán aquí" : viewMode === 'review' ? "Los productos por revisar aparecerán aquí" : "Los productos donados, caducados o perdidos aparecerán aquí"}
-              actionLabel={viewMode === 'available' ? es.products.addProduct : undefined}
-              onAction={viewMode === 'available' ? handleAddProduct : undefined}
+              message={viewMode === 'available' ? (canModifyData ? "Agregue productos para comenzar" : "No hay productos para mostrar") : viewMode === 'sold' ? "Los productos vendidos aparecerán aquí" : viewMode === 'review' ? "Los productos por revisar aparecerán aquí" : "Los productos donados, caducados o perdidos aparecerán aquí"}
+              actionLabel={canModifyData && viewMode === 'available' ? es.products.addProduct : undefined}
+              onAction={canModifyData && viewMode === 'available' ? handleAddProduct : undefined}
             />
           </Box>
         ) : isMobile ? (
@@ -1243,6 +1266,7 @@ export function Products() {
                 viewMode={viewMode}
                 paymentStatus={viewMode === 'sold' ? getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap) : undefined}
                 satKeyDisplay={getSatKeyDisplay(product)}
+                canModifyData={canModifyData}
               />
             ))}
           </VStack>
@@ -1263,7 +1287,7 @@ export function Products() {
                   {viewMode === 'sold' && <Th>Cliente</Th>}
                   {viewMode === 'sold' && <Th>Pago</Th>}
                   <Th>{es.products.status}</Th>
-                  <Th w="120px">Acciones</Th>
+                  {canModifyData && <Th w="120px">Acciones</Th>}
                 </Tr>
               </Thead>
               <Tbody>
@@ -1340,70 +1364,75 @@ export function Products() {
                         </Td>
                       )}
                       <Td>{getStatusBadge(product.status)}</Td>
-                      <Td onClick={(e) => e.stopPropagation()}>
-                        <HStack spacing={1}>
-                          {/* Quick Resolve Button */}
-                          {getReviewQty(product) > 0 && (
-                            <IconButton
-                              icon={<Icon as={FiCheckCircle} />}
-                              aria-label="Resolver"
-                              size="sm"
-                              colorScheme="yellow"
-                              variant="ghost"
-                              onClick={() => handleResolveClick(product)}
-                            />
-                          )}
-                          <Menu>
-                            <MenuButton
-                              as={IconButton}
-                              icon={<Icon as={FiMoreVertical} />}
-                              variant="ghost"
-                              size="sm"
-                              aria-label="Acciones"
-                            />
-                            <MenuList>
-                              <MenuItem
-                                icon={<Icon as={FiEdit2} />}
-                                onClick={() => handleEditProduct(product)}
-                              >
-                                {es.actions.edit}
-                              </MenuItem>
-                              {getReviewQty(product) > 0 && (
+                      {canModifyData && (
+                        <Td onClick={(e) => e.stopPropagation()}>
+                          <HStack spacing={1}>
+                            {/* Quick Resolve Button */}
+                            {getReviewQty(product) > 0 && (
+                              <IconButton
+                                icon={<Icon as={FiCheckCircle} />}
+                                aria-label="Resolver"
+                                size="sm"
+                                colorScheme="yellow"
+                                variant="ghost"
+                                onClick={() => handleResolveClick(product)}
+                              />
+                            )}
+                            <Menu>
+                              <MenuButton
+                                as={IconButton}
+                                icon={<Icon as={FiMoreVertical} />}
+                                variant="ghost"
+                                size="sm"
+                                aria-label="Acciones"
+                              />
+                              <MenuList>
                                 <MenuItem
-                                  icon={<Icon as={FiCheckCircle} />}
-                                  onClick={() => handleResolveClick(product)}
+                                  icon={<Icon as={FiEdit2} />}
+                                  onClick={() => handleEditProduct(product)}
                                 >
-                                  Resolver
+                                  {es.actions.edit}
                                 </MenuItem>
-                              )}
-                              {viewMode === 'sold' && product.soldQty > 0 && (() => {
-                                const ps = getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap);
-                                return ps.status === 'paid';
-                              })() && (
+                                {getReviewQty(product) > 0 && (
+                                  <MenuItem
+                                    icon={<Icon as={FiCheckCircle} />}
+                                    onClick={() => handleResolveClick(product)}
+                                  >
+                                    Resolver
+                                  </MenuItem>
+                                )}
+                                {viewMode === 'sold' && product.soldQty > 0 && (() => {
+                                  const ps = getPaymentStatusForProduct(product.id, transactions, getEffectivePendingMap);
+                                  return ps.status === 'paid';
+                                })() && (
+                                  <MenuItem
+                                    icon={<Icon as={FiRotateCcw} />}
+                                    color="orange.500"
+                                    onClick={() => handleRefundClick(product)}
+                                  >
+                                    Devolucion
+                                  </MenuItem>
+                                )}
                                 <MenuItem
-                                  icon={<Icon as={FiRotateCcw} />}
-                                  color="orange.500"
-                                  onClick={() => handleRefundClick(product)}
+                                  icon={<Icon as={FiTrash2} />}
+                                  color="red.500"
+                                  onClick={() => handleDeleteClick(product)}
                                 >
-                                  Devolucion
+                                  {es.actions.delete}
                                 </MenuItem>
-                              )}
-                              <MenuItem
-                                icon={<Icon as={FiTrash2} />}
-                                color="red.500"
-                                onClick={() => handleDeleteClick(product)}
-                              >
-                                {es.actions.delete}
-                              </MenuItem>
-                            </MenuList>
-                          </Menu>
-                        </HStack>
-                      </Td>
+                              </MenuList>
+                            </Menu>
+                          </HStack>
+                        </Td>
+                      )}
                     </Tr>
                     {/* Expanded Row Details */}
                     {expandedRows.has(product.id) && (
                       <Tr key={`${product.id}-details`} bg="gray.50">
-                        <Td colSpan={viewMode === 'sold' ? 12 : 10} py={4}>
+                        <Td
+                          colSpan={viewMode === 'sold' ? (canModifyData ? 12 : 11) : (canModifyData ? 10 : 9)}
+                          py={4}
+                        >
                           {viewMode === 'sold' ? (
                             <Box px={4}>
                               <SoldProductDetails product={product} />
@@ -1446,17 +1475,19 @@ export function Products() {
                               </Box>
                             </SimpleGrid>
                           )}
-                          <Flex justify="flex-end" px={4} pt={2}>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              colorScheme="gray"
-                              leftIcon={<Icon as={FiPrinter} />}
-                              onClick={() => navigate(`/codigos?ups=${product.upsBatch}&seq=${product.productNumber ?? product.dropSequence ?? ''}`)}
-                            >
-                              Imprimir QR
-                            </Button>
-                          </Flex>
+                          {canModifyData && (
+                            <Flex justify="flex-end" px={4} pt={2}>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                colorScheme="gray"
+                                leftIcon={<Icon as={FiPrinter} />}
+                                onClick={() => navigate(`/codigos?ups=${product.upsBatch}&seq=${product.productNumber ?? product.dropSequence ?? ''}`)}
+                              >
+                                Imprimir QR
+                              </Button>
+                            </Flex>
+                          )}
                         </Td>
                       </Tr>
                     )}

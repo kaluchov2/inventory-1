@@ -37,10 +37,12 @@ import { SearchInput, EmptyState, ConfirmDialog } from '../components/common';
 import { CustomerForm, ReceiveInstallmentModal, CustomerTransactionDetails } from '../components/customers';
 import { useCustomerStore } from '../store/customerStore';
 import { useTransactionStore } from '../store/transactionStore';
+import { useAuthStore } from '../store/authStore';
 import { Customer } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { es } from '../i18n/es';
 import { normalizeCustomerKey, WALK_IN_CUSTOMER_LABELS } from '../utils/customerNameUtils';
+import { canModifyOperationalData } from '../constants/viewerAccess';
 
 type CustomerListItem = Customer & {
   isVirtualWalkIn?: boolean;
@@ -50,6 +52,8 @@ type CustomerListItem = Customer & {
 export function Customers() {
   const toast = useToast();
   const isMobile = useBreakpointValue({ base: true, lg: false });
+  const user = useAuthStore((state) => state.user);
+  const canModifyData = canModifyOperationalData(user?.role);
 
   const {
     customers,
@@ -165,26 +169,31 @@ export function Customers() {
   };
 
   const handleAddCustomer = () => {
+    if (!canModifyData) return;
     setSelectedCustomer(null);
     onFormOpen();
   };
 
   const handleEditCustomer = (customer: Customer) => {
+    if (!canModifyData) return;
     setSelectedCustomer(customer);
     onFormOpen();
   };
 
   const handleDeleteClick = (customer: Customer) => {
+    if (!canModifyData) return;
     setCustomerToDelete(customer);
     onDeleteOpen();
   };
 
   const handleInstallmentClick = (customer: Customer) => {
+    if (!canModifyData) return;
     setCustomerForInstallment(customer);
     onInstallmentOpen();
   };
 
   const handleFormSubmit = async (data: any) => {
+    if (!canModifyData) return;
     setIsLoading(true);
     try {
       if (selectedCustomer) {
@@ -218,6 +227,7 @@ export function Customers() {
   };
 
   const handleConfirmDelete = () => {
+    if (!canModifyData) return;
     if (customerToDelete) {
       deleteCustomer(customerToDelete.id);
       toast({
@@ -236,14 +246,16 @@ export function Customers() {
       {/* Header */}
       <Flex justify="space-between" align="center" wrap="wrap" gap={3}>
         <Heading size={{ base: 'lg', md: 'xl' }}>{es.customers.title}</Heading>
-        <Button
-          leftIcon={<Icon as={FiPlus} />}
-          colorScheme="brand"
-          size={{ base: 'md', md: 'lg' }}
-          onClick={handleAddCustomer}
-        >
-          {es.customers.addCustomer}
-        </Button>
+        {canModifyData && (
+          <Button
+            leftIcon={<Icon as={FiPlus} />}
+            colorScheme="brand"
+            size={{ base: 'md', md: 'lg' }}
+            onClick={handleAddCustomer}
+          >
+            {es.customers.addCustomer}
+          </Button>
+        )}
       </Flex>
 
       {/* Search */}
@@ -263,9 +275,9 @@ export function Customers() {
         <Box bg="white" borderRadius="xl" boxShadow="sm">
           <EmptyState
             title={es.customers.noCustomers}
-            message="Agregue clientes para comenzar"
-            actionLabel={es.customers.addCustomer}
-            onAction={handleAddCustomer}
+            message={canModifyData ? "Agregue clientes para comenzar" : "No hay clientes para mostrar"}
+            actionLabel={canModifyData ? es.customers.addCustomer : undefined}
+            onAction={canModifyData ? handleAddCustomer : undefined}
           />
         </Box>
       ) : isMobile ? (
@@ -311,7 +323,7 @@ export function Customers() {
                       </Text>
                     )}
                   </VStack>
-                  {!customer.isVirtualWalkIn ? (
+                  {!customer.isVirtualWalkIn && canModifyData ? (
                     <Box onClick={(e) => e.stopPropagation()}>
                       <Menu>
                         <MenuButton
@@ -347,11 +359,11 @@ export function Customers() {
                         </MenuList>
                       </Menu>
                     </Box>
-                  ) : (
+                  ) : customer.isVirtualWalkIn ? (
                     <Badge colorScheme="purple" fontSize="xs">
                       Walk-in
                     </Badge>
-                  )}
+                  ) : null}
                 </Flex>
                 <HStack justify="space-between" ml={6}>
                   {customer.balance > 0 ? (
@@ -375,6 +387,7 @@ export function Customers() {
                   <CustomerTransactionDetails
                     customer={customer}
                     onReceivePayment={handleInstallmentClick}
+                    canModifyData={canModifyData}
                   />
                 </Box>
               )}
@@ -392,7 +405,7 @@ export function Customers() {
                 <Th>{es.customers.phone}</Th>
                 <Th isNumeric>{es.customers.balance}</Th>
                 <Th isNumeric>{es.customers.totalPurchases}</Th>
-                <Th w="100px">Acciones</Th>
+                {canModifyData && <Th w="100px">Acciones</Th>}
               </Tr>
             </Thead>
             <Tbody>
@@ -437,55 +450,58 @@ export function Customers() {
                     <Td isNumeric fontWeight="medium">
                       {formatCurrency(customer.displaySalesTotal)}
                     </Td>
-                    <Td onClick={(e) => e.stopPropagation()}>
-                      {!customer.isVirtualWalkIn ? (
-                        <Menu>
-                          <MenuButton
-                            as={IconButton}
-                            icon={<Icon as={FiMoreVertical} />}
-                            variant="ghost"
-                            aria-label="Acciones"
-                          />
-                          <MenuList>
-                            <MenuItem
-                              icon={<Icon as={FiEdit2} />}
-                              onClick={() => handleEditCustomer(customer)}
-                            >
-                              {es.actions.edit}
-                            </MenuItem>
-                            {customer.balance > 0 && (
+                    {canModifyData && (
+                      <Td onClick={(e) => e.stopPropagation()}>
+                        {!customer.isVirtualWalkIn ? (
+                          <Menu>
+                            <MenuButton
+                              as={IconButton}
+                              icon={<Icon as={FiMoreVertical} />}
+                              variant="ghost"
+                              aria-label="Acciones"
+                            />
+                            <MenuList>
                               <MenuItem
-                                icon={<Icon as={FiDollarSign} />}
-                                color="green.500"
-                                onClick={() => handleInstallmentClick(customer)}
+                                icon={<Icon as={FiEdit2} />}
+                                onClick={() => handleEditCustomer(customer)}
                               >
-                                {es.sales.receiveInstallment}
+                                {es.actions.edit}
                               </MenuItem>
-                            )}
-                            <MenuItem
-                              icon={<Icon as={FiTrash2} />}
-                              color="red.500"
-                              onClick={() => handleDeleteClick(customer)}
-                            >
-                              {es.actions.delete}
-                            </MenuItem>
-                          </MenuList>
-                        </Menu>
-                      ) : (
-                        <Badge colorScheme="purple" variant="subtle">
-                          Walk-in
-                        </Badge>
-                      )}
-                    </Td>
+                              {customer.balance > 0 && (
+                                <MenuItem
+                                  icon={<Icon as={FiDollarSign} />}
+                                  color="green.500"
+                                  onClick={() => handleInstallmentClick(customer)}
+                                >
+                                  {es.sales.receiveInstallment}
+                                </MenuItem>
+                              )}
+                              <MenuItem
+                                icon={<Icon as={FiTrash2} />}
+                                color="red.500"
+                                onClick={() => handleDeleteClick(customer)}
+                              >
+                                {es.actions.delete}
+                              </MenuItem>
+                            </MenuList>
+                          </Menu>
+                        ) : (
+                          <Badge colorScheme="purple" variant="subtle">
+                            Walk-in
+                          </Badge>
+                        )}
+                      </Td>
+                    )}
                   </Tr>
                   {/* Expanded Row Details */}
                   {expandedRows.has(customer.id) && (
                     <Tr bg="gray.50">
-                      <Td colSpan={6} py={4}>
+                      <Td colSpan={canModifyData ? 6 : 5} py={4}>
                         <Box px={4}>
                           <CustomerTransactionDetails
                             customer={customer}
                             onReceivePayment={handleInstallmentClick}
+                            canModifyData={canModifyData}
                           />
                         </Box>
                       </Td>
@@ -498,32 +514,36 @@ export function Customers() {
         </Box>
       )}
 
-      {/* Customer Form Modal */}
-      <CustomerForm
-        isOpen={isFormOpen}
-        onClose={onFormClose}
-        onSubmit={handleFormSubmit}
-        customer={selectedCustomer}
-        isLoading={isLoading}
-      />
+      {canModifyData && (
+        <>
+          {/* Customer Form Modal */}
+          <CustomerForm
+            isOpen={isFormOpen}
+            onClose={onFormClose}
+            onSubmit={handleFormSubmit}
+            customer={selectedCustomer}
+            isLoading={isLoading}
+          />
 
-      {/* Delete Confirmation */}
-      <ConfirmDialog
-        isOpen={isDeleteOpen}
-        onClose={onDeleteClose}
-        onConfirm={handleConfirmDelete}
-        title={es.actions.delete}
-        message={es.customers.deleteConfirm}
-        confirmText={es.actions.delete}
-      />
+          {/* Delete Confirmation */}
+          <ConfirmDialog
+            isOpen={isDeleteOpen}
+            onClose={onDeleteClose}
+            onConfirm={handleConfirmDelete}
+            title={es.actions.delete}
+            message={es.customers.deleteConfirm}
+            confirmText={es.actions.delete}
+          />
 
-      {/* Receive Installment Modal */}
-      <ReceiveInstallmentModal
-        isOpen={isInstallmentOpen}
-        onClose={onInstallmentClose}
-        customer={customerForInstallment}
-        onPaymentReceived={() => setCustomerForInstallment(null)}
-      />
+          {/* Receive Installment Modal */}
+          <ReceiveInstallmentModal
+            isOpen={isInstallmentOpen}
+            onClose={onInstallmentClose}
+            customer={customerForInstallment}
+            onPaymentReceived={() => setCustomerForInstallment(null)}
+          />
+        </>
+      )}
     </VStack>
   );
 }

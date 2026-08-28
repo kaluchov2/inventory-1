@@ -6,12 +6,14 @@ export const HOME_PATH = '/';
 export const PRODUCTS_PATH = '/productos';
 export const CUSTOMERS_PATH = '/clientes';
 export const VENTAS_SAT_PATH = '/ventas-sat';
+export const SETTINGS_PATH = '/configuracion';
 
 export const VIEWER_ALLOWED_PATHS = [
   HOME_PATH,
   PRODUCTS_PATH,
   CUSTOMERS_PATH,
   VENTAS_SAT_PATH,
+  SETTINGS_PATH,
 ] as const;
 
 // Roles live in public.profiles, not in the Supabase auth session. Until that

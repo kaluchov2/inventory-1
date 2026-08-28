@@ -8,6 +8,7 @@ import {
   isViewerRole,
   isViewerPathAllowed,
   PRODUCTS_PATH,
+  SETTINGS_PATH,
   VENTAS_SAT_PATH,
 } from './viewerAccess';
 
@@ -32,8 +33,9 @@ describe('viewerAccess', () => {
     expect(isViewerPathAllowed(`${PRODUCTS_PATH}/`)).toBe(true);
     expect(isViewerPathAllowed(CUSTOMERS_PATH)).toBe(true);
     expect(isViewerPathAllowed(VENTAS_SAT_PATH)).toBe(true);
+    expect(isViewerPathAllowed(SETTINGS_PATH)).toBe(true);
     expect(isViewerPathAllowed('/ventas')).toBe(false);
-    expect(isViewerPathAllowed('/configuracion')).toBe(false);
+    expect(isViewerPathAllowed('/sat')).toBe(false);
   });
 
   it('marks viewers as read-only without changing admin or user permissions', () => {

@@ -40,6 +40,7 @@ import {
   CUSTOMERS_PATH,
   HOME_PATH,
   PRODUCTS_PATH,
+  SETTINGS_PATH,
   VENTAS_SAT_PATH,
   isViewerRole,
 } from '../../constants/viewerAccess';
@@ -61,7 +62,7 @@ const navItems: NavItem[] = [
   { icon: FiDollarSign, label: es.nav.ventasSat, path: VENTAS_SAT_PATH },
   { icon: FiFileText, label: es.nav.transactions, path: '/transacciones' },
   { icon: FiBarChart2, label: es.nav.reports, path: '/reportes' },
-  { icon: FiSettings, label: es.nav.settings, path: '/configuracion' },
+  { icon: FiSettings, label: es.nav.settings, path: SETTINGS_PATH },
   { icon: FiHelpCircle, label: 'Soporte', path: '/soporte' },
 ];
 
@@ -70,6 +71,7 @@ const viewerNavItems: NavItem[] = [
   { icon: FiPackage, label: es.nav.products, path: PRODUCTS_PATH },
   { icon: FiUsers, label: es.nav.customers, path: CUSTOMERS_PATH },
   { icon: FiDollarSign, label: es.nav.ventasSat, path: VENTAS_SAT_PATH },
+  { icon: FiSettings, label: es.nav.settings, path: SETTINGS_PATH },
 ];
 
 export function MobileNav() {

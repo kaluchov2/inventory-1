@@ -21,6 +21,7 @@ import {
   FiClipboard,
   FiStar,
   FiCheckCircle,
+  FiSettings,
 } from "react-icons/fi";
 import { StatCard } from "../components/common";
 import { useProductStore } from "../store/productStore";
@@ -33,6 +34,7 @@ import { UPS_BATCH_OPTIONS } from "../constants/colors";
 import {
   CUSTOMERS_PATH,
   PRODUCTS_PATH,
+  SETTINGS_PATH,
   VENTAS_SAT_PATH,
   canModifyOperationalData,
 } from "../constants/viewerAccess";
@@ -113,6 +115,12 @@ export function Home() {
       icon: FiDollarSign,
       color: "purple",
       path: VENTAS_SAT_PATH,
+    },
+    {
+      label: es.nav.settings,
+      icon: FiSettings,
+      color: "gray",
+      path: SETTINGS_PATH,
     },
   ];
 

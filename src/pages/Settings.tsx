@@ -41,6 +41,7 @@ import { useCustomerStore } from "../store/customerStore";
 import { useTransactionStore } from "../store/transactionStore";
 import { useDropStore } from "../store/dropStore";
 import { useStaffStore } from "../store/staffStore";
+import { useAuthStore } from "../store/authStore";
 import { transactionService } from "../services/transactionService";
 import { importExcelFile, ImportResult } from "../utils/excelImport";
 import { Transaction } from "../types";
@@ -58,6 +59,7 @@ import { UPS_BATCH_OPTIONS } from "../constants/colors";
 import { AutocompleteSelect } from "../components/common";
 import { syncQueue } from "../lib/syncQueue";
 import { syncManager } from "../lib/syncManager";
+import { canModifyOperationalData } from "../constants/viewerAccess";
 import {
   isWalkInCustomerName,
   normalizeCustomerKey,
@@ -66,10 +68,61 @@ import {
 
 const WALK_IN_OPTION_VALUE = "__WALK_IN__";
 
+interface UpsInventoryExportControlsProps {
+  exportUps: number | null;
+  filteredByUpsCount: number;
+  onUpsChange: (ups: number | null) => void;
+  onExport: () => void;
+}
+
+function UpsInventoryExportControls({
+  exportUps,
+  filteredByUpsCount,
+  onUpsChange,
+  onExport,
+}: UpsInventoryExportControlsProps) {
+  return (
+    <HStack mt={4} spacing={{ base: 2, md: 4 }} flexWrap="wrap">
+      <Box flex="1" minW="180px" maxW="300px">
+        <AutocompleteSelect
+          options={UPS_BATCH_OPTIONS.map((option) => ({
+            value: String(option.value),
+            label: option.label,
+          }))}
+          value={exportUps ? String(exportUps) : ""}
+          onChange={(value) => onUpsChange(value ? Number(value) : null)}
+          placeholder="Seleccionar UPS..."
+        />
+      </Box>
+      <Button
+        leftIcon={<Icon as={FiDownload} />}
+        colorScheme="teal"
+        size={{ base: "sm", md: "lg" }}
+        fontSize={{ base: "xs", md: "md" }}
+        onClick={onExport}
+        isDisabled={!exportUps || filteredByUpsCount === 0}
+      >
+        {exportUps ? `Descargar UPS ${exportUps}` : "Descargar UPS"}
+        {exportUps && (
+          <Badge
+            ml={2}
+            colorScheme="teal"
+            fontSize={{ base: "2xs", md: "sm" }}
+          >
+            {filteredByUpsCount}
+          </Badge>
+        )}
+      </Button>
+    </HStack>
+  );
+}
+
 export function Settings() {
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const backupInputRef = useRef<HTMLInputElement>(null);
+  const user = useAuthStore((state) => state.user);
+  const canModifyData = canModifyOperationalData(user?.role);
 
   const { products, importProducts } = useProductStore();
   const { customers, importCustomers } = useCustomerStore();
@@ -303,6 +356,8 @@ export function Settings() {
 
   // Update queue info on mount and when sync status changes
   useEffect(() => {
+    if (!canModifyData) return;
+
     const updateQueueInfo = () => {
       try {
         const info = syncQueue.getQueueInfo();
@@ -325,7 +380,30 @@ export function Settings() {
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [canModifyData]);
+
+  if (!canModifyData) {
+    return (
+      <VStack spacing={{ base: 4, md: 6 }} align="stretch">
+        <Heading size={{ base: "lg", md: "xl" }}>{es.settings.title}</Heading>
+
+        <Box bg="white" p={{ base: 4, md: 6 }} borderRadius="xl" boxShadow="sm">
+          <Heading size={{ base: "sm", md: "md" }} mb={3}>
+            Descargar inventario por UPS
+          </Heading>
+          <Text color="gray.600" fontSize={{ base: "sm", md: "md" }}>
+            Seleccione un UPS para descargar únicamente su inventario en formato Excel.
+          </Text>
+          <UpsInventoryExportControls
+            exportUps={exportUps}
+            filteredByUpsCount={filteredByUpsCount}
+            onUpsChange={setExportUps}
+            onExport={handleExportByUps}
+          />
+        </Box>
+      </VStack>
+    );
+  }
 
   // Handle Excel file import
   const handleFileSelect = async (
@@ -946,38 +1024,12 @@ export function Settings() {
           </Button>
         </SimpleGrid>
 
-        <HStack mt={4} spacing={{ base: 2, md: 4 }} flexWrap="wrap">
-          <Box flex="1" minW="180px" maxW="300px">
-            <AutocompleteSelect
-              options={UPS_BATCH_OPTIONS.map((o) => ({
-                value: String(o.value),
-                label: o.label,
-              }))}
-              value={exportUps ? String(exportUps) : ""}
-              onChange={(val) => setExportUps(val ? Number(val) : null)}
-              placeholder="Seleccionar UPS..."
-            />
-          </Box>
-          <Button
-            leftIcon={<Icon as={FiDownload} />}
-            colorScheme="teal"
-            size={{ base: "sm", md: "lg" }}
-            fontSize={{ base: "xs", md: "md" }}
-            onClick={handleExportByUps}
-            isDisabled={!exportUps || filteredByUpsCount === 0}
-          >
-            {exportUps ? `Descargar UPS ${exportUps}` : "Descargar UPS"}
-            {exportUps && (
-              <Badge
-                ml={2}
-                colorScheme="teal"
-                fontSize={{ base: "2xs", md: "sm" }}
-              >
-                {filteredByUpsCount}
-              </Badge>
-            )}
-          </Button>
-        </HStack>
+        <UpsInventoryExportControls
+          exportUps={exportUps}
+          filteredByUpsCount={filteredByUpsCount}
+          onUpsChange={setExportUps}
+          onExport={handleExportByUps}
+        />
 
         <HStack mt={4} spacing={{ base: 2, md: 4 }} flexWrap="wrap">
           <Box flex="1" minW="180px" maxW="300px">

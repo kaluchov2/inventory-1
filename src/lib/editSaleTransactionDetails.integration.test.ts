@@ -181,7 +181,9 @@ beforeAll(async () => {
   await db.exec(migration('026_edit_sale_transaction_details.sql'));
   await db.exec(migration('027_harden_sale_transaction_edits.sql'));
   await db.exec(migration('028_fix_installment_timeline_and_sale_versions.sql'));
-  await db.exec(migration('029_fix_sale_editor_safeupdate.sql'));
+  // Supabase SQL Editor may preserve CRLF inside the stored PL/pgSQL body.
+  // Migration 030 must patch the function independently of line endings.
+  await db.exec(migration('029_fix_sale_editor_safeupdate.sql').replace(/\n/g, '\r\n'));
   await db.exec(migration('012_harden_undo_sale_transaction_unregistered_items.sql'));
   await db.exec(`
     CREATE OR REPLACE FUNCTION public.modify_sale_transaction_inventory_base_v024(edit_payload jsonb)

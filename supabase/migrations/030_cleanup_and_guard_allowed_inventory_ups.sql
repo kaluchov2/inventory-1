@@ -266,19 +266,22 @@ BEGIN
   SELECT pg_get_functiondef('public.edit_sale_transaction_details(jsonb)'::regprocedure)
   INTO function_definition;
 
-  old_fragment := E'    LEFT JOIN public.products p\n      ON p.id = requested.product_id\n      AND COALESCE(p.is_deleted, false) = false\n    WHERE p.id IS NULL';
-  new_fragment := E'    LEFT JOIN public.products p\n      ON p.id = requested.product_id\n    WHERE p.id IS NULL';
-  IF position(old_fragment IN function_definition) = 0 THEN
+  -- pg_get_functiondef preserves the function body's original whitespace,
+  -- including CRLF when it was pasted through the SQL editor. Match the
+  -- semantic fragment instead of requiring the migration file's exact layout.
+  old_fragment := '(LEFT JOIN[[:space:]]+(public[.])?products[[:space:]]+p[[:space:]]+ON[[:space:]]+p[.]id[[:space:]]*=[[:space:]]*requested[.]product_id)[[:space:]]+AND[[:space:]]+COALESCE[(][[:space:]]*p[.]is_deleted[[:space:]]*,[[:space:]]*false[[:space:]]*[)][[:space:]]*=[[:space:]]*false([[:space:]]+WHERE[[:space:]]+p[.]id[[:space:]]+IS[[:space:]]+NULL)';
+  new_fragment := regexp_replace(function_definition, old_fragment, E'\\1\\3');
+  IF new_fragment = function_definition THEN
     RAISE EXCEPTION 'Unexpected edit_sale_transaction_details product validation body';
   END IF;
-  function_definition := replace(function_definition, old_fragment, new_fragment);
+  function_definition := new_fragment;
 
-  old_fragment := E'      WHERE p.id = delta_record.product_id\n        AND COALESCE(p.is_deleted, false) = false\n        AND p.sold_qty >= ABS(delta_record.qty_delta);';
-  new_fragment := E'      WHERE p.id = delta_record.product_id\n        AND p.sold_qty >= ABS(delta_record.qty_delta);';
-  IF position(old_fragment IN function_definition) = 0 THEN
+  old_fragment := '(WHERE[[:space:]]+p[.]id[[:space:]]*=[[:space:]]*delta_record[.]product_id[[:space:]]+)AND[[:space:]]+COALESCE[(][[:space:]]*p[.]is_deleted[[:space:]]*,[[:space:]]*false[[:space:]]*[)][[:space:]]*=[[:space:]]*false([[:space:]]+AND[[:space:]]+p[.]sold_qty[[:space:]]*>=[[:space:]]*ABS[(][[:space:]]*delta_record[.]qty_delta[[:space:]]*[)][[:space:]]*;)';
+  new_fragment := regexp_replace(function_definition, old_fragment, E'\\1\\2');
+  IF new_fragment = function_definition THEN
     RAISE EXCEPTION 'Unexpected edit_sale_transaction_details restore body';
   END IF;
-  function_definition := replace(function_definition, old_fragment, new_fragment);
+  function_definition := new_fragment;
   EXECUTE function_definition;
 
   -- Keep the legacy edit RPC compatible as well while it remains published.

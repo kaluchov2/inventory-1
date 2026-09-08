@@ -555,6 +555,29 @@ export class SyncManager {
           // A foreign-key violation is deterministic until its parent record is
           // repaired. Retrying it only keeps the UI yellow and blocks the FIFO
           // queue, so surface it immediately as a retryable dead-letter item.
+          if (
+            this.getErrorCode(error) === "23514" &&
+            String((error as any)?.message ?? error).includes("inventory_ups_")
+          ) {
+            persistentError =
+              "El UPS ya no está permitido. El registro no se sincronizó y quedó disponible para revisión.";
+            try {
+              syncQueue.moveToDeadLetter(operation);
+              syncQueue.remove(operation.id);
+            } catch (queueError) {
+              throw new Error(
+                "LocalStorage quota exceeded - cannot manage sync queue",
+              );
+            }
+            this.updateStatus({
+              pendingCount: syncQueue.size(),
+              deadLetterCount: syncQueue.getDeadLetterCount(),
+              error: persistentError,
+            });
+            consecutiveErrors = 0;
+            continue;
+          }
+
           if (this.getErrorCode(error) === "23503") {
             const isSatKeyForeignKey =
               operation.type === "products" &&
@@ -831,8 +854,8 @@ export class SyncManager {
     const table = tableMap[type];
     if (!table) return false;
 
-    const lookupColumn = type === "drops" ? "drop_number" : "id";
-    const lookupValue = type === "drops" ? row.dropNumber : row.id;
+    const lookupColumn = type === "drops" && action !== "delete" ? "drop_number" : "id";
+    const lookupValue = type === "drops" && action !== "delete" ? row.dropNumber : row.id;
     if (!lookupValue) return false;
     this.logDebug("verifyOperationApplied lookup", {
       operation: this.summarizeOperation(operation),
@@ -1204,7 +1227,7 @@ export class SyncManager {
             deleted_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
-          .eq("drop_number", data.dropNumber)
+          .eq("id", data.id)
           .abortSignal(signal);
         if (deleteError) throw deleteError;
         break;

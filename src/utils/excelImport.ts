@@ -4,6 +4,7 @@ import { normalizeCategory } from '../constants/categories';
 import { generateId, getCurrentISODate } from './formatters';
 import { parseUPS, toUpsBatch } from './upsParser';
 import { generateLegacyBarcode } from './barcodeGenerator';
+import { FALLBACK_ALLOWED_INVENTORY_UPS } from '../constants/ups';
 
 /**
  * V2 Excel Import
@@ -94,6 +95,29 @@ export interface ImportResult {
   drops: Drop[];
   staff: Staff[];
   errors: string[];
+  invalidUpsRows: InvalidUpsRow[];
+}
+
+export interface InvalidUpsRow {
+  sheet: string;
+  row: number;
+  value: string;
+}
+
+export function parseAllowedImportedUps(
+  value: unknown,
+  allowedUps: readonly number[] = FALLBACK_ALLOWED_INVENTORY_UPS,
+) {
+  const raw = String(value ?? '').trim();
+  if (!raw || (!/^\d+$/.test(raw) && !/^\d+\s*[\/\\-]\s*\d+$/.test(raw))) {
+    return null;
+  }
+
+  const parsed = parseUPS(raw);
+  const upsNumber = Number(parsed.dropNumber);
+  if (!Number.isInteger(upsNumber) || !allowedUps.includes(upsNumber)) return null;
+
+  return { ...parsed, dropNumber: String(upsNumber) };
 }
 
 // Track sequence numbers per drop during import
@@ -107,7 +131,10 @@ function getNextSequence(dropNumber: string): number {
 }
 
 // Read and parse Excel file
-export async function importExcelFile(file: File): Promise<ImportResult> {
+export async function importExcelFile(
+  file: File,
+  allowedUps: readonly number[] = FALLBACK_ALLOWED_INVENTORY_UPS,
+): Promise<ImportResult> {
   // Reset sequence counters for new import
   dropSequenceCounters.clear();
 
@@ -126,6 +153,7 @@ export async function importExcelFile(file: File): Promise<ImportResult> {
           drops: [],
           staff: [],
           errors: [],
+          invalidUpsRows: [],
         };
 
         // Track unique drops and staff
@@ -136,14 +164,26 @@ export async function importExcelFile(file: File): Promise<ImportResult> {
         const inventarioSheet = workbook.Sheets['Inventario'];
         if (inventarioSheet) {
           const inventarioData = XLSX.utils.sheet_to_json(inventarioSheet);
-          result.products = processInventarioSheet(inventarioData, result.errors, dropsMap);
+          result.products = processInventarioSheet(
+            inventarioData,
+            result.errors,
+            result.invalidUpsRows,
+            dropsMap,
+            allowedUps,
+          );
         }
 
         // Process Inventario Comp Y Cel sheet (electronics)
         const electronicsSheet = workbook.Sheets['Inventario Comp Y Cel'];
         if (electronicsSheet) {
           const electronicsData = XLSX.utils.sheet_to_json(electronicsSheet);
-          const electronicsProducts = processElectronicsSheet(electronicsData, result.errors, dropsMap);
+          const electronicsProducts = processElectronicsSheet(
+            electronicsData,
+            result.errors,
+            result.invalidUpsRows,
+            dropsMap,
+            allowedUps,
+          );
           result.products = [...result.products, ...electronicsProducts];
         }
 
@@ -178,7 +218,9 @@ export async function importExcelFile(file: File): Promise<ImportResult> {
 function processInventarioSheet(
   data: any[],
   errors: string[],
+  invalidUpsRows: InvalidUpsRow[],
   dropsMap: Map<string, Drop>,
+  allowedUps: readonly number[],
 ): Product[] {
   const products: Product[] = [];
   const now = getCurrentISODate();
@@ -205,8 +247,20 @@ function processInventarioSheet(
       }
 
       // V2: Parse UPS value
-      const upsValue = row['UPS'] || row['UPS No.'] || '';
-      const parsed = parseUPS(upsValue);
+      const upsValue = row['UPS'] ?? row['UPS No.'] ?? '';
+      const parsed = parseAllowedImportedUps(upsValue, allowedUps);
+      if (!parsed) {
+        const invalidRow = {
+          sheet: 'Inventario',
+          row: index + 2,
+          value: String(upsValue ?? ''),
+        };
+        invalidUpsRows.push(invalidRow);
+        errors.push(
+          `Fila ${invalidRow.row} en ${invalidRow.sheet}: UPS "${invalidRow.value || '(vacío)'}" no permitido`,
+        );
+        return;
+      }
 
       // Ensure drop exists
       ensureDropExists(dropsMap, parsed.dropNumber, now);
@@ -313,7 +367,9 @@ function processInventarioSheet(
 function processElectronicsSheet(
   data: any[],
   errors: string[],
+  invalidUpsRows: InvalidUpsRow[],
   dropsMap: Map<string, Drop>,
+  allowedUps: readonly number[],
 ): Product[] {
   const products: Product[] = [];
   const now = getCurrentISODate();
@@ -329,8 +385,20 @@ function processElectronicsSheet(
       else if (articleType.includes('compu')) category = 'COMP';
 
       // V2: Parse UPS value
-      const upsValue = row['UPS No.'] || row['UPS'] || '';
-      const parsed = parseUPS(upsValue);
+      const upsValue = row['UPS No.'] ?? row['UPS'] ?? '';
+      const parsed = parseAllowedImportedUps(upsValue, allowedUps);
+      if (!parsed) {
+        const invalidRow = {
+          sheet: 'Inventario Comp Y Cel',
+          row: index + 2,
+          value: String(upsValue ?? ''),
+        };
+        invalidUpsRows.push(invalidRow);
+        errors.push(
+          `Fila ${invalidRow.row} en ${invalidRow.sheet}: UPS "${invalidRow.value || '(vacío)'}" no permitido`,
+        );
+        return;
+      }
 
       // Ensure drop exists
       ensureDropExists(dropsMap, parsed.dropNumber, now);

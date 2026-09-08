@@ -35,13 +35,13 @@ function product(overrides: Partial<Product> = {}): Product {
   return {
     id: 'product-1',
     name: 'Camisa',
-    sku: 'DAM-20-001',
-    upsRaw: '20',
+    sku: 'DAM-23-001',
+    upsRaw: '23',
     identifierType: 'legacy',
-    dropNumber: '20',
+    dropNumber: '23',
     productNumber: 1,
     dropSequence: 1,
-    upsBatch: 20,
+    upsBatch: 23,
     quantity: 1,
     unitPrice: 100,
     category: 'DAM',
@@ -115,5 +115,13 @@ describe('productStore import SAT preservation', () => {
       quantity: 3,
       satKeyId: 'sat-ropa',
     });
+  });
+
+  it('rejects a disallowed UPS before changing local inventory', async () => {
+    await expect(useProductStore.getState().importProducts([
+      product({ id: 'old-ups', dropNumber: '22', upsBatch: 22 }),
+    ], 'sync')).rejects.toThrow('UPS 22 no está permitido');
+
+    expect(useProductStore.getState().products).toEqual([]);
   });
 });

@@ -34,19 +34,6 @@ export const COLOR_OPTIONS = PRODUCT_COLORS.map((color) => ({
   label: color,
 }));
 
-// UPS Batch numbers (7-19 based on current data)
-export const UPS_BATCHES = Array.from({ length: 25 }, (_, i) => i + 7);
-
-export const UPS_BATCH_OPTIONS = UPS_BATCHES.map((batch) => ({
-  value: batch,
-  label: `UPS ${batch}`,
-}));
-
-export const UPS_FILTER_OPTIONS = [
-  { value: 0, label: 'UPS 0 - Sin registrar' },
-  ...UPS_BATCH_OPTIONS,
-];
-
 // Common brands (will be extended from data)
 export const DEFAULT_BRANDS = [
   "Nike",

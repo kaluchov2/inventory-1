@@ -25,11 +25,13 @@ import { useAuthStore } from '../store/authStore';
 
 type TableName =
   | 'products'
+  | 'drops'
   | 'customers'
   | 'transactions'
   | 'staff'
   | 'sat_keys'
-  | 'sat_category_suggestions';
+  | 'sat_category_suggestions'
+  | 'allowed_inventory_ups';
 
 interface RealtimeSyncOptions {
   table: TableName;
@@ -110,6 +112,10 @@ export function useRealtimeProducts(callbacks: RealtimeCallbacks) {
   useRealtimeSync({ table: 'products', ...callbacks });
 }
 
+export function useRealtimeDrops(callbacks: RealtimeCallbacks) {
+  useRealtimeSync({ table: 'drops', ...callbacks });
+}
+
 export function useRealtimeCustomers(callbacks: RealtimeCallbacks) {
   useRealtimeSync({ table: 'customers', ...callbacks });
 }
@@ -128,4 +134,8 @@ export function useRealtimeSatKeys(callbacks: RealtimeCallbacks) {
 
 export function useRealtimeSatCategorySuggestions(callbacks: RealtimeCallbacks) {
   useRealtimeSync({ table: 'sat_category_suggestions', ...callbacks });
+}
+
+export function useRealtimeAllowedInventoryUps(callbacks: RealtimeCallbacks) {
+  useRealtimeSync({ table: 'allowed_inventory_ups', ...callbacks });
 }

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   Box,
   VStack,
@@ -32,7 +32,7 @@ import {
   FiRefreshCw,
 } from "react-icons/fi";
 import { generateBarcode } from "../utils/barcodeGenerator";
-import { UPS_BATCH_OPTIONS } from "../constants/colors";
+import { buildUpsBatchOptions } from "../constants/ups";
 
 import { useSearchParams } from "react-router-dom";
 const NUMBERED_UPS_THRESHOLD = 20;
@@ -40,6 +40,7 @@ import { AutocompleteSelect } from "../components/common";
 import { useProductStore } from "../store/productStore";
 import { formatCurrency } from "../utils/formatters";
 import type { Product } from "../types";
+import { useAllowedUpsStore } from "../store/allowedUpsStore";
 
 type QRSize = "T" | "S" | "M" | "L";
 type Mode = "generate" | "reprint";
@@ -67,6 +68,8 @@ export function QRGenerator() {
   const [size, setSize] = useState<QRSize>(paramSeq ? "T" : "M");
   const [showPreview, setShowPreview] = useState(false);
   const [mode, setMode] = useState<Mode>("generate");
+  const allowedUps = useAllowedUpsStore((state) => state.allowedUps);
+  const upsBatchOptions = useMemo(() => buildUpsBatchOptions(allowedUps), [allowedUps]);
   // Map of product.id → number of copies
   const [reprintSelections, setReprintSelections] = useState<
     Map<string, number>
@@ -74,6 +77,13 @@ export function QRGenerator() {
 
   const { getProductByBarcode, getProductsByDrop, products } =
     useProductStore();
+
+  useEffect(() => {
+    if (selectedUps !== '' && !allowedUps.includes(Number(selectedUps))) {
+      setSelectedUps('');
+      setShowPreview(false);
+    }
+  }, [allowedUps, selectedUps]);
 
   // Derived quantity from range
   const quantity = Math.max(0, toSeq - fromSeq + 1);
@@ -533,7 +543,7 @@ export function QRGenerator() {
             <FormControl isRequired>
               <FormLabel fontWeight="bold">UPS</FormLabel>
               <AutocompleteSelect
-                options={UPS_BATCH_OPTIONS}
+                options={upsBatchOptions}
                 value={selectedUps || ""}
                 onChange={(val) => handleUpsChange(val)}
                 placeholder="Seleccionar UPS"

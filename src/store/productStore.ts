@@ -25,6 +25,24 @@ import { deriveStatus } from "../utils/productHelpers";
 import { syncQueue } from "../lib/syncQueue";
 import { isMissingDatabaseFunction } from "../lib/saleSync";
 import { subscribeSatKeyResolution } from "../lib/satKeyResolution";
+import { isAllowedInventoryUps, normalizeInventoryUps } from "../constants/ups";
+import { getAllowedInventoryUps } from "./allowedUpsStore";
+
+function getCanonicalProductUps(product: Pick<Product, 'dropNumber' | 'upsBatch'>): number | null {
+  return normalizeInventoryUps(product.dropNumber) ?? normalizeInventoryUps(product.upsBatch);
+}
+
+function isAllowedProduct(product: Pick<Product, 'dropNumber' | 'upsBatch'>): boolean {
+  return isAllowedInventoryUps(getCanonicalProductUps(product), getAllowedInventoryUps());
+}
+
+function assertAllowedProduct(product: Pick<Product, 'dropNumber' | 'upsBatch'>): number {
+  const ups = getCanonicalProductUps(product);
+  if (!isAllowedInventoryUps(ups, getAllowedInventoryUps())) {
+    throw new Error(`UPS ${product.dropNumber || product.upsBatch || 'vacío'} no está permitido`);
+  }
+  return ups!;
+}
 
 /**
  * Normalize a string value for comparison during sync.
@@ -202,6 +220,10 @@ export const useProductStore = create<ProductStore>()(
         // Ensure V2 fields have defaults
         const upsRaw = productData.upsRaw || String(productData.upsBatch || "");
         const parsed = parseUPS(upsRaw);
+        const canonicalUps = assertAllowedProduct({
+          dropNumber: productData.dropNumber || parsed.dropNumber,
+          upsBatch: productData.upsBatch,
+        });
 
         // Get next sequence for barcode if not provided
         const dropSequence =
@@ -216,11 +238,12 @@ export const useProductStore = create<ProductStore>()(
         const newProduct: Product = {
           ...productData,
           id: generateId(),
-          sku: generateSKU(productData.category, productData.upsBatch),
+          sku: generateSKU(productData.category, canonicalUps),
           // V2 fields
           upsRaw: upsRaw,
           identifierType: productData.identifierType || parsed.identifierType,
-          dropNumber: productData.dropNumber || parsed.dropNumber,
+          dropNumber: String(canonicalUps),
+          upsBatch: canonicalUps,
           productNumber: productData.productNumber ?? parsed.productNumber,
           dropSequence,
           barcode,
@@ -328,6 +351,13 @@ export const useProductStore = create<ProductStore>()(
           updates.dropNumber = newParsed.dropNumber;
           updates.identifierType = 'legacy';
         }
+
+        const canonicalUps = assertAllowedProduct({
+          dropNumber: updates.dropNumber ?? product.dropNumber,
+          upsBatch: updates.upsBatch ?? product.upsBatch,
+        });
+        updates.dropNumber = String(canonicalUps);
+        updates.upsBatch = canonicalUps;
 
         const updatedProduct = {
           ...product,
@@ -570,6 +600,15 @@ export const useProductStore = create<ProductStore>()(
           deleted: 0,
           unchanged: 0,
         };
+
+        for (const product of newProducts) assertAllowedProduct(product);
+
+        if (
+          mode === 'sync_by_ups' &&
+          !isAllowedInventoryUps(upsScope, getAllowedInventoryUps())
+        ) {
+          throw new Error(`UPS ${upsScope || 'vacío'} no está permitido`);
+        }
 
         if (mode === "replace") {
           // Simple replace mode - set all products
@@ -1091,7 +1130,7 @@ export const useProductStore = create<ProductStore>()(
         await runProductLoad("full", async () => {
           set({ isLoading: true });
           try {
-            const products = await productService.getAll();
+            const products = (await productService.getAll()).filter(isAllowedProduct);
             seedSyncCursorFromTimestamps(
               "products",
               products.map((product) => product.updatedAt),
@@ -1103,7 +1142,7 @@ export const useProductStore = create<ProductStore>()(
             } else {
               // Normal merge with local products using last-write-wins
               const localProducts = get().products;
-              const merged = mergeProducts(localProducts, products);
+              const merged = mergeProducts(localProducts, products).filter(isAllowedProduct);
               set({ products: merged, lastSync: new Date(), isLoading: false });
             }
           } catch (error) {
@@ -1137,7 +1176,8 @@ export const useProductStore = create<ProductStore>()(
 
             if (result.changes.length > 0) {
               set((state) => ({
-                products: applyProductDeltaChanges(state.products, result.changes),
+                products: applyProductDeltaChanges(state.products, result.changes)
+                  .filter(isAllowedProduct),
                 lastSync: new Date(),
                 isLoading: false,
               }));
@@ -1160,7 +1200,13 @@ export const useProductStore = create<ProductStore>()(
 
       handleRealtimeUpdate: (dbProduct) => {
         // Soft delete arrives as UPDATE with is_deleted=true
-        if (dbProduct.is_deleted) {
+        if (
+          dbProduct.is_deleted ||
+          !isAllowedInventoryUps(
+            dbProduct.drop_number || dbProduct.ups_batch,
+            getAllowedInventoryUps(),
+          )
+        ) {
           set((state) => ({
             products: state.products.filter((p) => p.id !== dbProduct.id),
           }));
@@ -1440,7 +1486,7 @@ export const useProductStore = create<ProductStore>()(
             }
 
             return migrated;
-          });
+          }).filter(isAllowedProduct);
         }
       },
     },

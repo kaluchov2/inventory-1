@@ -5,6 +5,9 @@ import { generateId, getCurrentISODate } from '../utils/formatters';
 import { syncManager } from '../lib/syncManager';
 import { dropService } from '../services/dropService';
 import { supabase } from '../lib/supabase';
+import { syncQueue } from '../lib/syncQueue';
+import { isAllowedInventoryUps, normalizeInventoryUps } from '../constants/ups';
+import { getAllowedInventoryUps } from './allowedUpsStore';
 
 interface DropFilters {
   search: string;
@@ -66,9 +69,15 @@ export const useDropStore = create<DropStore>()(
       lastSync: null,
 
       addDrop: (dropData) => {
+        const normalizedUps = normalizeInventoryUps(dropData.dropNumber);
+        if (!isAllowedInventoryUps(normalizedUps, getAllowedInventoryUps())) {
+          throw new Error(`UPS ${dropData.dropNumber || 'vacío'} no está permitido`);
+        }
+
         const now = getCurrentISODate();
         const newDrop: Drop = {
           ...dropData,
+          dropNumber: String(normalizedUps),
           id: generateId(),
           totalProducts: 0,
           totalUnits: 0,
@@ -99,7 +108,17 @@ export const useDropStore = create<DropStore>()(
         const drop = get().drops.find(d => d.id === id);
         if (!drop) return;
 
-        const updatedDrop = { ...drop, ...updates, updatedAt: getCurrentISODate() };
+        const normalizedUps = normalizeInventoryUps(updates.dropNumber ?? drop.dropNumber);
+        if (!isAllowedInventoryUps(normalizedUps, getAllowedInventoryUps())) {
+          throw new Error(`UPS ${updates.dropNumber ?? drop.dropNumber} no está permitido`);
+        }
+
+        const updatedDrop = {
+          ...drop,
+          ...updates,
+          dropNumber: String(normalizedUps),
+          updatedAt: getCurrentISODate(),
+        };
 
         set((state) => ({
           drops: state.drops.map((d) =>
@@ -130,7 +149,7 @@ export const useDropStore = create<DropStore>()(
           syncManager.queueOperation({
             type: 'drops',
             action: 'delete',
-            data: { id },
+            data: { id, dropNumber: drop.dropNumber },
           });
         }
       },
@@ -176,11 +195,18 @@ export const useDropStore = create<DropStore>()(
 
         set({ isLoading: true });
         try {
-          const drops = await dropService.getAll();
+          const allowedUps = getAllowedInventoryUps();
+          const drops = (await dropService.getAll()).filter((drop) =>
+            isAllowedInventoryUps(drop.dropNumber, allowedUps)
+          );
 
           // Merge with local drops using last-write-wins
-          const localDrops = get().drops;
-          const merged = mergeDrops(localDrops, drops);
+          const localDrops = get().drops.filter((drop) =>
+            isAllowedInventoryUps(drop.dropNumber, allowedUps)
+          );
+          const merged = mergeDrops(localDrops, drops).filter((drop) =>
+            isAllowedInventoryUps(drop.dropNumber, allowedUps)
+          );
 
           set({ drops: merged, lastSync: new Date(), isLoading: false });
         } catch (error) {
@@ -190,25 +216,42 @@ export const useDropStore = create<DropStore>()(
       },
 
       handleRealtimeUpdate: (dbDrop) => {
+        if (
+          dbDrop.is_deleted ||
+          !isAllowedInventoryUps(dbDrop.drop_number, getAllowedInventoryUps())
+        ) {
+          set((state) => ({
+            drops: state.drops.filter(
+              d => d.id !== dbDrop.id && d.dropNumber !== dbDrop.drop_number
+            ),
+          }));
+          return;
+        }
+
         const converted = convertDbDrop(dbDrop);
-        const local = get().drops.find(d => d.id === converted.id);
+        const local = get().drops.find(
+          d => d.id === converted.id || d.dropNumber === converted.dropNumber
+        );
 
         // Only update if remote is newer (last-write-wins)
         if (!local || new Date(converted.updatedAt) > new Date(local.updatedAt)) {
           set((state) => ({
-            drops: state.drops.some(d => d.id === converted.id)
-              ? state.drops.map(d => d.id === converted.id ? converted : d)
-              : [...state.drops, converted],
+            drops: [
+              ...state.drops.filter(
+                d => d.id !== converted.id && d.dropNumber !== converted.dropNumber
+              ),
+              converted,
+            ],
           }));
         }
       },
 
       handleRealtimeDelete: (dbDrop) => {
-        if (dbDrop.is_deleted) {
-          set((state) => ({
-            drops: state.drops.filter(d => d.id !== dbDrop.id),
-          }));
-        }
+        set((state) => ({
+          drops: state.drops.filter(
+            d => d.id !== dbDrop.id && d.dropNumber !== dbDrop.drop_number
+          ),
+        }));
       },
 
       getDropByNumber: (dropNumber) => {
@@ -261,6 +304,14 @@ export const useDropStore = create<DropStore>()(
     }),
     {
       name: 'inventory_drops',
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          const allowedUps = getAllowedInventoryUps();
+          state.drops = state.drops.filter((drop) =>
+            isAllowedInventoryUps(drop.dropNumber, allowedUps)
+          );
+        }
+      },
     }
   )
 );
@@ -283,9 +334,18 @@ function convertDbDrop(dbDrop: any): Drop {
   };
 }
 
-function mergeDrops(local: Drop[], remote: Drop[]): Drop[] {
+export function mergeDrops(local: Drop[], remote: Drop[]): Drop[] {
   const remoteMap = new Map(remote.map(d => [d.id, d]));
   const localMap = new Map(local.map(d => [d.id, d]));
+  const unsyncedIds = new Set(
+    [...syncQueue.getAll(), ...syncQueue.getDeadLetter()]
+      .filter((operation) =>
+        operation.type === 'drops' &&
+        (operation.action === 'create' || operation.action === 'update')
+      )
+      .map((operation) => operation.data?.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  );
 
   // Last-write-wins: keep whichever version is newer
   const merged = new Map<string, Drop>();
@@ -293,7 +353,10 @@ function mergeDrops(local: Drop[], remote: Drop[]): Drop[] {
   for (const [id, localDrop] of localMap) {
     const remoteDrop = remoteMap.get(id);
     if (!remoteDrop) {
-      merged.set(id, localDrop);
+      // Supabase is authoritative after the queue is flushed. Preserve only a
+      // genuinely unsynced local creation/update; otherwise an old deleted lot
+      // would be resurrected on every merge.
+      if (unsyncedIds.has(id)) merged.set(id, localDrop);
     } else {
       const localTime = new Date(localDrop.updatedAt).getTime();
       const remoteTime = new Date(remoteDrop.updatedAt).getTime();

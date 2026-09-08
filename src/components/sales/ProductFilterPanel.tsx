@@ -16,7 +16,8 @@ import { SelectableProductCard } from './SelectableProductCard';
 import { useProductStore } from '../../store/productStore';
 import { Product, CategoryCode } from '../../types';
 import { CATEGORY_OPTIONS, getCategoryLabel } from '../../constants/categories';
-import { UPS_FILTER_OPTIONS } from '../../constants/colors';
+import { buildUpsFilterOptions } from '../../constants/ups';
+import { useAllowedUpsStore } from '../../store/allowedUpsStore';
 
 interface ProductFilterPanelProps {
   onSelectProduct: (product: Product) => void;
@@ -30,6 +31,7 @@ export function ProductFilterPanel({
   onAddMultiple,
 }: ProductFilterPanelProps) {
   const { products } = useProductStore();
+  const allowedUps = useAllowedUpsStore((state) => state.allowedUps);
 
   // Filter state
   const [selectedUps, setSelectedUps] = useState<number | ''>('');
@@ -46,10 +48,10 @@ export function ProductFilterPanel({
   // Get unique UPS batches from available products, always including UPS 0
   const availableUpsOptions = useMemo(() => {
     const upsBatches = new Set(availableProducts.map((p) => Number(p.upsBatch)));
-    return UPS_FILTER_OPTIONS.filter(
+    return buildUpsFilterOptions(allowedUps).filter(
       (opt) => opt.value === 0 || upsBatches.has(Number(opt.value))
     );
-  }, [availableProducts]);
+  }, [allowedUps, availableProducts]);
 
   // Get categories available for the selected UPS
   const availableCategoryOptions = useMemo(() => {

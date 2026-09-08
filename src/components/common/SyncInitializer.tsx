@@ -1,17 +1,21 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useProductStore } from '../../store/productStore';
 import { useCustomerStore } from '../../store/customerStore';
 import { useTransactionStore } from '../../store/transactionStore';
 import { useSatKeyStore } from '../../store/satKeyStore';
 import { useStaffStore } from '../../store/staffStore';
+import { useDropStore } from '../../store/dropStore';
+import { useAllowedUpsStore } from '../../store/allowedUpsStore';
 import {
   useRealtimeProducts,
+  useRealtimeDrops,
   useRealtimeCustomers,
   useRealtimeTransactions,
   useRealtimeStaff,
   useRealtimeSatKeys,
   useRealtimeSatCategorySuggestions,
+  useRealtimeAllowedInventoryUps,
 } from '../../hooks/useRealtimeSync';
 import { connectionStatus } from '../../lib/connectionStatus';
 import { syncManager } from '../../lib/syncManager';
@@ -47,6 +51,8 @@ export function SyncInitializer() {
   const loadTransactions = useTransactionStore((state) => state.loadFromSupabase);
   const loadSatKeys = useSatKeyStore((state) => state.loadFromSupabase);
   const loadStaff = useStaffStore((state) => state.loadFromSupabase);
+  const loadDrops = useDropStore((state) => state.loadFromSupabase);
+  const loadAllowedUps = useAllowedUpsStore((state) => state.loadFromSupabase);
 
   // Incremental realtime handlers — update/delete a single record in local state
   const handleProductUpdate = useProductStore((state) => state.handleRealtimeUpdate);
@@ -59,6 +65,8 @@ export function SyncInitializer() {
   const handleSatKeyDelete = useSatKeyStore((state) => state.handleRealtimeDelete);
   const handleStaffUpdate = useStaffStore((state) => state.handleRealtimeUpdate);
   const handleStaffDelete = useStaffStore((state) => state.handleRealtimeDelete);
+  const handleDropUpdate = useDropStore((state) => state.handleRealtimeUpdate);
+  const handleDropDelete = useDropStore((state) => state.handleRealtimeDelete);
 
   // Initial load from Supabase — flush pending queue first
   useEffect(() => {
@@ -71,7 +79,7 @@ export function SyncInitializer() {
       console.log('[Sync] Flushing pending queue before initial load...');
       console.log('[Sync] Status before initial flush:', syncManager.getStatus());
 
-      syncManager.syncPendingOperations().then(() => {
+      syncManager.syncPendingOperations().then(async () => {
         console.log('[Sync] Status after initial flush:', syncManager.getStatus());
         // Bug 1 guard: if queue still has pending items after flush, we were offline
         // (syncPendingOperations returned early). Do NOT overwrite local state with
@@ -83,12 +91,14 @@ export function SyncInitializer() {
           return;
         }
         console.log('[Sync] Queue flushed, loading initial data from Supabase...');
+        await loadAllowedUps();
         return Promise.all([
           loadProducts(true), // Force replace on initial load - Supabase is source of truth
           loadCustomers(),
           loadTransactions(),
           loadSatKeys(),
           loadStaff(),
+          loadDrops(),
         ]);
       }).then(() => {
         console.log('[Sync] Initial data loaded successfully');
@@ -96,7 +106,7 @@ export function SyncInitializer() {
         console.error('[Sync] Failed to load initial data:', error);
       });
     }
-  }, [isAuthenticated, isProfileHydrated, isOfflineMode, loadProducts, loadCustomers, loadTransactions, loadSatKeys, loadStaff]);
+  }, [isAuthenticated, isProfileHydrated, isOfflineMode, loadProducts, loadCustomers, loadTransactions, loadSatKeys, loadStaff, loadDrops, loadAllowedUps]);
 
   // When app returns from background or reconnects, flush pending queue then
   // catch up products/customers via delta sync. Transactions stay on full reload
@@ -110,13 +120,17 @@ export function SyncInitializer() {
         forceCheck: () => connectionStatus.forceCheck(),
         syncPendingOperations: () => syncManager.syncPendingOperations(),
         getPendingCount: () => syncManager.getStatus().pendingCount,
-        loadChanges: [
-          loadProductChanges,
-          loadCustomerChanges,
-          loadTransactions,
-          loadSatKeys,
-          loadStaff,
-        ],
+        loadChanges: [async () => {
+          await loadAllowedUps();
+          await Promise.all([
+            loadProductChanges(),
+            loadCustomerChanges(),
+            loadTransactions(),
+            loadSatKeys(),
+            loadStaff(),
+            loadDrops(),
+          ]);
+        }],
       });
       console.log('[Sync] Status after foreground recovery:', syncManager.getStatus());
     };
@@ -204,6 +218,8 @@ export function SyncInitializer() {
     loadTransactions,
     loadSatKeys,
     loadStaff,
+    loadDrops,
+    loadAllowedUps,
   ]);
 
   // Route realtime events directly to incremental handlers — no full reload, no debounce.
@@ -223,6 +239,11 @@ export function SyncInitializer() {
     onUpdate: handleTransactionUpdate,
     onDelete: handleTransactionDelete,
   });
+  useRealtimeDrops({
+    onInsert: handleDropUpdate,
+    onUpdate: handleDropUpdate,
+    onDelete: handleDropDelete,
+  });
   useRealtimeStaff({
     onInsert: handleStaffUpdate,
     onUpdate: handleStaffUpdate,
@@ -237,6 +258,15 @@ export function SyncInitializer() {
     onInsert: () => loadSatKeys(true),
     onUpdate: () => loadSatKeys(true),
     onDelete: () => loadSatKeys(true),
+  });
+  const reloadAllowedInventory = useCallback(async () => {
+    await loadAllowedUps();
+    await Promise.all([loadProducts(true), loadDrops()]);
+  }, [loadAllowedUps, loadProducts, loadDrops]);
+  useRealtimeAllowedInventoryUps({
+    onInsert: reloadAllowedInventory,
+    onUpdate: reloadAllowedInventory,
+    onDelete: reloadAllowedInventory,
   });
 
   return null; // This component doesn't render anything

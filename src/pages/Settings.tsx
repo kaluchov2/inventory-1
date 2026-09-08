@@ -55,7 +55,7 @@ import {
 } from "../utils/excelExport";
 import { exportBackup, importBackup, BackupData } from "../utils/storage";
 import { es } from "../i18n/es";
-import { UPS_BATCH_OPTIONS } from "../constants/colors";
+import { buildUpsBatchOptions } from "../constants/ups";
 import { AutocompleteSelect } from "../components/common";
 import { syncQueue } from "../lib/syncQueue";
 import { syncManager } from "../lib/syncManager";
@@ -65,6 +65,8 @@ import {
   normalizeCustomerKey,
   WALK_IN_CUSTOMER_LABELS,
 } from "../utils/customerNameUtils";
+import { useAllowedUpsStore } from "../store/allowedUpsStore";
+import { getProductMatchKey } from "../utils/excelImport";
 
 const WALK_IN_OPTION_VALUE = "__WALK_IN__";
 
@@ -73,6 +75,7 @@ interface UpsInventoryExportControlsProps {
   filteredByUpsCount: number;
   onUpsChange: (ups: number | null) => void;
   onExport: () => void;
+  upsOptions: Array<{ value: number; label: string }>;
 }
 
 function UpsInventoryExportControls({
@@ -80,12 +83,13 @@ function UpsInventoryExportControls({
   filteredByUpsCount,
   onUpsChange,
   onExport,
+  upsOptions,
 }: UpsInventoryExportControlsProps) {
   return (
     <HStack mt={4} spacing={{ base: 2, md: 4 }} flexWrap="wrap">
       <Box flex="1" minW="180px" maxW="300px">
         <AutocompleteSelect
-          options={UPS_BATCH_OPTIONS.map((option) => ({
+          options={upsOptions.map((option) => ({
             value: String(option.value),
             label: option.label,
           }))}
@@ -123,6 +127,8 @@ export function Settings() {
   const backupInputRef = useRef<HTMLInputElement>(null);
   const user = useAuthStore((state) => state.user);
   const canModifyData = canModifyOperationalData(user?.role);
+  const allowedUps = useAllowedUpsStore((state) => state.allowedUps);
+  const upsBatchOptions = useMemo(() => buildUpsBatchOptions(allowedUps), [allowedUps]);
 
   const { products, importProducts } = useProductStore();
   const { customers, importCustomers } = useCustomerStore();
@@ -170,6 +176,12 @@ export function Settings() {
     return importResult.products.filter((p) => p.dropNumber === importUpsScope)
       .length;
   }, [importResult, importUpsScope]);
+
+  const fullSyncDeleteCount = useMemo(() => {
+    if (!importResult) return 0;
+    const importedKeys = new Set(importResult.products.map(getProductMatchKey));
+    return products.filter((product) => !importedKeys.has(getProductMatchKey(product))).length;
+  }, [importResult, products]);
 
   const customerOptions = useMemo(
     () => [
@@ -399,6 +411,7 @@ export function Settings() {
             filteredByUpsCount={filteredByUpsCount}
             onUpsChange={setExportUps}
             onExport={handleExportByUps}
+            upsOptions={upsBatchOptions}
           />
         </Box>
       </VStack>
@@ -417,7 +430,7 @@ export function Settings() {
 
     try {
       setImportProgress(40);
-      const result = await importExcelFile(file);
+      const result = await importExcelFile(file, allowedUps);
       setImportProgress(80);
       setImportResult(result);
       setImportProgress(100);
@@ -447,12 +460,26 @@ export function Settings() {
   const handleConfirmImport = async () => {
     if (!importResult) return;
 
+    if (importMode === 'full' && (importResult.invalidUpsRows?.length ?? 0) > 0) {
+      toast({
+        title: 'Sincronización completa bloqueada',
+        description: 'Corrige o elimina las filas con UPS vacío, 0 o no permitido antes de continuar.',
+        status: 'error',
+        duration: 6000,
+        isClosable: true,
+      });
+      return;
+    }
+
     let result: ImportSyncResult | null = null;
 
     // V2: Import drops first (they're referenced by products)
-    if (importResult.drops && importResult.drops.length > 0) {
+    const dropsToImport = importMode === 'by_ups'
+      ? importResult.drops.filter((drop) => drop.dropNumber === importUpsScope)
+      : importResult.drops;
+    if (dropsToImport.length > 0) {
       const existingDropNumbers = new Set(drops.map((d) => d.dropNumber));
-      for (const drop of importResult.drops) {
+      for (const drop of dropsToImport) {
         if (!existingDropNumbers.has(drop.dropNumber)) {
           addDrop({
             dropNumber: drop.dropNumber,
@@ -693,7 +720,10 @@ export function Settings() {
                 leftIcon={<Icon as={FiCheck} />}
                 size={{ base: "md", md: "md" }}
                 onClick={handleConfirmImport}
-                isDisabled={importMode === "by_ups" && !importUpsScope}
+                isDisabled={
+                  (importMode === "by_ups" && (!importUpsScope || importUpsScopeCount === 0)) ||
+                  (importMode === "full" && (importResult.invalidUpsRows?.length ?? 0) > 0)
+                }
               >
                 {importMode === "by_ups" && importUpsScope
                   ? `Confirmar UPS ${importUpsScope}`
@@ -746,8 +776,23 @@ export function Settings() {
             </Box>
           </SimpleGrid>
 
+          {(importResult.invalidUpsRows?.length ?? 0) > 0 && (
+            <Alert status="error" borderRadius="lg" alignItems="start">
+              <AlertIcon />
+              <Box>
+                <AlertTitle>
+                  {importResult.invalidUpsRows.length} filas rechazadas por UPS inválido
+                </AlertTitle>
+                <AlertDescription>
+                  No se crearán productos ni lotes para esas filas. La sincronización completa está bloqueada;
+                  puedes corregir el archivo o usar “Subir por UPS” para uno de los UPS válidos.
+                </AlertDescription>
+              </Box>
+            </Alert>
+          )}
+
           {/* Import mode selector — only shown when DB has existing products */}
-          {importResult.products.length > 0 && products.length > 0 && (
+          {importResult.products.length > 0 && (
             <Box w="full" p={4} bg="white" borderRadius="lg">
               <Text fontWeight="bold" mb={2}>
                 Modo de Importación
@@ -777,7 +822,7 @@ export function Settings() {
                 <VStack align="stretch" spacing={2}>
                   <Box maxW="300px">
                     <AutocompleteSelect
-                      options={UPS_BATCH_OPTIONS.map((o) => ({
+                      options={upsBatchOptions.map((o) => ({
                         value: String(o.value),
                         label: o.label,
                       }))}
@@ -799,6 +844,15 @@ export function Settings() {
                     No se eliminará nada.
                   </Text>
                 </VStack>
+              )}
+              {importMode === "full" && (
+                <Alert status={fullSyncDeleteCount > 0 ? "warning" : "info"} mt={3} borderRadius="md">
+                  <AlertIcon />
+                  <Text fontSize="sm">
+                    La sincronización completa marcaría como eliminados {fullSyncDeleteCount} productos válidos
+                    que no aparecen en el archivo.
+                  </Text>
+                </Alert>
               )}
             </Box>
           )}
@@ -1029,6 +1083,7 @@ export function Settings() {
           filteredByUpsCount={filteredByUpsCount}
           onUpsChange={setExportUps}
           onExport={handleExportByUps}
+          upsOptions={upsBatchOptions}
         />
 
         <HStack mt={4} spacing={{ base: 2, md: 4 }} flexWrap="wrap">

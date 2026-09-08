@@ -12,6 +12,22 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      allowed_inventory_ups: {
+        Row: {
+          ups_number: number;
+          created_at: string;
+        };
+        Insert: {
+          ups_number: number;
+          created_at?: string;
+        };
+        Update: {
+          ups_number?: number;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+
       profiles: {
         Row: {
           id: string;

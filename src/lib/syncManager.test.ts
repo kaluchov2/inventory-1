@@ -126,7 +126,9 @@ function productOperation(
       id,
       name: id,
       sku: id,
-      upsBatch: 1,
+      upsRaw: '23',
+      dropNumber: '23',
+      upsBatch: 23,
       quantity: 1,
       unitPrice: 10,
       category: 'DAM',
@@ -232,6 +234,35 @@ describe('SyncManager product queue recovery', () => {
       pendingCount: 0,
       deadLetterCount: 1,
       error: 'La clave SAT del producto no existe en la base de datos. Corrige la clave y reintenta.',
+    });
+  });
+
+  it('moves a forbidden UPS directly to review without blocking later writes', async () => {
+    const rejected = productOperation('product-old-ups');
+    rejected.data.dropNumber = '22';
+    rejected.data.upsBatch = 22;
+    const valid = productOperation('product-current-ups');
+    state.queue = [rejected, valid];
+    state.upsert.mockImplementation((payload: { id: string }) =>
+      upsertResult({
+        error: payload.id === 'product-old-ups'
+          ? { code: '23514', message: 'inventory_ups_not_allowed:22' }
+          : null,
+      }),
+    );
+
+    const { SyncManager } = await import('./syncManager');
+    const manager = new SyncManager({ initialize: false });
+    await manager.syncPendingOperations();
+
+    expect(state.deadLetter).toEqual([
+      expect.objectContaining({ id: 'products-update-product-old-ups' }),
+    ]);
+    expect(state.queue).toEqual([]);
+    expect(manager.getStatus()).toMatchObject({
+      pendingCount: 0,
+      deadLetterCount: 1,
+      error: 'El UPS ya no está permitido. El registro no se sincronizó y quedó disponible para revisión.',
     });
   });
 

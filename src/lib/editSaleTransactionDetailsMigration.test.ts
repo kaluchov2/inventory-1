@@ -16,6 +16,16 @@ const timelineMigration = readFileSync(
   'utf8',
 );
 
+const safeUpdateMigration = readFileSync(
+  new URL('../../supabase/migrations/029_fix_sale_editor_safeupdate.sql', import.meta.url),
+  'utf8',
+);
+
+const allowedUpsMigration = readFileSync(
+  new URL('../../supabase/migrations/030_cleanup_and_guard_allowed_inventory_ups.sql', import.meta.url),
+  'utf8',
+);
+
 describe('edit_sale_transaction_details migrations', () => {
   it('keeps migration 026 as the deployable base RPC', () => {
     expect(baseMigration).toContain(
@@ -90,5 +100,43 @@ describe('edit_sale_transaction_details migrations', () => {
     expect(timelineMigration).toContain('NEW.updated_at := clock_timestamp()');
     expect(timelineMigration).toContain('RETURNING updated_at INTO next_updated_at');
     expect(timelineMigration).toContain('migration_028_expected_version_update_not_found');
+  });
+
+  it('publishes the final RPC with safeupdate predicates on temporary-table updates', () => {
+    expect(safeUpdateMigration).toContain(
+      'CREATE OR REPLACE FUNCTION public.edit_sale_transaction_details(edit_payload jsonb)',
+    );
+    expect(safeUpdateMigration).toContain(
+      'SET allocation_weight = quantity\n    WHERE line_no IS NOT NULL;',
+    );
+    expect(safeUpdateMigration).toContain(
+      'SET unit_price = ROUND(total_price / quantity, 6)\n  WHERE line_no IS NOT NULL;',
+    );
+    expect(safeUpdateMigration).not.toContain(
+      'UPDATE tmp_edit_sale_items SET allocation_weight = quantity;',
+    );
+    expect(safeUpdateMigration).not.toContain(
+      'SET unit_price = ROUND(total_price / quantity, 6);',
+    );
+    expect(safeUpdateMigration).toContain('payment_remaining := account_event.amount');
+    expect(safeUpdateMigration).toContain('RETURNING updated_at INTO next_updated_at');
+  });
+
+  it('soft-deletes old UPS inventory without touching historical sale tables', () => {
+    expect(allowedUpsMigration).toContain('VALUES (23), (24), (25)');
+    expect(allowedUpsMigration).toContain('UPDATE public.products product');
+    expect(allowedUpsMigration).toContain('UPDATE public.drops drop_row');
+    expect(allowedUpsMigration).toContain('SET\n  is_deleted = true');
+    expect(allowedUpsMigration).not.toMatch(/UPDATE public\.(transactions|transaction_items|customers|sale_edit_audit)/);
+  });
+
+  it('guards future inventory and keeps deleted historical stock hidden', () => {
+    expect(allowedUpsMigration).toContain('tr_guard_product_inventory_ups');
+    expect(allowedUpsMigration).toContain('tr_guard_drop_inventory_ups');
+    expect(allowedUpsMigration).toContain("MESSAGE = format('inventory_ups_not_allowed:%s', canonical_ups)");
+    expect(allowedUpsMigration).toContain("NEW.is_deleted IS TRUE");
+    expect(allowedUpsMigration).toContain("public.edit_sale_transaction_details(jsonb)");
+    expect(allowedUpsMigration).toContain("public.modify_sale_transaction_inventory_base_v024(jsonb)");
+    expect(allowedUpsMigration).toContain("public.refund_sale_transaction_from_edit_inventory_base_v024(jsonb)");
   });
 });

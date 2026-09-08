@@ -30,7 +30,8 @@ import { useAuthStore } from "../store/authStore";
 import { formatCurrency } from "../utils/formatters";
 import { es } from "../i18n/es";
 import { getReviewQty } from "../utils/productHelpers";
-import { UPS_BATCH_OPTIONS } from "../constants/colors";
+import { buildUpsBatchOptions } from "../constants/ups";
+import { useAllowedUpsStore } from "../store/allowedUpsStore";
 import {
   CUSTOMERS_PATH,
   PRODUCTS_PATH,
@@ -49,6 +50,8 @@ const whatsNewItems = [
 export function Home() {
   const navigate = useNavigate();
   const [selectedUps, setSelectedUps] = useState<number | "">("");
+  const allowedUps = useAllowedUpsStore((state) => state.allowedUps);
+  const upsBatchOptions = buildUpsBatchOptions(allowedUps);
 
   const { products, getTotalInventoryValue } = useProductStore();
   const { getTotalOutstandingBalance } = useCustomerStore();
@@ -148,7 +151,7 @@ export function Home() {
           borderRadius="md"
         >
           <option value="">Todos</option>
-          {UPS_BATCH_OPTIONS.map((opt) => (
+          {upsBatchOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>

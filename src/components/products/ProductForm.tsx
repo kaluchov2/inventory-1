@@ -32,14 +32,15 @@ import { Product, CategoryCode } from "../../types";
 import { CATEGORY_OPTIONS } from "../../constants/categories";
 import {
   PRODUCT_COLORS,
-  UPS_BATCH_OPTIONS,
   DEFAULT_BRANDS,
 } from "../../constants/colors";
+import { buildUpsBatchOptions, DEFAULT_INVENTORY_UPS } from "../../constants/ups";
 import { CurrencyInput, AutocompleteSelect } from "../common";
 import { es } from "../../i18n/es";
 import { getReviewQty } from "../../utils/productHelpers";
 import { useSatKeyStore } from "../../store/satKeyStore";
 import { getSatKeyOptionsForCategory } from "../../utils/satKeyHelpers";
+import { useAllowedUpsStore } from "../../store/allowedUpsStore";
 
 interface ProductFormData {
   name: string;
@@ -73,6 +74,11 @@ export function ProductForm({
 }: ProductFormProps) {
   const isEditing = !!product;
   const { satKeys, satCategorySuggestions, createAndConfirmSatKey } = useSatKeyStore();
+  const allowedUps = useAllowedUpsStore((state) => state.allowedUps);
+  const upsBatchOptions = useMemo(() => buildUpsBatchOptions(allowedUps), [allowedUps]);
+  const defaultUps = allowedUps.includes(initialUpsBatch ?? -1)
+    ? initialUpsBatch!
+    : (allowedUps[allowedUps.length - 1] ?? DEFAULT_INVENTORY_UPS);
   const toast = useToast();
   const [isAddingSatKey, setIsAddingSatKey] = useState(false);
   const [newSatCode, setNewSatCode] = useState("");
@@ -101,7 +107,7 @@ export function ProductForm({
   } = useForm<ProductFormData>({
     defaultValues: {
       name: "",
-      upsBatch: initialUpsBatch || 19,
+      upsBatch: defaultUps,
       quantity: 1,
       unitPrice: 0,
       category: "VIB",
@@ -136,7 +142,9 @@ export function ProductForm({
     if (product) {
       reset({
         name: product.name,
-        upsBatch: product.upsBatch,
+        upsBatch: allowedUps.includes(Number(product.upsBatch))
+          ? Number(product.upsBatch)
+          : defaultUps,
         quantity: product.availableQty,
         unitPrice: product.unitPrice,
         category: product.category,
@@ -151,7 +159,7 @@ export function ProductForm({
     } else {
       reset({
         name: "",
-        upsBatch: initialUpsBatch || 19,
+        upsBatch: defaultUps,
         quantity: 1,
         unitPrice: 0,
         category: "VIB",
@@ -162,7 +170,7 @@ export function ProductForm({
         description: "",
       });
     }
-  }, [isOpen, product, reset, initialUpsBatch]);
+  }, [isOpen, product, reset, defaultUps, allowedUps]);
 
   const handleFormSubmit = (data: ProductFormData) => {
     const addAnother = addAnotherRef.current;
@@ -300,10 +308,14 @@ export function ProductForm({
                   <Controller
                     name="upsBatch"
                     control={control}
-                    rules={{ required: es.validation.required }}
+                    rules={{
+                      required: es.validation.required,
+                      validate: (value) =>
+                        allowedUps.includes(Number(value)) || 'Selecciona un UPS permitido',
+                    }}
                     render={({ field }) => (
                       <AutocompleteSelect
-                        options={UPS_BATCH_OPTIONS}
+                        options={upsBatchOptions}
                         value={field.value}
                         onChange={(val) => field.onChange(val ? Number(val) : '')}
                         placeholder="Buscar UPS..."

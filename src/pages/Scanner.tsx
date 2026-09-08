@@ -61,6 +61,7 @@ import { getCategoryLabel } from "../constants/categories";
 import { CurrencyInput } from "../components/common";
 import { es } from "../i18n/es";
 import { getProductSatSnapshot } from "../utils/satKeyHelpers";
+import { useAllowedUpsStore } from "../store/allowedUpsStore";
 
 type ScanMode = "sell" | "register";
 
@@ -91,6 +92,7 @@ export function Scanner() {
   const { addTransaction, queueSaleSync } = useTransactionStore();
   const { customers, addPurchase } = useCustomerStore();
   const { satKeys } = useSatKeyStore();
+  const allowedUps = useAllowedUpsStore((state) => state.allowedUps);
 
   // --- Sell mode: cart state ---
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
@@ -268,6 +270,24 @@ export function Scanner() {
           const upsBatch = parsed?.dropNumber
             ? parseInt(parsed.dropNumber, 10)
             : undefined;
+          if (!upsBatch || !allowedUps.includes(upsBatch)) {
+            setLastScan({
+              barcode: trimmedBarcode,
+              product: null,
+              status: 'not_found',
+              message: 'El código pertenece a un UPS no permitido',
+            });
+            toast({
+              title: 'UPS no permitido',
+              description: 'Solo puedes registrar productos de los UPS habilitados.',
+              status: 'error',
+              duration: 4000,
+              isClosable: true,
+            });
+            setCameraEnabled(false);
+            setTimeout(() => setIsProcessing(false), 1000);
+            return;
+          }
           setPrefillData({ barcode: trimmedBarcode, upsBatch });
           onFormOpen();
         }
@@ -283,6 +303,7 @@ export function Scanner() {
       onCartModalOpen,
       onFormOpen,
       toast,
+      allowedUps,
     ],
   );
 
@@ -538,15 +559,24 @@ export function Scanner() {
 
   // --- Register mode: product registration ---
   const handleProductSubmit = (data: any) => {
-    addProduct({ ...data, status: "available" });
-    toast({
-      title: es.success.productAdded,
-      status: "success",
-      duration: 3000,
-    });
-    onFormClose();
-    setPrefillData(null);
-    handleScanAgain();
+    try {
+      addProduct({ ...data, status: "available" });
+      toast({
+        title: es.success.productAdded,
+        status: "success",
+        duration: 3000,
+      });
+      onFormClose();
+      setPrefillData(null);
+      handleScanAgain();
+    } catch (error) {
+      toast({
+        title: 'No se registró el producto',
+        description: error instanceof Error ? error.message : String(error),
+        status: 'error',
+        duration: 4000,
+      });
+    }
   };
 
   return (
@@ -843,11 +873,21 @@ export function Scanner() {
                         leftIcon={<Icon as={FiPlusCircle} />}
                         onClick={() => {
                           const parsed = parseBarcode(lastScan.barcode);
+                          const upsBatch = parsed?.dropNumber
+                            ? parseInt(parsed.dropNumber, 10)
+                            : undefined;
+                          if (!upsBatch || !allowedUps.includes(upsBatch)) {
+                            toast({
+                              title: 'UPS no permitido',
+                              description: 'Este código no puede crear inventario.',
+                              status: 'error',
+                              duration: 4000,
+                            });
+                            return;
+                          }
                           setPrefillData({
                             barcode: lastScan.barcode,
-                            upsBatch: parsed?.dropNumber
-                              ? parseInt(parsed.dropNumber, 10)
-                              : undefined,
+                            upsBatch,
                           });
                           onFormOpen();
                         }}

@@ -66,7 +66,7 @@ import type { ResolveData } from "../components/products/ResolveReviewModal";
 import type { RefundData } from "../components/products/RefundModal";
 import { Product, CategoryCode, ProductStatus, Transaction } from "../types";
 import { CATEGORY_OPTIONS, getCategoryLabel } from "../constants/categories";
-import { UPS_FILTER_OPTIONS } from "../constants/colors";
+import { buildUpsBatchOptions } from "../constants/ups";
 import { formatCurrency, formatDate } from "../utils/formatters";
 import { es } from "../i18n/es";
 import { useProductStore } from "../store/productStore";
@@ -77,6 +77,7 @@ import { useAuthStore } from "../store/authStore";
 import { getReviewQty, deriveStatus } from "../utils/productHelpers";
 import { getProductSatSnapshot } from "../utils/satKeyHelpers";
 import { canModifyOperationalData } from "../constants/viewerAccess";
+import { useAllowedUpsStore } from "../store/allowedUpsStore";
 
 // Helper function to get payment status for a product
 function getPaymentStatusForProduct(
@@ -382,6 +383,8 @@ export function Products() {
   const isMobile = useBreakpointValue({ base: true, lg: false });
   const user = useAuthStore((state) => state.user);
   const canModifyData = canModifyOperationalData(user?.role);
+  const allowedUps = useAllowedUpsStore((state) => state.allowedUps);
+  const upsBatchOptions = useMemo(() => buildUpsBatchOptions(allowedUps), [allowedUps]);
 
   const {
     products,
@@ -394,6 +397,12 @@ export function Products() {
     getFilteredProducts,
   } = useProductStore();
   const { satKeys } = useSatKeyStore();
+
+  useEffect(() => {
+    if (filters.upsBatch && !allowedUps.includes(Number(filters.upsBatch))) {
+      setFilters({ upsBatch: '' });
+    }
+  }, [allowedUps, filters.upsBatch, setFilters]);
 
   const { addTransaction, queueSaleSync, transactions, getEffectivePendingMap } = useTransactionStore();
   const { addPurchase } = useCustomerStore();
@@ -1131,7 +1140,7 @@ export function Products() {
               />
 
               <AutocompleteSelect
-                options={UPS_FILTER_OPTIONS}
+                options={upsBatchOptions}
                 value={filters.upsBatch || ""}
                 onChange={(val) => handleSetFilters({ upsBatch: val ? Number(val) : "" })}
                 placeholder="Seleccionar UPS"

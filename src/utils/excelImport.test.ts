@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Product } from '../types';
-import { getProductMatchKey } from './excelImport';
+import { getProductMatchKey, parseAllowedImportedUps } from './excelImport';
 
 function product(overrides: Partial<Product>): Product {
   return {
@@ -47,5 +47,20 @@ describe('getProductMatchKey', () => {
         }),
       ),
     ).toBe('21|8|camisa azul|dam');
+  });
+});
+
+describe('parseAllowedImportedUps', () => {
+  it.each([
+    [23, '23'],
+    ['24', '24'],
+    ['001/23', '23'],
+    ['001-25', '25'],
+  ])('accepts %s as UPS %s', (value, expectedDrop) => {
+    expect(parseAllowedImportedUps(value)?.dropNumber).toBe(expectedDrop);
+  });
+
+  it.each(['', 0, '0', 22, 26, 'texto 23'])('rejects %s', (value) => {
+    expect(parseAllowedImportedUps(value)).toBeNull();
   });
 });

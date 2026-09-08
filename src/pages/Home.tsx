@@ -10,7 +10,7 @@
   Select,
   Badge,
 } from "@chakra-ui/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   FiShoppingCart,
@@ -57,6 +57,12 @@ export function Home() {
   const { getTotalOutstandingBalance } = useCustomerStore();
   const user = useAuthStore((state) => state.user);
   const canModifyData = canModifyOperationalData(user?.role);
+
+  useEffect(() => {
+    if (selectedUps !== "" && !allowedUps.includes(selectedUps)) {
+      setSelectedUps("");
+    }
+  }, [allowedUps, selectedUps]);
 
   const filteredProducts = selectedUps
     ? products.filter((p) => Number(p.upsBatch) === selectedUps)

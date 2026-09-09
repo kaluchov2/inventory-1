@@ -66,6 +66,7 @@ import {
   WALK_IN_CUSTOMER_LABELS,
 } from "../utils/customerNameUtils";
 import { useAllowedUpsStore } from "../store/allowedUpsStore";
+import { useSatKeyStore } from "../store/satKeyStore";
 import { getProductMatchKey } from "../utils/excelImport";
 
 const WALK_IN_OPTION_VALUE = "__WALK_IN__";
@@ -131,6 +132,7 @@ export function Settings() {
   const upsBatchOptions = useMemo(() => buildUpsBatchOptions(allowedUps), [allowedUps]);
 
   const { products, importProducts } = useProductStore();
+  const satKeys = useSatKeyStore((state) => state.satKeys);
   const { customers, importCustomers } = useCustomerStore();
   const { transactions, importTransactions } = useTransactionStore();
   const { drops, addDrop } = useDropStore();
@@ -198,7 +200,11 @@ export function Settings() {
     if (!exportUps) return;
     const filtered = products.filter((p) => Number(p.upsBatch) === exportUps);
     const date = new Date().toISOString().split("T")[0];
-    exportProductsByUps(filtered, `inventario_UPS${exportUps}_${date}.xlsx`);
+    exportProductsByUps(
+      filtered,
+      satKeys,
+      `inventario_UPS${exportUps}_${date}.xlsx`,
+    );
   };
 
   const handleExportAllTransactions = async () => {

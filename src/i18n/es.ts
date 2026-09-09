@@ -219,7 +219,7 @@ export const es = {
 
   // Settings
   settings: {
-    title: "Configuración",
+    title: "Reportes y configuración",
     general: "General",
     importExport: "Importar / Exportar",
     backup: "Respaldo",

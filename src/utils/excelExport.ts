@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { Product, Customer, Transaction, ProductStatus } from '../types';
+import { Product, Customer, Transaction, ProductStatus, SatKey } from '../types';
 import { getCategoryLabel } from '../constants/categories';
 import { formatDate } from './formatters';
 import { deriveStatus } from './productHelpers';
@@ -99,11 +99,28 @@ export function exportProductsToExcel(products: Product[], filename?: string): v
   XLSX.writeFile(workbook, filename || `inventario_${date}.xlsx`);
 }
 
-// Export products by UPS batch — slim 9-column layout for pre/post-sale stock checks
-export function exportProductsByUps(products: Product[], filename?: string): void {
-  const data: any[] = products.map(p => ({
+export interface ProductByUpsExcelRow {
+  'Artículo': string;
+  'Categoría': string;
+  'Clave SAT': string;
+  'Marca': string;
+  'Color': string;
+  'Talla': string;
+  'Disponible': number;
+  'Precio Unitario': number | '';
+  'Estado': string;
+  'Valor Total': number;
+}
+
+export function buildProductsByUpsExcelRows(
+  products: Product[],
+  satKeys: SatKey[],
+): ProductByUpsExcelRow[] {
+  const satCodeById = new Map(satKeys.map((satKey) => [satKey.id, satKey.code]));
+  const data: ProductByUpsExcelRow[] = products.map(p => ({
     'Artículo': p.name,
     'Categoría': getCategoryLabel(p.category),
+    'Clave SAT': p.satKeyId ? satCodeById.get(p.satKeyId) || '' : '',
     'Marca': p.brand || '',
     'Color': p.color || '',
     'Talla': p.size || '',
@@ -121,6 +138,7 @@ export function exportProductsByUps(products: Product[], filename?: string): voi
   data.push({
     'Artículo': 'TOTAL VALOR INVENTARIO',
     'Categoría': '',
+    'Clave SAT': '',
     'Marca': '',
     'Color': '',
     'Talla': '',
@@ -130,6 +148,17 @@ export function exportProductsByUps(products: Product[], filename?: string): voi
     'Valor Total': totalValue,
   });
 
+  return data;
+}
+
+// Export products by UPS batch — compact layout for pre/post-sale stock checks
+export function exportProductsByUps(
+  products: Product[],
+  satKeys: SatKey[],
+  filename?: string,
+): void {
+  const data = buildProductsByUpsExcelRows(products, satKeys);
+
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario');
@@ -137,6 +166,7 @@ export function exportProductsByUps(products: Product[], filename?: string): voi
   worksheet['!cols'] = [
     { wch: 40 }, // Artículo
     { wch: 15 }, // Categoría
+    { wch: 12 }, // Clave SAT
     { wch: 15 }, // Marca
     { wch: 12 }, // Color
     { wch: 10 }, // Talla

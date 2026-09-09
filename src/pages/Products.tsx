@@ -59,6 +59,7 @@ import {
   FiRotateCcw,
   FiHelpCircle,
   FiPrinter,
+  FiDownload,
 } from "react-icons/fi";
 import { SearchInput, EmptyState, ConfirmDialog, AutocompleteSelect } from "../components/common";
 import { ProductForm, SoldProductDetails, ResolveReviewModal, RefundModal } from "../components/products";
@@ -78,6 +79,7 @@ import { getReviewQty, deriveStatus } from "../utils/productHelpers";
 import { getProductSatSnapshot } from "../utils/satKeyHelpers";
 import { canModifyOperationalData } from "../constants/viewerAccess";
 import { useAllowedUpsStore } from "../store/allowedUpsStore";
+import { exportProductsByUps } from "../utils/excelExport";
 
 // Helper function to get payment status for a product
 function getPaymentStatusForProduct(
@@ -476,6 +478,13 @@ export function Products() {
   const [isShowAllLoading, setIsShowAllLoading] = useState(false);
   const tabLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
   const ITEMS_PER_PAGE = 50;
+  const selectedUps = filters.upsBatch ? Number(filters.upsBatch) : null;
+  const selectedUpsProducts = useMemo(
+    () => selectedUps === null
+      ? []
+      : products.filter((product) => Number(product.upsBatch) === selectedUps),
+    [products, selectedUps],
+  );
 
   // Disclosure for resolve modal
   const {
@@ -592,6 +601,17 @@ export function Products() {
       });
     }, 50);
   }, [showAll, setFilters]);
+
+  const handleExportSelectedUps = useCallback(() => {
+    if (selectedUps === null || selectedUpsProducts.length === 0) return;
+
+    const date = new Date().toISOString().split("T")[0];
+    exportProductsByUps(
+      selectedUpsProducts,
+      satKeys,
+      `inventario_UPS${selectedUps}_${date}.xlsx`,
+    );
+  }, [satKeys, selectedUps, selectedUpsProducts]);
 
   const handleAddProduct = () => {
     if (!canModifyData) return;
@@ -1139,13 +1159,36 @@ export function Products() {
                 size="md"
               />
 
-              <AutocompleteSelect
-                options={upsBatchOptions}
-                value={filters.upsBatch || ""}
-                onChange={(val) => handleSetFilters({ upsBatch: val ? Number(val) : "" })}
-                placeholder="Seleccionar UPS"
-                size="md"
-              />
+              <HStack spacing={2} minW={0}>
+                <Box flex="1" minW={0}>
+                  <AutocompleteSelect
+                    options={upsBatchOptions}
+                    value={filters.upsBatch || ""}
+                    onChange={(val) => handleSetFilters({ upsBatch: val ? Number(val) : "" })}
+                    placeholder="Seleccionar UPS"
+                    size="md"
+                  />
+                </Box>
+                <IconButton
+                  aria-label={
+                    selectedUps === null
+                      ? "Seleccione un UPS para descargar"
+                      : `Descargar inventario del UPS ${selectedUps}`
+                  }
+                  title={
+                    selectedUps === null
+                      ? "Seleccione un UPS para descargar"
+                      : `Descargar inventario del UPS ${selectedUps}`
+                  }
+                  icon={<Icon as={FiDownload} />}
+                  colorScheme="teal"
+                  variant="outline"
+                  size="md"
+                  flexShrink={0}
+                  onClick={handleExportSelectedUps}
+                  isDisabled={selectedUps === null || selectedUpsProducts.length === 0}
+                />
+              </HStack>
 
               {viewMode === 'available' && (
                 <AutocompleteSelect

@@ -20,6 +20,13 @@ function getStatusLabel(status: ProductStatus): string {
   return statusLabels[status] || status;
 }
 
+function getSatCodeByProduct(
+  product: Product,
+  satCodeById: Map<string, string>,
+): string {
+  return product.satKeyId ? satCodeById.get(product.satKeyId) || '' : '';
+}
+
 function normalizeCustomerKey(value: string | undefined | null): string {
   return (value || '')
     .normalize('NFD')
@@ -58,11 +65,32 @@ function applyCurrencyFormat(
   });
 }
 
-// Export products to Excel
-export function exportProductsToExcel(products: Product[], filename?: string): void {
-  const data = products.map(p => ({
+export interface ProductInventoryExcelRow {
+  'UPS': number;
+  'Categoría': string;
+  'Clave SAT': string;
+  'Código': string;
+  'Cantidad': number;
+  'Artículo': string;
+  'Marca': string;
+  'Color': string;
+  'Talla': string;
+  'Precio Unitario': number;
+  'Valor Total': number;
+  'Estado': string;
+  'Observaciones': string;
+}
+
+export function buildProductsExcelRows(
+  products: Product[],
+  satKeys: SatKey[],
+): ProductInventoryExcelRow[] {
+  const satCodeById = new Map(satKeys.map((satKey) => [satKey.id, satKey.code]));
+
+  return products.map(p => ({
     'UPS': p.upsBatch,
     'Categoría': getCategoryLabel(p.category),
+    'Clave SAT': getSatCodeByProduct(p, satCodeById),
     'Código': p.sku,
     'Cantidad': p.quantity,
     'Artículo': p.name,
@@ -74,6 +102,15 @@ export function exportProductsToExcel(products: Product[], filename?: string): v
     'Estado': getStatusLabel(deriveStatus(p)),
     'Observaciones': p.description || '',
   }));
+}
+
+// Export products to Excel
+export function exportProductsToExcel(
+  products: Product[],
+  satKeys: SatKey[],
+  filename?: string,
+): void {
+  const data = buildProductsExcelRows(products, satKeys);
 
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
@@ -83,6 +120,7 @@ export function exportProductsToExcel(products: Product[], filename?: string): v
   worksheet['!cols'] = [
     { wch: 6 },  // UPS
     { wch: 15 }, // Categoría
+    { wch: 12 }, // Clave SAT
     { wch: 20 }, // Código
     { wch: 10 }, // Cantidad
     { wch: 40 }, // Artículo
@@ -120,7 +158,7 @@ export function buildProductsByUpsExcelRows(
   const data: ProductByUpsExcelRow[] = products.map(p => ({
     'Artículo': p.name,
     'Categoría': getCategoryLabel(p.category),
-    'Clave SAT': p.satKeyId ? satCodeById.get(p.satKeyId) || '' : '',
+    'Clave SAT': getSatCodeByProduct(p, satCodeById),
     'Marca': p.brand || '',
     'Color': p.color || '',
     'Talla': p.size || '',
@@ -569,14 +607,17 @@ export function exportSingleTransactionToExcel(
 export function exportAllToExcel(
   products: Product[],
   customers: Customer[],
-  transactions: Transaction[]
+  transactions: Transaction[],
+  satKeys: SatKey[],
 ): void {
   const workbook = XLSX.utils.book_new();
+  const satCodeById = new Map(satKeys.map((satKey) => [satKey.id, satKey.code]));
 
   // Products sheet
   const productsData = products.map(p => ({
     'UPS': p.upsBatch,
     'Categoría': getCategoryLabel(p.category),
+    'Clave SAT': getSatCodeByProduct(p, satCodeById),
     'Código': p.sku,
     'Cantidad': p.quantity,
     'Artículo': p.name,

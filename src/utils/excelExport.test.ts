@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildProductsByUpsExcelRows, buildSatSalesExcelRows } from './excelExport';
+import {
+  buildProductsByUpsExcelRows,
+  buildProductsExcelRows,
+  buildSatSalesExcelRows,
+} from './excelExport';
 import { MonthlySatSalesRow } from './satSalesReport';
 import { Product, SatKey } from '../types';
 
@@ -69,6 +73,50 @@ describe('buildProductsByUpsExcelRows', () => {
 
   it('leaves the SAT code empty when the product has no matching key', () => {
     const rows = buildProductsByUpsExcelRows([product], []);
+
+    expect(rows[0]['Clave SAT']).toBe('');
+  });
+});
+
+describe('buildProductsExcelRows', () => {
+  const product: Product = {
+    id: 'product-all-1',
+    name: 'Artículo de inventario completo',
+    sku: 'UPS-20-1',
+    upsRaw: '20',
+    identifierType: 'legacy',
+    dropNumber: '20',
+    upsBatch: 20,
+    quantity: 3,
+    unitPrice: 80,
+    category: 'HG',
+    satKeyId: 'sat-all-1',
+    availableQty: 3,
+    soldQty: 0,
+    donatedQty: 0,
+    lostQty: 0,
+    expiredQty: 0,
+    status: 'available',
+    createdAt: '2026-09-09T00:00:00.000Z',
+    updatedAt: '2026-09-09T00:00:00.000Z',
+  };
+
+  const satKey: SatKey = {
+    id: 'sat-all-1',
+    code: '01010101',
+    description: 'No existe en el catálogo',
+    createdAt: '2026-09-09T00:00:00.000Z',
+    updatedAt: '2026-09-09T00:00:00.000Z',
+  };
+
+  it('adds the SAT code to the complete inventory export', () => {
+    const rows = buildProductsExcelRows([product], [satKey]);
+
+    expect(rows[0]['Clave SAT']).toBe('01010101');
+  });
+
+  it('leaves the SAT code empty when the complete inventory has no matching key', () => {
+    const rows = buildProductsExcelRows([product], []);
 
     expect(rows[0]['Clave SAT']).toBe('');
   });

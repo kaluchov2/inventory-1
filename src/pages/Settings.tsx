@@ -1027,7 +1027,7 @@ export function Settings() {
             variant="outline"
             size={{ base: "sm", md: "lg" }}
             fontSize={{ base: "xs", md: "md" }}
-            onClick={() => exportProductsToExcel(products)}
+            onClick={() => exportProductsToExcel(products, satKeys)}
             isDisabled={products.length === 0}
           >
             Inventario
@@ -1073,7 +1073,9 @@ export function Settings() {
             colorScheme="orange"
             size={{ base: "sm", md: "lg" }}
             fontSize={{ base: "xs", md: "md" }}
-            onClick={() => exportAllToExcel(products, customers, transactions)}
+            onClick={() =>
+              exportAllToExcel(products, customers, transactions, satKeys)
+            }
             isDisabled={
               products.length === 0 &&
               customers.length === 0 &&

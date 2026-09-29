@@ -160,6 +160,42 @@ describe('authStore foreground auth recovery', () => {
     });
   });
 
+  it('clears a persisted offline preference after verifying an existing session', async () => {
+    localStorage.setItem('inventory_auth', JSON.stringify({
+      state: { isOfflineMode: true },
+      version: 0,
+    }));
+    state.getSession.mockResolvedValue({
+      data: { session: { user: supabaseUser } },
+      error: null,
+    });
+
+    const useAuthStore = await loadInitializedStore();
+
+    expect(useAuthStore.getState()).toMatchObject({
+      isAuthenticated: true,
+      isProfileHydrated: true,
+      isOfflineMode: false,
+    });
+  });
+
+  it('clears offline mode on logout and a successful login', async () => {
+    state.signInWithPassword.mockResolvedValue({
+      data: { user: supabaseUser },
+      error: null,
+    });
+    const useAuthStore = await loadInitializedStore();
+
+    useAuthStore.getState().setOfflineMode(true);
+    await useAuthStore.getState().logout();
+    expect(useAuthStore.getState().isOfflineMode).toBe(false);
+
+    useAuthStore.getState().setOfflineMode(true);
+    const result = await useAuthStore.getState().login('owner@example.com', 'secret');
+    expect(result.success).toBe(true);
+    expect(useAuthStore.getState().isOfflineMode).toBe(false);
+  });
+
   it('deduplicates repeated SIGNED_IN profile hydration', async () => {
     await loadInitializedStore();
 

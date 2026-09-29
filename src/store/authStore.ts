@@ -156,6 +156,7 @@ export const useAuthStore = create<AuthStore>()(
               isAuthenticated: true,
               isLoading: false,
               isProfileHydrated: true,
+              isOfflineMode: false,
               error: null,
             });
           } catch (error) {
@@ -216,6 +217,7 @@ export const useAuthStore = create<AuthStore>()(
             isAuthenticated: false,
             isLoading: false,
             isProfileHydrated: false,
+            isOfflineMode: false,
             error: null,
           });
           return;
@@ -408,6 +410,7 @@ export const useAuthStore = create<AuthStore>()(
             isAuthenticated: false,
             isLoading: false,
             isProfileHydrated: false,
+            isOfflineMode: false,
             error: null,
           });
         },
